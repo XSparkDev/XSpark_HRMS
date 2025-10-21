@@ -1,0 +1,473 @@
+{
+  "info": {
+    "name": "X Spark HRMS API Tests",
+    "description": "Postman collection for testing X Spark HRMS API endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Employee Management",
+      "item": [
+        {
+          "name": "GET All Employees",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:3001/api/employees",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "employees"
+              ]
+            },
+            "description": "Get all active employees with optional filtering"
+          },
+          "response": []
+        },
+        {
+          "name": "GET All Employees with Filters",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:3001/api/employees?search=john&limit=10&offset=0",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "employees"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "john"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Get employees with search filter and pagination"
+          },
+          "response": []
+        },
+        {
+          "name": "POST Create Employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"John\",\n  \"last_name\": \"Doe\",\n  \"email\": \"john.doe@xspark.com\",\n  \"dob\": \"1990-01-01\",\n  \"sex\": \"male\",\n  \"date_hired\": \"2025-01-01\",\n  \"nationality\": \"South Africa\",\n  \"phone\": \"+27123456789\",\n  \"id_number\": \"1234567890123\",\n  \"employment_status\": \"probation\",\n  \"passport_number\": \"A12345678\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/employees",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "employees"
+              ]
+            },
+            "description": "Create a new employee"
+          },
+          "response": []
+        },
+        {
+          "name": "PUT Update Employee",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{employee_id}}\",\n  \"first_name\": \"John Updated\",\n  \"phone\": \"+27987654321\",\n  \"employment_status\": \"active\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/employees",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "employees"
+              ]
+            },
+            "description": "Update an existing employee"
+          },
+          "response": []
+        },
+        {
+          "name": "GET Employee by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:3001/api/employees/{{employee_id}}",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "employees",
+                "{{employee_id}}"
+              ]
+            },
+            "description": "Get a specific employee by ID"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Leave Management",
+      "item": [
+        {
+          "name": "GET Leave Requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:3001/api/leave/requests",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "leave",
+                "requests"
+              ]
+            },
+            "description": "Get all leave requests"
+          },
+          "response": []
+        },
+        {
+          "name": "POST Create Leave Request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employee_id\": \"{{employee_id}}\",\n  \"full_name\": \"John Doe\",\n  \"employee_number\": \"XSP25/01/001\",\n  \"id_number\": \"1234567890123\",\n  \"job_title\": \"Software Engineer\",\n  \"leave_type\": \"annual\",\n  \"leave_day_from\": \"2025-02-01\",\n  \"leave_day_to\": \"2025-02-05\",\n  \"total_days\": 5,\n  \"reason\": \"Family vacation\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/leave/requests",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "leave",
+                "requests"
+              ]
+            },
+            "description": "Create a new leave request"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "File Upload",
+      "item": [
+        {
+          "name": "POST Upload File",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "bucket",
+                  "value": "employee-documents",
+                  "type": "text"
+                },
+                {
+                  "key": "path",
+                  "value": "test-documents",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/upload",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "upload"
+              ]
+            },
+            "description": "Upload a file to Supabase storage"
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE File",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bucket\": \"employee-documents\",\n  \"path\": \"test-documents/file.pdf\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/upload",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "upload"
+              ]
+            },
+            "description": "Delete a file from Supabase storage"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Database Tests",
+      "item": [
+        {
+          "name": "GET Database Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:3001/api/supabase/simple-test",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "supabase",
+                "simple-test"
+              ]
+            },
+            "description": "Test database connectivity and schema"
+          },
+          "response": []
+        },
+        {
+          "name": "POST Test Database Connection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"testType\": \"database\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/supabase/test",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "supabase",
+                "test"
+              ]
+            },
+            "description": "Test database connection specifically"
+          },
+          "response": []
+        },
+        {
+          "name": "POST Test Storage Connection",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"testType\": \"storage\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:3001/api/supabase/test",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "supabase",
+                "test"
+              ]
+            },
+            "description": "Test storage connection specifically"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Employee Service Tests",
+      "item": [
+        {
+          "name": "GET Employee Service Test",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:3001/api/employees/test",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "3001",
+              "path": [
+                "api",
+                "employees",
+                "test"
+              ]
+            },
+            "description": "Test employee service methods directly"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "employee_id",
+      "value": "replace-with-actual-employee-id",
+      "description": "Employee ID for testing (get this from create employee response)"
+    },
+    {
+      "key": "base_url",
+      "value": "http://localhost:3001",
+      "description": "Base URL for the API"
+    }
+  ]
+}

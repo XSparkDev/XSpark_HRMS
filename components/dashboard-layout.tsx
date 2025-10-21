@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useState } from "react"
+import { type ReactNode, useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -15,7 +15,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { XSparkLogo } from "@/components/xspark-logo"
-import { getCurrentUser, logout, getRoleBadgeColor, getRoleDisplayName, hasPermission } from "@/lib/auth"
+import { getCurrentUser, logout, getRoleBadgeColor, getRoleDisplayName, hasPermission, User } from "@/lib/auth"
 import {
   Home,
   Users,
@@ -29,7 +29,8 @@ import {
   Menu,
   X,
   MessageSquare,
-  User,
+  User as UserIcon,
+  StickyNote,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -40,12 +41,23 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
-  const user = getCurrentUser()
+  const [user, setUser] = useState<User | undefined>(undefined)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  if (!user) {
-    router.push("/login")
-    return null
+  useEffect(() => {
+    const currentUser = getCurrentUser()
+    if (!currentUser) {
+      router.replace("/login")
+    }
+    setUser(currentUser)
+  }, [router])
+
+  if (user === undefined) {
+    return null // Render nothing until user is determined
+  }
+
+  if (user === null) {
+    return null // Redirect handled by useEffect
   }
 
   const handleLogout = () => {
@@ -55,7 +67,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: Home, permission: "*" },
-    { name: "My Profile", href: "/profile", icon: User, permission: "*" },
+    { name: "My Profile", href: "/profile", icon: UserIcon, permission: "*" },
+    { name: "Notes", href: "/notes", icon: StickyNote, permission: "*" },
     { name: "Employees", href: "/employees", icon: Users, permission: "view_employees" },
     { name: "Leave Requests", href: "/leave", icon: Calendar, permission: "*" },
     { name: "Documents", href: "/documents", icon: FolderOpen, permission: "*" },
@@ -133,7 +146,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
                 <Link href="/profile" className="cursor-pointer">
-                  <User className="mr-2 h-4 w-4" />
+                  <UserIcon className="mr-2 h-4 w-4" />
                   My Profile
                 </Link>
               </DropdownMenuItem>

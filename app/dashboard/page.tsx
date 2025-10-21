@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { getCurrentUser } from "@/lib/auth"
+import { HighAlertNotes } from "@/components/high-alert-notes"
 import {
   Calendar,
   FileText,
@@ -129,6 +130,9 @@ export default function DashboardPage() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* High Alert Notes */}
+            <HighAlertNotes />
 
             {/* Recent Notifications */}
             <Card>

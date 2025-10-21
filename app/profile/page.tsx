@@ -12,43 +12,316 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit } from "lucide-react"
+import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit, AlertCircle, Loader2, CheckCircle2 } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
-import { EmployeeProfile, BankDetails, NextOfKin } from "@/lib/types/employee"
+import { AnimatePresence, motion } from "framer-motion"
+import { useToast } from "@/hooks/use-toast"
+import { profileSchema, validateProfile, sanitizeInput, normalizePhone, type ValidationError, type ProfileFormData } from "@/lib/validation/profile"
 import { getCurrentUser } from "@/lib/auth"
 
 export default function MyProfilePage() {
-  const [profile, setProfile] = useState<EmployeeProfile | null>(null)
+  const { toast } = useToast()
+  const [user] = useState(getCurrentUser())
+  
+  // Form state
+  const [formData, setFormData] = useState<Partial<ProfileFormData>>({
+    first_name: "",
+    middle_name: "",
+    last_name: "",
+    preferred_name: "",
+    id_number: "",
+    dob: "",
+    sex: "",
+    gender: "",
+    pronouns: "",
+    email: "",
+    phone: "",
+    alternative_phone: "",
+    address: "",
+    tax_number: "",
+    nationality: "South Africa",
+    passport_number: "",
+    job_title_id: "",
+    date_hired: "",
+    employment_status: "probation"
+  })
+  
+  // Next of Kin state
+  const [nokData, setNokData] = useState({
+    first_name: "",
+    middle_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+    alternative_phone: "",
+    relationship: ""
+  })
+  
+  // Banking state
+  const [bankData, setBankData] = useState({
+    full_name: "",
+    id_number: "",
+    email: "",
+    phone: "",
+    address: "",
+    bank_name: "",
+    account_number: "",
+    branch_number: "",
+    account_type: "Cheque"
+  })
+  
+  // UI state
+  const [profile, setProfile] = useState<any>(null)
   const [isEditing, setIsEditing] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isValidating, setIsValidating] = useState(false)
   const [updateRequestOpen, setUpdateRequestOpen] = useState(false)
   const [updateReason, setUpdateReason] = useState("")
   const [date, setDate] = useState<Date>()
-  const [user] = useState(getCurrentUser())
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
+  const [requiresReauth, setRequiresReauth] = useState(false)
+  const [fileUploads, setFileUploads] = useState<Record<string, File | null>>({
+    profile_picture: null,
+    passport_document: null,
+    work_permit: null
+  })
 
   // Mock data - replace with actual API calls
   useEffect(() => {
-    // Simulate API call
     setTimeout(() => {
-      // Check if user has profile
-      const mockProfile: EmployeeProfile | null = null // Set to null to show create form, or provide mock data to show view mode
+      const mockProfile: any = null // Set to null to show create form
       setProfile(mockProfile)
       setIsLoading(false)
     }, 1000)
   }, [])
 
+  // Validation functions
+  const validateField = (field: string, value: any) => {
+    const fieldErrors: Record<string, string> = {}
+    
+    try {
+      // Create a partial schema for the specific field
+      const fieldSchema = profileSchema.pick({ [field]: true } as any)
+      fieldSchema.parse({ [field]: value })
+    } catch (error: any) {
+      if (error.errors && error.errors.length > 0) {
+        fieldErrors[field] = error.errors[0].message
+      }
+    }
+    
+    setErrors(prev => ({ ...prev, ...fieldErrors }))
+    return Object.keys(fieldErrors).length === 0
+  }
+
+  const validateForm = async () => {
+    setIsValidating(true)
+    
+    try {
+      const fullData = {
+        ...formData,
+        next_of_kin: Object.values(nokData).some(v => v) ? nokData : undefined,
+        banking_details: Object.values(bankData).some(v => v) ? bankData : undefined
+      }
+      
+      const result = validateProfile(fullData)
+      
+      if (!result.success) {
+        const errorMap: Record<string, string> = {}
+        result.errors?.forEach(error => {
+          errorMap[error.field] = error.message
+        })
+        setErrors(errorMap)
+        return false
+      }
+      
+      setErrors({})
+      return true
+    } catch (error) {
+      console.error("Validation error:", error)
+      return false
+    } finally {
+      setIsValidating(false)
+    }
+  }
+
+  // Input handlers with validation
+  const handleInputChange = (field: string, value: any) => {
+    // Sanitize input for text fields
+    if (typeof value === 'string' && field !== 'id_number' && field !== 'tax_number' && field !== 'account_number') {
+      value = sanitizeInput(value)
+    }
+    
+    // Normalize phone numbers
+    if (field.includes('phone')) {
+      value = normalizePhone(value)
+    }
+    
+    setFormData(prev => ({ ...prev, [field]: value }))
+    setTouched(prev => ({ ...prev, [field]: true }))
+    
+    // Real-time validation
+    if (touched[field]) {
+      validateField(field, value)
+    }
+  }
+
+  const handleNokChange = (field: string, value: any) => {
+    if (typeof value === 'string') {
+      value = sanitizeInput(value)
+    }
+    if (field.includes('phone')) {
+      value = normalizePhone(value)
+    }
+    
+    setNokData(prev => ({ ...prev, [field]: value }))
+    setTouched(prev => ({ ...prev, [`nok_${field}`]: true }))
+  }
+
+  const handleBankChange = (field: string, value: any) => {
+    if (typeof value === 'string') {
+      value = sanitizeInput(value)
+    }
+    if (field.includes('phone')) {
+      value = normalizePhone(value)
+    }
+    
+    setBankData(prev => ({ ...prev, [field]: value }))
+    setTouched(prev => ({ ...prev, [`bank_${field}`]: true }))
+  }
+
+  const handleFileUpload = (field: string, file: File | null) => {
+    if (file) {
+      // Validate file
+      const maxSize = 10 * 1024 * 1024 // 10MB
+      const allowedTypes = ["image/jpeg", "image/png", "image/gif", "application/pdf"]
+      
+      if (file.size > maxSize) {
+        toast({
+          title: "File too large",
+          description: "File must be less than 10MB",
+          variant: "destructive"
+        })
+        return
+      }
+      
+      if (!allowedTypes.includes(file.type)) {
+        toast({
+          title: "Invalid file type",
+          description: "File must be an image (JPEG, PNG, GIF) or PDF",
+          variant: "destructive"
+        })
+        return
+      }
+    }
+    
+    setFileUploads(prev => ({ ...prev, [field]: file }))
+  }
+
   const handleSaveProfile = async () => {
-    // Implement save profile logic
-    console.log("Saving profile...")
-    setIsEditing(false)
+    const isValid = await validateForm()
+    
+    if (!isValid) {
+      toast({
+        title: "Validation failed",
+        description: "Please fix the errors before submitting",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsSubmitting(true)
+    
+    try {
+      // Check if sensitive fields are being updated
+      const sensitiveFields = ['id_number', 'tax_number', 'passport_number', 'account_number']
+      const hasSensitiveChanges = sensitiveFields.some(field => 
+        formData[field as keyof typeof formData] !== profile?.[field]
+      )
+      
+      if (hasSensitiveChanges && !requiresReauth) {
+        setRequiresReauth(true)
+        toast({
+          title: "Re-authentication required",
+          description: "Please re-authenticate to update sensitive information",
+          variant: "destructive"
+        })
+        return
+      }
+      
+      // Upload files first
+      const uploadedFiles: Record<string, string> = {}
+      for (const [field, file] of Object.entries(fileUploads)) {
+        if (file) {
+          // TODO: Implement S3 upload
+          uploadedFiles[field] = `https://s3.example.com/${field}/${file.name}`
+        }
+      }
+      
+      // Prepare data for API
+      const submitData = {
+        ...formData,
+        ...uploadedFiles,
+        next_of_kin: Object.values(nokData).some(v => v) ? nokData : undefined,
+        banking_details: Object.values(bankData).some(v => v) ? bankData : undefined
+      }
+      
+      // TODO: Implement API call
+      console.log("Submitting profile:", submitData)
+      
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      
+      toast({
+        title: "Profile saved successfully",
+        description: "Your profile has been updated",
+      })
+      
+      setIsEditing(false)
+      setRequiresReauth(false)
+      
+    } catch (error) {
+      console.error("Error saving profile:", error)
+      toast({
+        title: "Error saving profile",
+        description: "Please try again later",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const handleRequestUpdate = async () => {
-    // Implement request update logic
-    console.log("Requesting update:", updateReason)
-    setUpdateRequestOpen(false)
-    setUpdateReason("")
+    if (!updateReason.trim()) {
+      toast({
+        title: "Reason required",
+        description: "Please provide a reason for the update request",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    try {
+      // TODO: Implement API call for update request
+      console.log("Requesting update:", updateReason)
+      
+      toast({
+        title: "Update request submitted",
+        description: "Your request has been sent to HR for review",
+      })
+      
+      setUpdateRequestOpen(false)
+      setUpdateReason("")
+    } catch (error) {
+      toast({
+        title: "Error submitting request",
+        description: "Please try again later",
+        variant: "destructive"
+      })
+    }
   }
 
   const generateEmployeeId = () => {
@@ -56,8 +329,68 @@ export default function MyProfilePage() {
     const year = now.getFullYear().toString().slice(-2)
     const month = (now.getMonth() + 1).toString().padStart(2, '0')
     const sequence = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
-    return `XSP${year}/${month}/${sequence}`
+    return `XSP${year}${month}/${sequence}`
   }
+
+  const ErrorMessage = ({ field }: { field: string }) => {
+    const error = errors[field]
+    if (!error || !touched[field]) return null
+    
+    return (
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          className="flex items-center gap-1 text-sm text-red-600 mt-1"
+          role="alert"
+          aria-live="polite"
+        >
+          <AlertCircle className="h-3 w-3" />
+          {error}
+        </motion.div>
+      </AnimatePresence>
+    )
+  }
+
+  const InputField = ({ 
+    field, 
+    label, 
+    type = "text", 
+    required = false, 
+    placeholder, 
+    maxLength,
+    children 
+  }: {
+    field: string
+    label: string
+    type?: string
+    required?: boolean
+    placeholder?: string
+    maxLength?: number
+    children?: React.ReactNode
+  }) => (
+    <div>
+      <Label htmlFor={field}>
+        {label} {required && <span className="text-red-500">*</span>}
+      </Label>
+      {children || (
+        <Input
+          id={field}
+          type={type}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          value={formData[field as keyof typeof formData] || ""}
+          onChange={(e) => handleInputChange(field, e.target.value)}
+          onBlur={() => setTouched(prev => ({ ...prev, [field]: true }))}
+          className={cn(
+            errors[field] && touched[field] && "border-red-500 focus:border-red-500"
+          )}
+        />
+      )}
+      <ErrorMessage field={field} />
+    </div>
+  )
 
   if (isLoading) {
     return (
@@ -125,17 +458,29 @@ export default function MyProfilePage() {
             {/* Profile Image */}
             <div className="flex items-center gap-4">
               <Avatar className="h-24 w-24">
-                <AvatarImage src="" />
+                <AvatarImage src={fileUploads.profile_picture ? URL.createObjectURL(fileUploads.profile_picture) : ""} />
                 <AvatarFallback className="text-lg">
                   {user?.name?.charAt(0) || "U"}
                 </AvatarFallback>
               </Avatar>
               <div>
-                <Button variant="outline" size="sm" className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="flex items-center gap-2"
+                  onClick={() => document.getElementById('profile-picture')?.click()}
+                >
                   <Upload className="h-4 w-4" />
                   Upload Photo
                 </Button>
-                <p className="text-sm text-muted-foreground mt-1">JPG, PNG up to 2MB</p>
+                <input
+                  id="profile-picture"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => handleFileUpload('profile_picture', e.target.files?.[0] || null)}
+                />
+                <p className="text-sm text-muted-foreground mt-1">JPG, PNG up to 10MB</p>
               </div>
             </div>
 
@@ -143,28 +488,134 @@ export default function MyProfilePage() {
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-navy">Personal Information</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="first_name">First Name *</Label>
-                  <Input id="first_name" placeholder="Enter first name" />
+                <InputField field="first_name" label="First Name" required placeholder="Enter first name" />
+                <InputField field="middle_name" label="Middle Name" placeholder="Enter middle name" />
+                <InputField field="last_name" label="Last Name" required placeholder="Enter last name" />
+                <InputField field="preferred_name" label="Preferred Name" placeholder="Name you prefer to be called" />
+                
+                {/* ID Number and Nationality Row */}
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* ID Number Field */}
+                  <AnimatePresence>
+                    {formData.nationality === "South Africa" && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.3, ease: "easeInOut" }}
+                        className="transition-opacity duration-300 ease-in-out"
+                      >
+                        <Label htmlFor="id_number">
+                          ID Number <span className="text-red-500">*</span>
+                        </Label>
+                        <Input
+                          id="id_number"
+                          placeholder="13-digit South African ID"
+                          maxLength={13}
+                          value={formData.id_number || ""}
+                          onChange={(e) => {
+                            const value = e.target.value.replace(/\D/g, '') // Only digits
+                            handleInputChange('id_number', value)
+                          }}
+                          onBlur={() => setTouched(prev => ({ ...prev, id_number: true }))}
+                          className={cn(
+                            errors.id_number && touched.id_number && "border-red-500 focus:border-red-500"
+                          )}
+                        />
+                        <ErrorMessage field="id_number" />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  
+                  {/* Nationality Field */}
+                  <div>
+                    <Label htmlFor="nationality">Nationality <span className="text-red-500">*</span></Label>
+                    <Select value={formData.nationality || ""} onValueChange={(value) => {
+                      handleInputChange('nationality', value)
+                      if (value === "South Africa") {
+                        handleInputChange('passport_number', "")
+                        setFileUploads(prev => ({ ...prev, passport_document: null, work_permit: null }))
+                      }
+                    }}>
+                      <SelectTrigger className={cn(errors.nationality && touched.nationality && "border-red-500")}>
+                        <SelectValue placeholder="Select nationality" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="South Africa">South Africa</SelectItem>
+                        <SelectItem value="Namibia">Namibia</SelectItem>
+                        <SelectItem value="Botswana">Botswana</SelectItem>
+                        <SelectItem value="Zimbabwe">Zimbabwe</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <ErrorMessage field="nationality" />
+                  </div>
                 </div>
+                
+                {/* Foreign National Fields - Dynamic based on nationality */}
+                <AnimatePresence>
+                  {formData.nationality !== "South Africa" && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.3, ease: "easeInOut" }}
+                      className="md:col-span-2 space-y-4 transition-opacity duration-300 ease-in-out"
+                    >
+                      <div>
+                        <Label htmlFor="passport_number">Passport Number <span className="text-red-500">*</span></Label>
+                        <Input
+                          id="passport_number"
+                          placeholder="Enter passport number"
+                          value={formData.passport_number || ""}
+                          onChange={(e) => handleInputChange('passport_number', e.target.value)}
+                          onBlur={() => setTouched(prev => ({ ...prev, passport_number: true }))}
+                          className={cn(errors.passport_number && touched.passport_number && "border-red-500 focus:border-red-500")}
+                        />
+                        <ErrorMessage field="passport_number" />
+                      </div>
+                      <div>
+                        <Label htmlFor="passport_document">Upload Passport Document <span className="text-red-500">*</span></Label>
+                        <Input
+                          id="passport_document"
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => handleFileUpload('passport_document', e.target.files?.[0] || null)}
+                        />
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Upload passport document (JPG, PNG, PDF up to 10MB) - Private, encrypted storage
+                        </p>
+                        <ErrorMessage field="passport_document" />
+                      </div>
+                      <div>
+                        <Label htmlFor="work_permit">Upload Work Permit <span className="text-red-500">*</span></Label>
+                        <Input
+                          id="work_permit"
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => handleFileUpload('work_permit', e.target.files?.[0] || null)}
+                        />
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Upload work permit document (JPG, PNG, PDF up to 10MB) - Private, encrypted storage
+                        </p>
+                        <ErrorMessage field="work_permit" />
+                      </div>
+                      <div className="text-sm text-muted-foreground bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        <div className="flex items-center gap-2 text-blue-800">
+                          <AlertCircle className="h-4 w-4" />
+                          <span className="font-medium">Foreign National Verification</span>
+                        </div>
+                        <p className="text-blue-700 mt-1">
+                          ID-based verification is disabled for non-South African nationals. 
+                          Verification will be done via work permit and passport documents.
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                
                 <div>
-                  <Label htmlFor="middle_name">Middle Name</Label>
-                  <Input id="middle_name" placeholder="Enter middle name" />
-                </div>
-                <div>
-                  <Label htmlFor="last_name">Last Name *</Label>
-                  <Input id="last_name" placeholder="Enter last name" />
-                </div>
-                <div>
-                  <Label htmlFor="preferred_name">Preferred Name</Label>
-                  <Input id="preferred_name" placeholder="Name you prefer to be called" />
-                </div>
-                <div>
-                  <Label htmlFor="id_number">ID Number *</Label>
-                  <Input id="id_number" placeholder="13-digit South African ID" maxLength={13} />
-                </div>
-                <div>
-                  <Label htmlFor="dob">Date of Birth *</Label>
+                  <Label htmlFor="dob">Date of Birth <span className="text-red-500">*</span></Label>
                   <Popover>
                     <PopoverTrigger asChild>
                       <Button
@@ -182,16 +633,22 @@ export default function MyProfilePage() {
                       <Calendar
                         mode="single"
                         selected={date}
-                        onSelect={setDate}
+                        onSelect={(selectedDate) => {
+                          setDate(selectedDate)
+                          handleInputChange('dob', selectedDate?.toISOString().split('T')[0] || "")
+                        }}
                         initialFocus
+                        disabled={(date) => date > new Date() || date < new Date("1900-01-01")}
                       />
                     </PopoverContent>
                   </Popover>
+                  <ErrorMessage field="dob" />
                 </div>
+                
                 <div>
-                  <Label htmlFor="sex">Sex *</Label>
-                  <Select>
-                    <SelectTrigger>
+                  <Label htmlFor="sex">Sex <span className="text-red-500">*</span></Label>
+                  <Select value={formData.sex || ""} onValueChange={(value) => handleInputChange('sex', value)}>
+                    <SelectTrigger className={cn(errors.sex && touched.sex && "border-red-500")}>
                       <SelectValue placeholder="Select sex" />
                     </SelectTrigger>
                     <SelectContent>
@@ -199,25 +656,26 @@ export default function MyProfilePage() {
                       <SelectItem value="female">Female</SelectItem>
                     </SelectContent>
                   </Select>
+                  <ErrorMessage field="sex" />
                 </div>
+                
                 <div>
-                  <Label htmlFor="gender">Gender Identity</Label>
-                  <Select>
-                    <SelectTrigger>
+                  <Label htmlFor="gender">Gender Identity <span className="text-red-500">*</span></Label>
+                  <Select value={formData.gender || ""} onValueChange={(value) => handleInputChange('gender', value)}>
+                    <SelectTrigger className={cn(errors.gender && touched.gender && "border-red-500")}>
                       <SelectValue placeholder="Select gender" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="male">Male</SelectItem>
                       <SelectItem value="female">Female</SelectItem>
                       <SelectItem value="other">Other</SelectItem>
-                      <SelectItem value="prefer not to say">Prefer not to say</SelectItem>
+                      <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
                     </SelectContent>
                   </Select>
+                  <ErrorMessage field="gender" />
                 </div>
-                <div>
-                  <Label htmlFor="pronouns">Pronouns</Label>
-                  <Input id="pronouns" placeholder="e.g., he/him, she/her, they/them" />
-                </div>
+                
+                <InputField field="pronouns" label="Pronouns" placeholder="e.g., he/him, she/her, they/them" />
               </div>
             </div>
 
@@ -228,21 +686,21 @@ export default function MyProfilePage() {
                 Contact Details
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="email">Email Address *</Label>
-                  <Input id="email" type="email" placeholder="your.email@company.com" />
-                </div>
-                <div>
-                  <Label htmlFor="phone">Phone Number *</Label>
-                  <Input id="phone" placeholder="+27 XX XXX XXXX" />
-                </div>
-                <div>
-                  <Label htmlFor="alternative_phone">Alternative Phone</Label>
-                  <Input id="alternative_phone" placeholder="+27 XX XXX XXXX" />
-                </div>
+                <InputField field="email" label="Email Address" type="email" required placeholder="your.email@company.com" />
+                <InputField field="phone" label="Phone Number" required placeholder="+27 XX XXX XXXX" />
+                <InputField field="alternative_phone" label="Alternative Phone" placeholder="+27 XX XXX XXXX" />
                 <div className="md:col-span-2">
-                  <Label htmlFor="address">Address *</Label>
-                  <Textarea id="address" placeholder="Enter your full address" rows={3} />
+                  <Label htmlFor="address">Address</Label>
+                  <Textarea
+                    id="address"
+                    placeholder="Enter your full address"
+                    rows={3}
+                    value={formData.address || ""}
+                    onChange={(e) => handleInputChange('address', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, address: true }))}
+                    className={cn(errors.address && touched.address && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="address" />
                 </div>
               </div>
             </div>
@@ -256,9 +714,9 @@ export default function MyProfilePage() {
                   <Input id="employee_id" value={generateEmployeeId()} readOnly className="bg-muted" />
                 </div>
                 <div>
-                  <Label htmlFor="job_title">Job Title *</Label>
-                  <Select>
-                    <SelectTrigger>
+                  <Label htmlFor="job_title">Job Title <span className="text-red-500">*</span></Label>
+                  <Select value={formData.job_title_id || ""} onValueChange={(value) => handleInputChange('job_title_id', value)}>
+                    <SelectTrigger className={cn(errors.job_title_id && touched.job_title_id && "border-red-500")}>
                       <SelectValue placeholder="Select job title" />
                     </SelectTrigger>
                     <SelectContent>
@@ -268,70 +726,41 @@ export default function MyProfilePage() {
                       <SelectItem value="hr">HR Specialist</SelectItem>
                     </SelectContent>
                   </Select>
+                  <ErrorMessage field="job_title_id" />
+                </div>
+                <div>
+                  <Label htmlFor="date_hired">Date Hired <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="date_hired"
+                    type="date"
+                    value={formData.date_hired || ""}
+                    onChange={(e) => handleInputChange('date_hired', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, date_hired: true }))}
+                    className={cn(errors.date_hired && touched.date_hired && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="date_hired" />
                 </div>
               </div>
             </div>
 
-            {/* Tax and Nationality */}
+            {/* Tax Information */}
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-navy">Tax and Nationality</h3>
+              <h3 className="text-lg font-semibold text-navy">Tax Information</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="tax_number">Tax Number</Label>
-                  <Input id="tax_number" placeholder="Enter tax number" />
-                </div>
-                <div>
-                  <Label htmlFor="nationality">Nationality *</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select nationality" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="South Africa">South Africa</SelectItem>
-                      <SelectItem value="United States">United States</SelectItem>
-                      <SelectItem value="United Kingdom">United Kingdom</SelectItem>
-                      <SelectItem value="Other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-
-            {/* Bank Details */}
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-navy flex items-center gap-2">
-                <CreditCard className="h-5 w-5" />
-                Bank Details
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="bank_name">Bank Name</Label>
-                  <Input id="bank_name" placeholder="e.g., Standard Bank" />
-                </div>
-                <div>
-                  <Label htmlFor="account_number">Account Number</Label>
-                  <Input id="account_number" placeholder="Enter account number" />
-                </div>
-                <div>
-                  <Label htmlFor="account_type">Account Type</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select account type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="savings">Savings</SelectItem>
-                      <SelectItem value="cheque">Cheque</SelectItem>
-                      <SelectItem value="business">Business</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="branch_code">Branch Code</Label>
-                  <Input id="branch_code" placeholder="Enter branch code" />
-                </div>
-                <div className="md:col-span-2">
-                  <Label htmlFor="account_holder_name">Account Holder Name</Label>
-                  <Input id="account_holder_name" placeholder="Name on bank account" />
+                  <Input
+                    id="tax_number"
+                    placeholder="Enter tax number"
+                    value={formData.tax_number || ""}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '') // Only digits
+                      handleInputChange('tax_number', value)
+                    }}
+                    onBlur={() => setTouched(prev => ({ ...prev, tax_number: true }))}
+                    className={cn(errors.tax_number && touched.tax_number && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="tax_number" />
                 </div>
               </div>
             </div>
@@ -344,25 +773,64 @@ export default function MyProfilePage() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="kin_first_name">First Name</Label>
-                  <Input id="kin_first_name" placeholder="Enter first name" />
+                  <Label htmlFor="nok_first_name">First Name <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="nok_first_name"
+                    placeholder="Enter first name"
+                    value={nokData.first_name}
+                    onChange={(e) => handleNokChange('first_name', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, nok_first_name: true }))}
+                    className={cn(errors.nok_first_name && touched.nok_first_name && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="nok_first_name" />
                 </div>
                 <div>
-                  <Label htmlFor="kin_last_name">Last Name</Label>
-                  <Input id="kin_last_name" placeholder="Enter last name" />
+                  <Label htmlFor="nok_middle_name">Middle Name</Label>
+                  <Input
+                    id="nok_middle_name"
+                    placeholder="Enter middle name"
+                    value={nokData.middle_name}
+                    onChange={(e) => handleNokChange('middle_name', e.target.value)}
+                  />
                 </div>
                 <div>
-                  <Label htmlFor="kin_email">Email</Label>
-                  <Input id="kin_email" type="email" placeholder="email@example.com" />
+                  <Label htmlFor="nok_last_name">Last Name <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="nok_last_name"
+                    placeholder="Enter last name"
+                    value={nokData.last_name}
+                    onChange={(e) => handleNokChange('last_name', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, nok_last_name: true }))}
+                    className={cn(errors.nok_last_name && touched.nok_last_name && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="nok_last_name" />
                 </div>
                 <div>
-                  <Label htmlFor="kin_phone">Phone</Label>
-                  <Input id="kin_phone" placeholder="+27 XX XXX XXXX" />
+                  <Label htmlFor="nok_email">Email</Label>
+                  <Input
+                    id="nok_email"
+                    type="email"
+                    placeholder="email@example.com"
+                    value={nokData.email}
+                    onChange={(e) => handleNokChange('email', e.target.value)}
+                  />
                 </div>
                 <div>
-                  <Label htmlFor="kin_relationship">Relationship</Label>
-                  <Select>
-                    <SelectTrigger>
+                  <Label htmlFor="nok_phone">Phone <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="nok_phone"
+                    placeholder="+27 XX XXX XXXX"
+                    value={nokData.phone}
+                    onChange={(e) => handleNokChange('phone', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, nok_phone: true }))}
+                    className={cn(errors.nok_phone && touched.nok_phone && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="nok_phone" />
+                </div>
+                <div>
+                  <Label htmlFor="nok_relationship">Relationship <span className="text-red-500">*</span></Label>
+                  <Select value={nokData.relationship} onValueChange={(value) => handleNokChange('relationship', value)}>
+                    <SelectTrigger className={cn(errors.nok_relationship && touched.nok_relationship && "border-red-500")}>
                       <SelectValue placeholder="Select relationship" />
                     </SelectTrigger>
                     <SelectContent>
@@ -373,20 +841,186 @@ export default function MyProfilePage() {
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
+                  <ErrorMessage field="nok_relationship" />
                 </div>
               </div>
             </div>
 
+            {/* Banking Details */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-navy flex items-center gap-2">
+                <CreditCard className="h-5 w-5" />
+                Banking Details
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="bank_full_name">Full Name <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="bank_full_name"
+                    placeholder="Name on bank account"
+                    value={bankData.full_name}
+                    onChange={(e) => handleBankChange('full_name', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, bank_full_name: true }))}
+                    className={cn(errors.bank_full_name && touched.bank_full_name && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="bank_full_name" />
+                </div>
+                <div>
+                  <Label htmlFor="bank_id_number">ID Number <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="bank_id_number"
+                    placeholder="13-digit South African ID"
+                    maxLength={13}
+                    value={bankData.id_number}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '')
+                      handleBankChange('id_number', value)
+                    }}
+                    onBlur={() => setTouched(prev => ({ ...prev, bank_id_number: true }))}
+                    className={cn(errors.bank_id_number && touched.bank_id_number && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="bank_id_number" />
+                </div>
+                <div>
+                  <Label htmlFor="bank_email">Email <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="bank_email"
+                    type="email"
+                    placeholder="your.email@company.com"
+                    value={bankData.email}
+                    onChange={(e) => handleBankChange('email', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, bank_email: true }))}
+                    className={cn(errors.bank_email && touched.bank_email && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="bank_email" />
+                </div>
+                <div>
+                  <Label htmlFor="bank_phone">Phone <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="bank_phone"
+                    placeholder="+27 XX XXX XXXX"
+                    value={bankData.phone}
+                    onChange={(e) => handleBankChange('phone', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, bank_phone: true }))}
+                    className={cn(errors.bank_phone && touched.bank_phone && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="bank_phone" />
+                </div>
+                <div className="md:col-span-2">
+                  <Label htmlFor="bank_address">Address <span className="text-red-500">*</span></Label>
+                  <Textarea
+                    id="bank_address"
+                    placeholder="Enter your full address"
+                    rows={3}
+                    value={bankData.address}
+                    onChange={(e) => handleBankChange('address', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, bank_address: true }))}
+                    className={cn(errors.bank_address && touched.bank_address && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="bank_address" />
+                </div>
+                <div>
+                  <Label htmlFor="bank_name">Bank Name <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="bank_name"
+                    placeholder="e.g., Standard Bank"
+                    value={bankData.bank_name}
+                    onChange={(e) => handleBankChange('bank_name', e.target.value)}
+                    onBlur={() => setTouched(prev => ({ ...prev, bank_name: true }))}
+                    className={cn(errors.bank_name && touched.bank_name && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="bank_name" />
+                </div>
+                <div>
+                  <Label htmlFor="account_number">Account Number <span className="text-red-500">*</span></Label>
+                  <Input
+                    id="account_number"
+                    placeholder="Enter account number"
+                    value={bankData.account_number}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '')
+                      handleBankChange('account_number', value)
+                    }}
+                    onBlur={() => setTouched(prev => ({ ...prev, account_number: true }))}
+                    className={cn(errors.account_number && touched.account_number && "border-red-500 focus:border-red-500")}
+                  />
+                  <ErrorMessage field="account_number" />
+                </div>
+                <div>
+                  <Label htmlFor="branch_number">Branch Code</Label>
+                  <Input
+                    id="branch_number"
+                    placeholder="Enter branch code"
+                    value={bankData.branch_number}
+                    onChange={(e) => handleBankChange('branch_number', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="account_type">Account Type</Label>
+                  <Select value={bankData.account_type} onValueChange={(value) => handleBankChange('account_type', value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select account type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Cheque">Cheque</SelectItem>
+                      <SelectItem value="Savings">Savings</SelectItem>
+                      <SelectItem value="Business">Business</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            {/* Re-authentication Warning */}
+            {requiresReauth && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 text-yellow-800">
+                  <AlertCircle className="h-5 w-5" />
+                  <span className="font-medium">Re-authentication Required</span>
+                </div>
+                <p className="text-yellow-700 mt-1">
+                  You're updating sensitive information. Please re-authenticate to continue.
+                </p>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="mt-2"
+                  onClick={() => setRequiresReauth(false)}
+                >
+                  Re-authenticate
+                </Button>
+              </div>
+            )}
+
             {/* Save Button */}
             <div className="flex justify-end pt-6">
-              <Button onClick={handleSaveProfile} className="px-8">
-                Save Profile
+              <Button 
+                onClick={handleSaveProfile} 
+                disabled={isSubmitting || isValidating}
+                className="px-8"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Saving...
+                  </>
+                ) : isValidating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Validating...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Save Profile
+                  </>
+                )}
               </Button>
             </div>
           </CardContent>
         </Card>
       ) : (
-        /* View Profile */
+        /* View Profile - Keep existing view mode */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Profile Summary */}
           <div className="lg:col-span-1">
