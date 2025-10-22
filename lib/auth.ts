@@ -26,7 +26,15 @@ export function hasPermission(user: User | null, permission: string): boolean {
   if (!user) return false
 
   const permissions: Record<UserRole, string[]> = {
-    employee: ["view_own_profile", "request_leave", "upload_documents", "view_payslips"],
+    employee: [
+      "view_own_profile", 
+      "request_leave", 
+      "upload_documents", 
+      "view_payslips",
+      "borrow_devices",
+      "return_devices",
+      "view_own_activity",
+    ],
     junior_hr: [
       "view_own_profile",
       "request_leave",
@@ -35,6 +43,14 @@ export function hasPermission(user: User | null, permission: string): boolean {
       "view_employees",
       "approve_leave",
       "verify_documents",
+      "borrow_devices",
+      "return_devices",
+      "view_own_activity",
+      "add_devices",
+      "approve_borrow_requests",
+      "approve_return_requests",
+      "view_all_activity",
+      "manage_condition_reports",
     ],
     hr_manager: [
       "view_own_profile",
@@ -47,6 +63,15 @@ export function hasPermission(user: User | null, permission: string): boolean {
       "edit_employees",
       "manage_users",
       "view_reports",
+      "borrow_devices",
+      "return_devices",
+      "view_own_activity",
+      "add_devices",
+      "approve_borrow_requests",
+      "approve_return_requests",
+      "view_all_activity",
+      "manage_condition_reports",
+      "manage_ams_settings",
     ],
     super_admin: ["*"], // All permissions
   }

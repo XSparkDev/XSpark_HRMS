@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useState } from "react"
+import { type ReactNode, useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -15,7 +15,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { XSparkLogo } from "@/components/xspark-logo"
-import { getCurrentUser, logout, getRoleBadgeColor, getRoleDisplayName, hasPermission } from "@/lib/auth"
+import { type User as AuthUser, getCurrentUser, logout, getRoleBadgeColor, getRoleDisplayName, hasPermission } from "@/lib/auth"
 import {
   Home,
   Users,
@@ -29,7 +29,14 @@ import {
   Menu,
   X,
   MessageSquare,
-  User,
+  User as UserIcon,
+  Package,
+  Plus,
+  CheckCircle2,
+  Activity,
+  TrendingUp,
+  FileText,
+  ArrowLeft,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -37,14 +44,31 @@ interface DashboardLayoutProps {
   children: ReactNode
 }
 
-export function DashboardLayout({ children }: DashboardLayoutProps) {
+function DashboardContent({ children }: DashboardLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
-  const user = getCurrentUser()
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [isReady, setIsReady] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
-  if (!user) {
-    router.push("/login")
+  useEffect(() => {
+    const current = getCurrentUser()
+    if (!current) {
+      router.push("/login")
+      return
+    }
+    
+    // If user is on root dashboard, redirect to system selector
+    if (pathname === "/dashboard") {
+      router.push("/system-selector")
+      return
+    }
+    
+    setUser(current)
+    setIsReady(true)
+  }, [router, pathname])
+
+  if (!isReady || !user) {
     return null
   }
 
@@ -53,14 +77,28 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     router.push("/login")
   }
 
-  const navigation = [
-    { name: "Dashboard", href: "/dashboard", icon: Home, permission: "*" },
-    { name: "My Profile", href: "/profile", icon: User, permission: "*" },
-    { name: "Employees", href: "/employees", icon: Users, permission: "view_employees" },
-    { name: "Leave Requests", href: "/leave", icon: Calendar, permission: "*" },
-    { name: "Documents", href: "/documents", icon: FolderOpen, permission: "*" },
-    { name: "Audit Logs", href: "/audit", icon: ClipboardList, permission: "*", adminOnly: true },
-  ]
+  // Determine current system based on pathname
+  const isHRMS = pathname.startsWith("/hrms")
+  const isAMS = pathname.startsWith("/ams")
+  
+  const navigation = isHRMS ? [
+    { name: "Dashboard", href: "/hrms/dashboard", icon: Home, permission: "*" },
+    { name: "My Profile", href: "/hrms/profile", icon: UserIcon, permission: "*" },
+    { name: "Employees", href: "/hrms/employees", icon: Users, permission: "view_employees" },
+    { name: "Leave Requests", href: "/hrms/leave", icon: Calendar, permission: "*" },
+    { name: "Documents", href: "/hrms/documents", icon: FolderOpen, permission: "*" },
+    { name: "Audit Logs", href: "/hrms/audit", icon: ClipboardList, permission: "*", adminOnly: true },
+  ] : isAMS ? [
+    { name: "Dashboard", href: "/ams/dashboard", icon: Home, permission: "*" },
+    { name: "All Devices", href: "/ams/all-devices", icon: Package, permission: "*" },
+    { name: "Add Device", href: "/ams/add", icon: Plus, permission: "add_devices" },
+    { name: "Borrow Device", href: "/ams/borrow", icon: Package, permission: "borrow_devices" },
+    { name: "Return Device", href: "/ams/return", icon: CheckCircle2, permission: "return_devices" },
+    { name: "Activity Log", href: "/ams/activity", icon: Activity, permission: "*" },
+    { name: "Device Status", href: "/ams/status", icon: TrendingUp, permission: "*" },
+    { name: "Condition Reports", href: "/ams/reports", icon: FileText, permission: "*" },
+    { name: "AMS Settings", href: "/ams/settings", icon: Settings, permission: "manage_ams_settings" },
+  ] : []
 
   const filteredNavigation = navigation.filter((item) => {
     if (item.adminOnly && user.role !== "super_admin") return false
@@ -79,9 +117,25 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </Button>
 
           {/* Logo */}
-          <Link href="/dashboard" className="flex items-center">
+          <Link href={isHRMS ? "/hrms/dashboard" : isAMS ? "/ams/dashboard" : "/system-selector"} className="flex items-center">
             <XSparkLogo className="h-8 w-auto" />
           </Link>
+
+          {/* System Switcher */}
+          <div className="flex items-center gap-2 ml-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => router.push("/system-selector")}
+              className="text-sm font-medium"
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Switch System
+            </Button>
+            <Badge variant="outline" className="text-xs">
+              {isHRMS ? "HRMS" : isAMS ? "AMS" : "Platform"}
+            </Badge>
+          </div>
 
           {/* Search (HR Manager and above) */}
           {hasPermission(user, "view_employees") && (
@@ -133,7 +187,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
                 <Link href="/profile" className="cursor-pointer">
-                  <User className="mr-2 h-4 w-4" />
+                  <UserIcon className="mr-2 h-4 w-4" />
                   My Profile
                 </Link>
               </DropdownMenuItem>
@@ -207,4 +261,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       )}
     </div>
   )
+}
+
+export function DashboardLayout({ children }: DashboardLayoutProps) {
+  return <DashboardContent>{children}</DashboardContent>
 }
