@@ -15,6 +15,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { XSparkLogo } from "@/components/xspark-logo"
+import { AIChatWidget } from "@/components/ai-chat-widget"
 import { getCurrentUser, logout, getRoleBadgeColor, getRoleDisplayName, hasPermission, User } from "@/lib/auth"
 import {
   Home,
@@ -201,15 +202,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <main className="flex-1 p-6">{children}</main>
       </div>
 
-      {/* AI Chatbot Widget */}
-      <div className="fixed bottom-6 right-6 z-50">
-        <Button
-          size="icon"
-          className="h-14 w-14 rounded-full gradient-primary text-white shadow-lg hover:shadow-xl transition-all animate-pulse"
-        >
-          <MessageSquare className="h-6 w-6" />
-        </Button>
-      </div>
+      {/* AI Chat Widget */}
+      <AIChatWidget />
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
