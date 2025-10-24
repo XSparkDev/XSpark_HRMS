@@ -1,0 +1,704 @@
+{
+  "info": {
+    "name": "X Spark HRMS - Authentication API",
+    "description": "Complete authentication system testing for X Spark HRMS",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "employee_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "user_email",
+      "value": "test.user@xspark.com",
+      "type": "string"
+    },
+    {
+      "key": "user_password",
+      "value": "SecurePass123!",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "1. Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.success && response.data.session) {",
+                  "        pm.collectionVariables.set('access_token', response.data.session.access_token);",
+                  "        pm.collectionVariables.set('employee_id', response.data.employee.id);",
+                  "        console.log('Login successful! Token saved.');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{user_email}}\",\n  \"password\": \"{{user_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Login with email and password. Saves access token for subsequent requests."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "me"]
+            },
+            "description": "Get current authenticated user with employee data. Requires valid session."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "logout"]
+            },
+            "description": "Logout current user and invalidate session."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Signup",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new.user@xspark.com\",\n  \"password\": \"SecurePass123!\",\n  \"first_name\": \"New\",\n  \"last_name\": \"User\",\n  \"phone\": \"+27123456789\",\n  \"metadata\": {\n    \"department\": \"Engineering\",\n    \"role\": \"developer\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/signup",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "signup"]
+            },
+            "description": "Create new auth user (does not create employee record)."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Request Password Reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{user_email}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/reset-password",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "reset-password"]
+            },
+            "description": "Request password reset email for user."
+          },
+          "response": []
+        },
+        {
+          "name": "6. Update Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newPassword\": \"NewSecurePass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/reset-password",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "reset-password"]
+            },
+            "description": "Update password (requires valid session)."
+          },
+          "response": []
+        }
+      ],
+      "description": "Authentication endpoints for login, logout, signup, and password management."
+    },
+    {
+      "name": "Employee Management",
+      "item": [
+        {
+          "name": "1. Create Employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"John\",\n  \"last_name\": \"Smith\",\n  \"email\": \"john.smith@xspark.com\",\n  \"dob\": \"1985-03-15\",\n  \"sex\": \"male\",\n  \"nationality\": \"South Africa\",\n  \"id_number\": \"8503151234567\",\n  \"date_hired\": \"2023-01-15\",\n  \"phone\": \"+27123456789\",\n  \"address\": \"123 Main Street, Cape Town\",\n  \"employment_status\": \"active\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/employees",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees"]
+            },
+            "description": "Create new employee record (database only, no login access)."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get All Employees",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/employees",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees"]
+            },
+            "description": "Get all active employees."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Employee by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/employees/{{employee_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees", "{{employee_id}}"]
+            },
+            "description": "Get specific employee by ID."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Update Employee",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+27123456790\",\n  \"address\": \"456 Updated Street, Cape Town\",\n  \"employment_status\": \"active\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/employees/{{employee_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees", "{{employee_id}}"]
+            },
+            "description": "Update employee information."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Create Foreign Employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"David\",\n  \"last_name\": \"Williams\",\n  \"email\": \"david.williams@xspark.com\",\n  \"dob\": \"1988-11-08\",\n  \"sex\": \"male\",\n  \"nationality\": \"United Kingdom\",\n  \"passport_number\": \"GB123456789\",\n  \"passport_document_url\": \"https://example.com/passport.pdf\",\n  \"work_permit_url\": \"https://example.com/workpermit.pdf\",\n  \"date_hired\": \"2023-03-10\",\n  \"employment_status\": \"probation\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/employees",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees"]
+            },
+            "description": "Create foreign national employee with passport number."
+          },
+          "response": []
+        }
+      ],
+      "description": "Employee CRUD operations."
+    },
+    {
+      "name": "Error Testing",
+      "item": [
+        {
+          "name": "1. Login with Invalid Credentials",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{user_email}}\",\n  \"password\": \"wrongpassword\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Test login with incorrect password (should return 401)."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Login with Non-existent Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nonexistent@xspark.com\",\n  \"password\": \"Password123!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "login"]
+            },
+            "description": "Test login with non-existent email (should return 401)."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Signup with Weak Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"weak@xspark.com\",\n  \"password\": \"123\",\n  \"first_name\": \"Weak\",\n  \"last_name\": \"Password\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/signup",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "signup"]
+            },
+            "description": "Test signup with weak password (should return 400 with validation errors)."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Signup with Invalid Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-email\",\n  \"password\": \"SecurePass123!\",\n  \"first_name\": \"Invalid\",\n  \"last_name\": \"Email\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/auth/signup",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "signup"]
+            },
+            "description": "Test signup with invalid email format (should return 400)."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Create Employee with Missing Required Fields",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Incomplete\",\n  \"email\": \"incomplete@xspark.com\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/employees",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees"]
+            },
+            "description": "Test employee creation with missing required fields (should return 400)."
+          },
+          "response": []
+        },
+        {
+          "name": "6. Create Employee with Constraint Violation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Constraint\",\n  \"last_name\": \"Violation\",\n  \"email\": \"constraint@xspark.com\",\n  \"dob\": \"1990-01-01\",\n  \"sex\": \"male\",\n  \"nationality\": \"South Africa\",\n  \"date_hired\": \"2023-01-01\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/employees",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees"]
+            },
+            "description": "Test employee creation without ID/passport (should violate constraint)."
+          },
+          "response": []
+        },
+        {
+          "name": "7. Access Protected Route Without Auth",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "me"]
+            },
+            "description": "Test accessing protected route without authentication (should return 401)."
+          },
+          "response": []
+        }
+      ],
+      "description": "Error scenarios and edge cases testing."
+    },
+    {
+      "name": "Database Tests",
+      "item": [
+        {
+          "name": "1. Test Database Connection",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/supabase/simple-test",
+              "host": ["{{base_url}}"],
+              "path": ["api", "supabase", "simple-test"]
+            },
+            "description": "Test database connectivity and basic operations."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Test Employee Service",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/employees/test",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees", "test"]
+            },
+            "description": "Test employee service methods directly."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Simple Employee Creation Test",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/employees/simple-create",
+              "host": ["{{base_url}}"],
+              "path": ["api", "employees", "simple-create"]
+            },
+            "description": "Test minimal employee creation."
+          },
+          "response": []
+        }
+      ],
+      "description": "Database connectivity and service testing."
+    },
+    {
+      "name": "Workflow Tests",
+      "item": [
+        {
+          "name": "1. Complete Employee + Auth Workflow",
+          "item": [
+            {
+              "name": "Step 1: Create Employee",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    const response = pm.response.json();",
+                      "    if (response.success && response.data) {",
+                      "        pm.collectionVariables.set('workflow_employee_id', response.data.id);",
+                      "        console.log('Employee created:', response.data.id);",
+                      "    }",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"first_name\": \"Workflow\",\n  \"last_name\": \"Test\",\n  \"email\": \"workflow.test@xspark.com\",\n  \"dob\": \"1990-01-01\",\n  \"sex\": \"female\",\n  \"nationality\": \"South Africa\",\n  \"id_number\": \"9001019876543\",\n  \"date_hired\": \"2025-01-01\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/employees",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "employees"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Step 2: Signup Auth User",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    const response = pm.response.json();",
+                      "    if (response.success && response.data.user) {",
+                      "        pm.collectionVariables.set('workflow_auth_user_id', response.data.user.id);",
+                      "        console.log('Auth user created:', response.data.user.id);",
+                      "    }",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"workflow.test@xspark.com\",\n  \"password\": \"WorkflowPass123!\",\n  \"first_name\": \"Workflow\",\n  \"last_name\": \"Test\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/signup",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "signup"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Step 3: Login",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "if (pm.response.code === 200) {",
+                      "    const response = pm.response.json();",
+                      "    if (response.success && response.data.session) {",
+                      "        pm.collectionVariables.set('workflow_access_token', response.data.session.access_token);",
+                      "        console.log('Login successful!');",
+                      "    }",
+                      "}"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"workflow.test@xspark.com\",\n  \"password\": \"WorkflowPass123!\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/auth/login",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "login"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Step 4: Get User Data",
+              "request": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{workflow_access_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/auth/me",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "me"]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Step 5: Logout",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{base_url}}/api/auth/logout",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "auth", "logout"]
+                }
+              },
+              "response": []
+            }
+          ],
+          "description": "Complete workflow: Create employee → Create auth user → Login → Get data → Logout"
+        }
+      ],
+      "description": "End-to-end workflow testing."
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Set default values if not already set",
+          "if (!pm.collectionVariables.get('base_url')) {",
+          "    pm.collectionVariables.set('base_url', 'http://localhost:3000');",
+          "}",
+          "",
+          "// Log request details",
+          "console.log('Making request to:', pm.request.url.toString());",
+          "console.log('Method:', pm.request.method);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global test script",
+          "pm.test('Response time is less than 5000ms', function () {",
+          "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+          "});",
+          "",
+          "pm.test('Response has success field', function () {",
+          "    const response = pm.response.json();",
+          "    pm.expect(response).to.have.property('success');",
+          "});",
+          "",
+          "// Log response for debugging",
+          "console.log('Response status:', pm.response.status);",
+          "console.log('Response time:', pm.response.responseTime + 'ms');"
+        ]
+      }
+    }
+  ]
+}

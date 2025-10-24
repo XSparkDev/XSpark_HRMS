@@ -7,6 +7,19 @@
 // Base service class
 export { BaseService } from './base-service'
 
+// Authentication service
+export {
+  AuthService,
+  authService,
+  type AuthUser,
+  type Session,
+  type LoginCredentials,
+  type SignupData,
+  type AuthResponse,
+  type PasswordResetRequest,
+  type PasswordChangeRequest
+} from './auth-service'
+
 // Core services
 export { 
   EmployeeService, 
@@ -57,6 +70,7 @@ export { notesService as legacyNotesService } from './notes-service'
 export { documentsService } from './documents-service'
 
 // Import services for ServiceFactory
+import { authService } from './auth-service'
 import { employeeService } from './employee-service'
 import { leaveManagementService } from './leave-service'
 import { payrollService } from './payroll-service'
@@ -70,6 +84,9 @@ export class ServiceFactory {
   static getService<T>(serviceName: string): T {
     if (!this.instances.has(serviceName)) {
       switch (serviceName) {
+        case 'auth':
+          this.instances.set(serviceName, authService)
+          break
         case 'employee':
           this.instances.set(serviceName, employeeService)
           break
@@ -95,6 +112,7 @@ export class ServiceFactory {
 
 // Default exports for convenience
 export default {
+  authService,
   employeeService,
   leaveManagementService,
   payrollService,

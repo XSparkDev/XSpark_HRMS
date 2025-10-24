@@ -1,0 +1,4 @@
+first_name,last_name,email,dob,sex,nationality,employment_status,date_hired,is_active
+John,Smith,john.smith@test.com,1985-03-15,male,South Africa,active,2023-01-15,true
+Sarah,Johnson,sarah.johnson@test.com,1990-07-22,female,South Africa,active,2023-02-01,true
+David,Williams,david.williams@test.com,1988-11-08,male,United Kingdom,active,2023-03-10,true
