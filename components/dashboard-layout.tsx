@@ -74,6 +74,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: "Leave Requests", href: "/leave", icon: Calendar, permission: "*" },
     { name: "Documents", href: "/documents", icon: FolderOpen, permission: "*" },
     { name: "Audit Logs", href: "/audit", icon: ClipboardList, permission: "*", adminOnly: true },
+    { name: "Switch System", href: "/system-selector", icon: Settings, permission: "*" },
   ]
 
   const filteredNavigation = navigation.filter((item) => {

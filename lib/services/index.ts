@@ -7,19 +7,6 @@
 // Base service class
 export { BaseService } from './base-service'
 
-// Authentication service
-export {
-  AuthService,
-  authService,
-  type AuthUser,
-  type Session,
-  type LoginCredentials,
-  type SignupData,
-  type AuthResponse,
-  type PasswordResetRequest,
-  type PasswordChangeRequest
-} from './auth-service'
-
 // Core services
 export { 
   EmployeeService, 
@@ -69,13 +56,52 @@ export {
 export { notesService as legacyNotesService } from './notes-service'
 export { documentsService } from './documents-service'
 
+// AMS services
+export { 
+  ResourcesService, 
+  resourcesService,
+  type Resource,
+  type CreateResourceData,
+  type UpdateResourceData,
+  type ResourceFilters
+} from './resources-service'
+
+export { 
+  BookingsService, 
+  bookingsService,
+  type Booking,
+  type CreateBookingData,
+  type UpdateBookingData,
+  type BookingFilters
+} from './bookings-service'
+
+export { 
+  ScanLogsService, 
+  scanLogsService,
+  type ScanLog,
+  type CreateScanLogData,
+  type ScanLogFilters
+} from './scan-logs-service'
+
+export { 
+  IncidentsService, 
+  incidentsService,
+  type Incident,
+  type CreateIncidentData,
+  type UpdateIncidentData,
+  type IncidentFilters
+} from './incidents-service'
+
 // Import services for ServiceFactory
-import { authService } from './auth-service'
 import { employeeService } from './employee-service'
 import { leaveManagementService } from './leave-service'
 import { payrollService } from './payroll-service'
 import { notesService } from './notes-service-new'
 import { storageService } from './storage-service'
+import { resourcesService } from './resources-service'
+import { bookingsService } from './bookings-service'
+import { scanLogsService } from './scan-logs-service'
+import { incidentsService } from './incidents-service'
 
 // Service factory for dependency injection
 export class ServiceFactory {
@@ -84,9 +110,6 @@ export class ServiceFactory {
   static getService<T>(serviceName: string): T {
     if (!this.instances.has(serviceName)) {
       switch (serviceName) {
-        case 'auth':
-          this.instances.set(serviceName, authService)
-          break
         case 'employee':
           this.instances.set(serviceName, employeeService)
           break
@@ -102,6 +125,18 @@ export class ServiceFactory {
         case 'storage':
           this.instances.set(serviceName, storageService)
           break
+        case 'resources':
+          this.instances.set(serviceName, resourcesService)
+          break
+        case 'bookings':
+          this.instances.set(serviceName, bookingsService)
+          break
+        case 'scanLogs':
+          this.instances.set(serviceName, scanLogsService)
+          break
+        case 'incidents':
+          this.instances.set(serviceName, incidentsService)
+          break
         default:
           throw new Error(`Unknown service: ${serviceName}`)
       }
@@ -112,11 +147,14 @@ export class ServiceFactory {
 
 // Default exports for convenience
 export default {
-  authService,
   employeeService,
   leaveManagementService,
   payrollService,
   notesService,
   storageService,
+  resourcesService,
+  bookingsService,
+  scanLogsService,
+  incidentsService,
   ServiceFactory
 }

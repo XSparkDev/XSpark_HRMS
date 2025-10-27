@@ -42,7 +42,7 @@ export default function LoginPage() {
     if (user) {
       // Store user data in localStorage for demo
       localStorage.setItem("xspark_user", JSON.stringify(user))
-      router.push("/dashboard")
+      router.push("/system-selector")
     } else {
       setError("Invalid email or password")
     }

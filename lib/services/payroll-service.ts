@@ -370,7 +370,7 @@ export class PayrollService {
         email: employee.email,
         phone: employee.phone,
         address: employee.address,
-        job_title: jobTitle.job_titles?.title || 'Unknown',
+        job_title: jobTitle.job_titles?.[0]?.title || 'Unknown',
         pay_date: payDate,
         pay_period_from: payPeriod.from,
         pay_period_to: payPeriod.to,
