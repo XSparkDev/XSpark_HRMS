@@ -18,6 +18,7 @@ import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { EmployeeProfile, EmployeeFilters } from "@/lib/types/employee"
 import { getCurrentUser, hasPermission } from "@/lib/auth"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function EmployeeManagementPage() {
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
@@ -25,6 +26,11 @@ export default function EmployeeManagementPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [activeAddTab, setActiveAddTab] = useState("manual")
+  const [isAppointmentConfirmOpen, setIsAppointmentConfirmOpen] = useState(false)
+  const [isSendEmailOpen, setIsSendEmailOpen] = useState(false)
+  const [gmail, setGmail] = useState("")
+  const [gmailError, setGmailError] = useState("")
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeProfile | null>(null)
   const [filters, setFilters] = useState<EmployeeFilters>({})
   const [searchTerm, setSearchTerm] = useState("")
@@ -119,6 +125,7 @@ export default function EmployeeManagementPage() {
     // Implement create employee logic
     console.log("Creating employee...")
     setIsCreateModalOpen(false)
+    setIsAppointmentConfirmOpen(true)
   }
 
   const handleEditEmployee = (employee: EmployeeProfile) => {
@@ -176,23 +183,61 @@ export default function EmployeeManagementPage() {
           <h1 className="text-3xl font-bold text-navy">Employee Management</h1>
           <p className="text-muted-foreground mt-2">Manage employee profiles and information</p>
         </div>
-        <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
-          <DialogTrigger asChild>
-            <Button className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Add Employee
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Add New Employee</DialogTitle>
-            </DialogHeader>
-            <EmployeeForm 
-              onSubmit={handleCreateEmployee}
-              employeeId={generateEmployeeId()}
-            />
-          </DialogContent>
-        </Dialog>
+        <div className="flex items-center gap-2">
+          {/* Add Employee */}
+          <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+            <DialogTrigger asChild>
+              <Button className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                Add Employee
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Add New Employee</DialogTitle>
+              </DialogHeader>
+              {/* Tabs for Search by ID / Manual Input */}
+              <Tabs value={activeAddTab} onValueChange={setActiveAddTab} className="mt-2">
+                <TabsList>
+                  <TabsTrigger value="search">Search by ID</TabsTrigger>
+                  <TabsTrigger value="manual">Manual Input</TabsTrigger>
+                </TabsList>
+                <TabsContent value="search" className="pt-4">
+                  <div className="flex flex-col sm:flex-row items-end gap-3 sm:gap-4">
+                    <div className="flex-1">
+                      <Label htmlFor="searchIdNumber">ID Number</Label>
+                      <Input id="searchIdNumber" placeholder="enter ID number" className="mt-2 uniform-input" />
+                    </div>
+                    <Button
+                      className="mt-2 sm:mt-0"
+                      onClick={() => {
+                        const idInput = (document.getElementById("searchIdNumber") as HTMLInputElement)
+                        const idVal = idInput?.value?.trim()
+                        if (!idVal) return alert("Please enter an ID Number")
+                        console.log({ idNumber: idVal })
+                        // Neutral info for now
+                        alert("Search would call API — partner integration required")
+                      }}
+                    >
+                      Search Employee
+                    </Button>
+                  </div>
+                </TabsContent>
+                <TabsContent value="manual" className="pt-4">
+                  <EmployeeForm 
+                    onSubmit={() => {
+                      // simulate creation
+                      console.log('createEmployeePayload', '...payload from form')
+                      setIsCreateModalOpen(false)
+                      setIsAppointmentConfirmOpen(true)
+                    }}
+                    employeeId={generateEmployeeId()}
+                  />
+                </TabsContent>
+              </Tabs>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       {/* Filters */}
@@ -200,18 +245,18 @@ export default function EmployeeManagementPage() {
         <CardContent className="p-6">
           <div className="flex flex-col md:flex-row gap-4">
             <div className="flex-1">
-              <div className="relative">
+            <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Search employees..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 uniform-input"
                 />
               </div>
             </div>
             <Select value={filters.department} onValueChange={(value) => setFilters({...filters, department: value})}>
-              <SelectTrigger className="w-full md:w-48">
+              <SelectTrigger className="w-full md:w-48 uniform-input">
                 <SelectValue placeholder="Department" />
               </SelectTrigger>
               <SelectContent>
@@ -222,7 +267,7 @@ export default function EmployeeManagementPage() {
               </SelectContent>
             </Select>
             <Select value={filters.status} onValueChange={(value) => setFilters({...filters, status: value as 'active' | 'inactive'})}>
-              <SelectTrigger className="w-full md:w-48">
+              <SelectTrigger className="w-full md:w-48 uniform-input">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
@@ -355,6 +400,44 @@ export default function EmployeeManagementPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Appointment Letter Confirmation */}
+      <Dialog open={isAppointmentConfirmOpen} onOpenChange={setIsAppointmentConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Appointment letter has been created</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">Select an option to proceed:</p>
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={() => setIsAppointmentConfirmOpen(false)}>Close</Button>
+            <Button onClick={() => { setIsAppointmentConfirmOpen(false); setIsSendEmailOpen(true) }}>Send to employee</Button>
+            <Button>Review Letter</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send Email Modal */}
+      <Dialog open={isSendEmailOpen} onOpenChange={setIsSendEmailOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send appointment letter</DialogTitle>
+          </DialogHeader>
+          <div>
+            <Label htmlFor="gmail">Employee Gmail address</Label>
+            <Input id="gmail" placeholder="employee@gmail.com" value={gmail} onChange={(e) => { setGmail(e.target.value); setGmailError("") }} className="mt-2 uniform-input" />
+            {gmailError && <p className="text-sm text-red-500 mt-1">{gmailError}</p>}
+          </div>
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={() => setIsSendEmailOpen(false)}>Cancel</Button>
+            <Button onClick={() => {
+              const re = /^[a-zA-Z0-9._%+-]+@gmail\.com$/i
+              if (!re.test(gmail)) { setGmailError("Please enter a valid Gmail address (example: name@gmail.com)"); return }
+              console.log({ sendEmail: gmail, payload: 'appointmentLetterPayload' })
+              setIsSendEmailOpen(false)
+            }}>Send</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -376,6 +459,7 @@ function EmployeeForm({
     middle_name: employee?.middle_name || "",
     last_name: employee?.last_name || "",
     preferred_name: employee?.preferred_name || "",
+    id_number: (employee as any)?.id_number || "",
     email: employee?.email || "",
     phone: employee?.phone || "",
     alternative_phone: employee?.alternative_phone || "",
@@ -408,6 +492,7 @@ function EmployeeForm({
               value={formData.first_name}
               onChange={(e) => setFormData({...formData, first_name: e.target.value})}
               required
+              className="uniform-input"
             />
           </div>
           <div>
@@ -416,6 +501,7 @@ function EmployeeForm({
               id="middle_name"
               value={formData.middle_name}
               onChange={(e) => setFormData({...formData, middle_name: e.target.value})}
+              className="uniform-input"
             />
           </div>
           <div>
@@ -425,6 +511,7 @@ function EmployeeForm({
               value={formData.last_name}
               onChange={(e) => setFormData({...formData, last_name: e.target.value})}
               required
+              className="uniform-input"
             />
           </div>
           <div>
@@ -433,6 +520,17 @@ function EmployeeForm({
               id="preferred_name"
               value={formData.preferred_name}
               onChange={(e) => setFormData({...formData, preferred_name: e.target.value})}
+              className="uniform-input"
+            />
+          </div>
+          <div>
+            <Label htmlFor="id_number">ID Number *</Label>
+            <Input
+              id="id_number"
+              value={formData.id_number}
+              onChange={(e) => setFormData({...formData, id_number: e.target.value})}
+              className="uniform-input"
+              required
             />
           </div>
           <div>
@@ -443,12 +541,13 @@ function EmployeeForm({
               value={formData.dob}
               onChange={(e) => setFormData({...formData, dob: e.target.value})}
               required
+              className="uniform-input"
             />
           </div>
           <div>
             <Label htmlFor="sex">Sex *</Label>
             <Select value={formData.sex} onValueChange={(value) => setFormData({...formData, sex: value as 'male' | 'female'})}>
-              <SelectTrigger>
+              <SelectTrigger className="uniform-input">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -460,7 +559,7 @@ function EmployeeForm({
           <div>
             <Label htmlFor="gender">Gender Identity</Label>
             <Select value={formData.gender} onValueChange={(value) => setFormData({...formData, gender: value as any})}>
-              <SelectTrigger>
+              <SelectTrigger className="uniform-input">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -478,6 +577,7 @@ function EmployeeForm({
               value={formData.pronouns}
               onChange={(e) => setFormData({...formData, pronouns: e.target.value})}
               placeholder="e.g., he/him, she/her, they/them"
+              className="uniform-input"
             />
           </div>
         </div>
@@ -494,7 +594,7 @@ function EmployeeForm({
               type="email"
               value={formData.email}
               onChange={(e) => setFormData({...formData, email: e.target.value})}
-              required
+              className="uniform-input"
             />
           </div>
           <div>
@@ -504,6 +604,7 @@ function EmployeeForm({
               value={formData.phone}
               onChange={(e) => setFormData({...formData, phone: e.target.value})}
               required
+              className="uniform-input"
             />
           </div>
           <div>
@@ -512,6 +613,7 @@ function EmployeeForm({
               id="alternative_phone"
               value={formData.alternative_phone}
               onChange={(e) => setFormData({...formData, alternative_phone: e.target.value})}
+              className="uniform-input"
             />
           </div>
           <div className="md:col-span-2">
@@ -521,6 +623,7 @@ function EmployeeForm({
               value={formData.address}
               onChange={(e) => setFormData({...formData, address: e.target.value})}
               required
+              className="uniform-input"
             />
           </div>
         </div>
@@ -536,13 +639,13 @@ function EmployeeForm({
               id="employee_id"
               value={employeeId || employee?.employee_ID || ""}
               readOnly
-              className="bg-muted"
+              className="bg-muted uniform-input"
             />
           </div>
           <div>
             <Label htmlFor="job_title">Job Title *</Label>
             <Select value={formData.job_title_id} onValueChange={(value) => setFormData({...formData, job_title_id: value})}>
-              <SelectTrigger>
+              <SelectTrigger className="uniform-input">
                 <SelectValue placeholder="Select job title" />
               </SelectTrigger>
               <SelectContent>
@@ -556,7 +659,7 @@ function EmployeeForm({
           <div>
             <Label htmlFor="nationality">Nationality *</Label>
             <Select value={formData.nationality} onValueChange={(value) => setFormData({...formData, nationality: value})}>
-              <SelectTrigger>
+              <SelectTrigger className="uniform-input">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -573,7 +676,31 @@ function EmployeeForm({
               id="tax_number"
               value={formData.tax_number}
               onChange={(e) => setFormData({...formData, tax_number: e.target.value})}
+              className="uniform-input"
             />
+          </div>
+          {/* New fields to meet requirements */}
+          <div>
+            <Label htmlFor="date_joining">Date of Joining *</Label>
+            <Input id="date_joining" type="date" className="uniform-input" required />
+          </div>
+          <div>
+            <Label>Employment Type *</Label>
+            <Select defaultValue="full_time">
+              <SelectTrigger className="uniform-input">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="full_time">Full-Time</SelectItem>
+                <SelectItem value="part_time">Part-Time</SelectItem>
+                <SelectItem value="contract">Contract</SelectItem>
+                <SelectItem value="internship">Internship</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="md:col-span-2">
+            <Label htmlFor="work_location">Work Location *</Label>
+            <Input id="work_location" className="uniform-input" required />
           </div>
         </div>
       </div>

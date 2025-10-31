@@ -34,20 +34,51 @@ export default function LoginPage() {
     setError("")
     setLoading(true)
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password })
+      })
 
-    const user = mockUsers.find((u) => u.email === email && u.password === password)
+      const json = await res.json()
 
-    if (user) {
-      // Store user data in localStorage for demo
-      localStorage.setItem("xspark_user", JSON.stringify(user))
-      router.push("/system-selector")
-    } else {
-      setError("Invalid email or password")
+      if (!res.ok || !json?.success) {
+        const message = json?.error || 'Login failed'
+        setError(message)
+        setLoading(false)
+        return
+      }
+
+      // Optionally persist session/token if returned
+      const session = json?.data?.session
+      const user = json?.data?.user
+      const employee = json?.data?.employee
+
+      if (session) {
+        try {
+          localStorage.setItem('xspark_session', JSON.stringify(session))
+        } catch {}
+      }
+      if (user) {
+        try {
+          localStorage.setItem('xspark_user', JSON.stringify(user))
+        } catch {}
+      }
+      if (employee) {
+        try {
+          localStorage.setItem('xspark_employee', JSON.stringify(employee))
+        } catch {}
+      }
+
+      router.push('/dashboard')
+    } catch (err) {
+      setError('Unable to reach server. Please try again.')
+    } finally {
+      setLoading(false)
     }
-
-    setLoading(false)
   }
 
   const quickLogin = (userEmail: string) => {

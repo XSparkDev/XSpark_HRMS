@@ -6,6 +6,7 @@
 // ============================================================================
 
 import { supabase } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BaseService } from './base-service'
 import { employeeService, Employee } from './employee-service'
 
@@ -278,18 +279,51 @@ export class AuthService extends BaseService {
   /**
    * Create employee with Supabase Auth user
    * This is the recommended way to create employees who need login access
+   * 
+   * @param employeeData - Employee data (must include required fields)
+   * @param password - Password for auth user
+   * @param options - Creation options (sendEmail, etc.)
+   * @returns Created employee and auth user
+   * @throws Error if validation fails, email exists, or creation fails
    */
   async createEmployeeWithAuth(
     employeeData: any,
     password: string,
-    sendEmail: boolean = true
+    options: { sendEmail?: boolean } = {}
   ): Promise<{ employee: Employee; authUser: AuthUser }> {
+    const { sendEmail = false } = options
+    let authUser: AuthUser | null = null
+
     try {
-      // Validate required fields
+      // 1. Validate required fields
       this.validateRequired(employeeData, ['first_name', 'last_name', 'email', 'dob', 'sex', 'date_hired'])
 
-      // Create Supabase Auth user
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      // 2. Validate password strength
+      const passwordValidation = this.validatePasswordStrength(password)
+      if (!passwordValidation.valid) {
+        throw new Error(`Password validation failed: ${passwordValidation.errors.join(', ')}`)
+      }
+
+      // 3. Early email uniqueness check
+      const emailCheck = await this.checkEmailUniqueness(employeeData.email)
+      if (!emailCheck.available) {
+        throw new Error(emailCheck.reason || 'Email already exists')
+      }
+
+      // 4. Validate nationality-specific requirements
+      if (employeeData.nationality === 'South Africa') {
+        if (!employeeData.id_number || employeeData.id_number.length !== 13) {
+          throw new Error('South African employees must provide a valid 13-digit ID number')
+        }
+      } else {
+        // Foreign national
+        if (!employeeData.passport_number) {
+          throw new Error('Foreign nationals must provide a passport number')
+        }
+      }
+
+      // 5. Create Supabase Auth user (using service role)
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
         email: employeeData.email,
         password,
         email_confirm: !sendEmail, // Auto-confirm if not sending email
@@ -303,19 +337,56 @@ export class AuthService extends BaseService {
       if (authError) throw authError
       if (!authData.user) throw new Error('Failed to create auth user')
 
-      // Create employee record with auth_user_id
+      authUser = authData.user as AuthUser
+
+      // 5.5. Get default "employee" role_id if not provided
+      let roleId = employeeData.role_id
+      if (!roleId) {
+        const { data: roleData, error: roleError } = await supabaseAdmin
+          .from('roles')
+          .select('id')
+          .eq('role_name', 'employee')
+          .single()
+
+        if (roleError || !roleData) {
+          console.warn('Failed to fetch employee role_id, proceeding without role_id:', roleError)
+        } else {
+          roleId = roleData.id
+        }
+      }
+
+      // 6. Create employee record with auth_user_id and default role_id
       const employee = await employeeService.create({
         ...employeeData,
-        auth_user_id: authData.user.id
+        auth_user_id: authUser.id,
+        role_id: roleId
+      })
+
+      // 7. Sync employee_id back to auth user metadata
+      await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
+        user_metadata: {
+          ...authUser.user_metadata,
+          employee_id: employee.employee_id
+        }
       })
 
       return {
         employee,
-        authUser: authData.user as AuthUser
+        authUser
       }
     } catch (error) {
+      // Rollback: Delete auth user if employee creation failed
+      if (authUser?.id) {
+        try {
+          await supabaseAdmin.auth.admin.deleteUser(authUser.id)
+          console.log(`Rolled back auth user ${authUser.id} due to employee creation failure`)
+        } catch (rollbackError) {
+          console.error('Failed to rollback auth user:', rollbackError)
+        }
+      }
+
       console.error('Error creating employee with auth:', error)
-      throw new Error('Failed to create employee with authentication')
+      throw error
     }
   }
 
@@ -337,7 +408,7 @@ export class AuthService extends BaseService {
       }
 
       // Create auth user
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
         email: employee.email,
         password,
         email_confirm: true,
@@ -383,7 +454,7 @@ export class AuthService extends BaseService {
       }
 
       // Delete auth user
-      const { error } = await supabase.auth.admin.deleteUser(employee.auth_user_id)
+      const { error } = await supabaseAdmin.auth.admin.deleteUser(employee.auth_user_id)
       if (error) throw error
 
       // Remove auth_user_id from employee
@@ -405,7 +476,7 @@ export class AuthService extends BaseService {
    */
   async getAllAuthUsers(page: number = 1, perPage: number = 50): Promise<{ users: AuthUser[]; total: number }> {
     try {
-      const { data, error } = await supabase.auth.admin.listUsers({
+      const { data, error } = await supabaseAdmin.auth.admin.listUsers({
         page,
         perPage
       })
@@ -427,7 +498,7 @@ export class AuthService extends BaseService {
    */
   async deleteAuthUser(userId: string): Promise<void> {
     try {
-      const { error } = await supabase.auth.admin.deleteUser(userId)
+      const { error } = await supabaseAdmin.auth.admin.deleteUser(userId)
       if (error) throw error
     } catch (error) {
       console.error('Error deleting auth user:', error)
@@ -440,7 +511,7 @@ export class AuthService extends BaseService {
    */
   async updateUserEmail(userId: string, newEmail: string): Promise<void> {
     try {
-      const { error } = await supabase.auth.admin.updateUserById(userId, {
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
         email: newEmail
       })
 
@@ -456,7 +527,7 @@ export class AuthService extends BaseService {
    */
   async adminResetPassword(userId: string, newPassword: string): Promise<void> {
     try {
-      const { error } = await supabase.auth.admin.updateUserById(userId, {
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
         password: newPassword
       })
 
@@ -481,6 +552,48 @@ export class AuthService extends BaseService {
     } catch (error) {
       console.error('Error checking email:', error)
       return false
+    }
+  }
+
+  /**
+   * Check email uniqueness across both Auth and employee records
+   * Returns detailed availability status with specific reason if unavailable
+   */
+  async checkEmailUniqueness(email: string): Promise<{ 
+    available: boolean
+    reason?: string 
+  }> {
+    try {
+      // Check Supabase Auth users (requires service role)
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.listUsers()
+      
+      if (authError) {
+        console.error('Error listing auth users:', authError)
+        throw new Error(`Failed to check email uniqueness in authentication system: ${authError.message}`)
+      }
+
+      // Check if email exists in Auth
+      const authUserExists = authData?.users?.some((u: any) => u.email?.toLowerCase() === email.toLowerCase())
+      if (authUserExists) {
+        return { 
+          available: false, 
+          reason: 'Email already registered in authentication system' 
+        }
+      }
+
+      // Check employee records
+      const employee = await employeeService.getByEmail(email)
+      if (employee) {
+        return { 
+          available: false, 
+          reason: 'Email already exists in employee records' 
+        }
+      }
+
+      return { available: true }
+    } catch (error) {
+      console.error('Error checking email uniqueness:', error)
+      throw error
     }
   }
 

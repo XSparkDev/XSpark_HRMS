@@ -29,16 +29,16 @@ export const encrypt = (text: string): string => {
   try {
     const key = getEncryptionKey()
     const iv = crypto.randomBytes(IV_LENGTH)
-    const cipher = crypto.createCipher(ALGORITHM, key)
+    const cipher = crypto.createCipheriv(ALGORITHM, key, iv)
     cipher.setAAD(Buffer.from('xspark-hrms', 'utf8'))
     
-    let encrypted = cipher.update(text, 'utf8', 'base64')
-    encrypted += cipher.final('base64')
+    let encrypted = cipher.update(text, 'utf8')
+    encrypted = Buffer.concat([encrypted, cipher.final()])
     
     const tag = cipher.getAuthTag()
     
     // Combine IV + tag + encrypted data
-    const combined = Buffer.concat([iv, tag, Buffer.from(encrypted, 'base64')])
+    const combined = Buffer.concat([iv, tag, encrypted])
     return combined.toString('base64')
   } catch (error) {
     console.error('Encryption error:', error)
@@ -63,14 +63,14 @@ export const decrypt = (encryptedData: string): string => {
     const tag = combined.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH)
     const encrypted = combined.subarray(IV_LENGTH + TAG_LENGTH)
     
-    const decipher = crypto.createDecipher(ALGORITHM, key)
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv)
     decipher.setAAD(Buffer.from('xspark-hrms', 'utf8'))
     decipher.setAuthTag(tag)
     
-    let decrypted = decipher.update(encrypted, undefined, 'utf8')
-    decrypted += decipher.final('utf8')
+    let decrypted = decipher.update(encrypted)
+    decrypted = Buffer.concat([decrypted, decipher.final()])
     
-    return decrypted
+    return decrypted.toString('utf8')
   } catch (error) {
     console.error('Decryption error:', error)
     throw new Error('Failed to decrypt data')

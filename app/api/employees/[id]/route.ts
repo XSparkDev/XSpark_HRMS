@@ -92,11 +92,12 @@ export async function GET(
 // ============================================================================
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Validate employee ID
-    const employeeId = EmployeeIdSchema.parse(params.id)
+    // Validate employee ID (await params per Next.js guidance)
+    const { id } = await context.params
+    const employeeId = EmployeeIdSchema.parse(id)
     
     const body = await request.json()
     

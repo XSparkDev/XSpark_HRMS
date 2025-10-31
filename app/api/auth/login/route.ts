@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authService } from '@/lib/services/auth-service'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { z } from 'zod'
 
 // Validation schema
@@ -52,11 +53,33 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Fetch role name from roles table if role_id exists
+    let roleName = 'employee' // Default
+    if (authResponse.employee.role_id) {
+      const { data: roleData } = await supabaseAdmin
+        .from('roles')
+        .select('role_name')
+        .eq('id', authResponse.employee.role_id)
+        .single()
+      
+      if (roleData?.role_name) {
+        roleName = roleData.role_name
+      }
+    }
+
+    // Format user object with role for frontend
+    const userWithRole = {
+      ...authResponse.user,
+      role: roleName,
+      name: `${authResponse.employee.first_name} ${authResponse.employee.last_name}`,
+      employeeId: authResponse.employee.employee_id
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Login successful',
       data: {
-        user: authResponse.user,
+        user: userWithRole,
         employee: authResponse.employee,
         session: authResponse.session
       }

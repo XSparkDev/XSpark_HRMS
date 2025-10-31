@@ -61,6 +61,7 @@ export default function LeaveRequestPage() {
   const [employeeProfile, setEmployeeProfile] = useState<typeof mockEmployeeProfile | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showConfirmation, setShowConfirmation] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
 
   const form = useForm<LeaveRequestFormData>({
     resolver: zodResolver(leaveRequestSchema),
@@ -98,25 +99,107 @@ export default function LeaveRequestPage() {
   const leaveDayTo = watch("leave_day_to")
 
   useEffect(() => {
-    // Load employee profile data
-    const user = getCurrentUser()
-    if (user) {
-      // Mock data - replace with actual API call
-      setEmployeeProfile(mockEmployeeProfile)
-      
-      // Auto-fill form with profile data
-      setValue("employee_id", mockEmployeeProfile.id)
-      setValue("full_name", `${mockEmployeeProfile.first_name} ${mockEmployeeProfile.middle_name} ${mockEmployeeProfile.last_name}`.trim())
-      setValue("employee_number", mockEmployeeProfile.employee_id)
-      setValue("id_number", mockEmployeeProfile.id_number)
-      setValue("job_title", mockEmployeeProfile.job_title)
-      setValue("department", mockEmployeeProfile.department)
-      setValue("email", mockEmployeeProfile.email)
-      setValue("direct_superior", mockEmployeeProfile.direct_superior)
-    } else {
-      router.replace("/login")
+    // Fetch employee profile data from API
+    const fetchEmployeeData = async () => {
+      setIsLoading(true)
+      try {
+        // Get auth token from localStorage
+        let authHeaders: Record<string, string> = {}
+        const storedSession = localStorage.getItem('xspark_session')
+        if (storedSession) {
+          try {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              authHeaders['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          } catch {}
+        }
+
+        // Fetch employee data
+        const response = await fetch('/api/auth/me', {
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders
+          }
+        })
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            router.replace("/login")
+            return
+          }
+          throw new Error('Failed to fetch employee data')
+        }
+
+        const json = await response.json()
+
+        if (json.success && json.data?.employee) {
+          const employee = json.data.employee
+          
+          // Extract job title from employee data (included via join in /api/auth/me)
+          let jobTitle = ""
+          if (employee.job_titles && Array.isArray(employee.job_titles) && employee.job_titles.length > 0) {
+            jobTitle = employee.job_titles[0].title || ""
+          } else if (employee.job_titles && typeof employee.job_titles === 'object' && employee.job_titles.title) {
+            jobTitle = employee.job_titles.title || ""
+          }
+
+          // Build full name
+          const fullName = [employee.first_name, employee.middle_name, employee.last_name]
+            .filter(Boolean)
+            .join(' ')
+            .trim()
+
+          // Auto-fill form with employee data
+          setValue("employee_id", employee.id)
+          setValue("full_name", fullName)
+          setValue("employee_number", employee.employee_id || "")
+          setValue("id_number", employee.id_number || "")
+          setValue("job_title", jobTitle)
+          setValue("department", "") // Not available in current schema
+          setValue("email", employee.email || "")
+          setValue("direct_superior", "") // Not available in current schema
+
+          // Set employee profile for leave balance calculations
+          setEmployeeProfile({
+            id: employee.id,
+            first_name: employee.first_name,
+            middle_name: employee.middle_name || "",
+            last_name: employee.last_name,
+            employee_id: employee.employee_id || "",
+            id_number: employee.id_number || "",
+            job_title: jobTitle,
+            department: "",
+            direct_superior: "",
+            email: employee.email || "",
+            date_hired: employee.date_hired ? new Date(employee.date_hired) : new Date(),
+            leave_balances: [
+              { type: "annual", balance: 15 },
+              { type: "sick", balance: 30 },
+              { type: "family_responsibility", balance: 3 },
+              { type: "maternity", balance: 120 },
+              { type: "paternity", balance: 10 },
+              { type: "unpaid", balance: 999 },
+            ],
+          })
+        } else {
+          router.replace("/login")
+        }
+      } catch (error) {
+        console.error('Error fetching employee data:', error)
+        toast({
+          title: "Error",
+          description: "Failed to load employee data. Please try again.",
+          variant: "destructive",
+        })
+        router.replace("/login")
+      } finally {
+        setIsLoading(false)
+      }
     }
-  }, [router, setValue])
+
+    fetchEmployeeData()
+  }, [router, setValue, toast])
 
   useEffect(() => {
     if (leaveDayFrom && leaveDayTo) {
@@ -206,7 +289,7 @@ export default function LeaveRequestPage() {
     }
   }
 
-  if (!employeeProfile) {
+  if (isLoading || !employeeProfile) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>

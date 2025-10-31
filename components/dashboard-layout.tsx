@@ -1,6 +1,7 @@
 "use client"
 
-import { type ReactNode, useState, useEffect } from "react"
+import { type ReactNode, useState, useEffect, memo } from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -15,8 +16,13 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { XSparkLogo } from "@/components/xspark-logo"
-import { AIChatWidget } from "@/components/ai-chat-widget"
 import { getCurrentUser, logout, getRoleBadgeColor, getRoleDisplayName, hasPermission, User } from "@/lib/auth"
+
+// Lazy load AI chat widget to reduce initial bundle size
+const AIChatWidget = dynamic(() => import("@/components/ai-chat-widget").then(mod => ({ default: mod.AIChatWidget })), {
+  loading: () => null,
+  ssr: false,
+})
 import {
   Home,
   Users,

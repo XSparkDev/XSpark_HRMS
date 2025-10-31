@@ -89,13 +89,149 @@ export default function MyProfilePage() {
     work_permit: null
   })
 
-  // Mock data - replace with actual API calls
+  // Fetch employee data from backend
   useEffect(() => {
-    setTimeout(() => {
-      const mockProfile: any = null // Set to null to show create form
-      setProfile(mockProfile)
+    const fetchEmployeeData = async () => {
+      setIsLoading(true)
+      try {
+        // Get current employee from localStorage first (for quick display)
+        const storedEmployee = localStorage.getItem('xspark_employee')
+        if (storedEmployee) {
+          try {
+            const parsed = JSON.parse(storedEmployee)
+            setProfile(parsed)
+            // Prepopulate form with stored data
+            setFormData({
+              first_name: parsed.first_name || "",
+              middle_name: parsed.middle_name || "",
+              last_name: parsed.last_name || "",
+              preferred_name: parsed.preferred_name || "",
+              id_number: parsed.id_number || "",
+              dob: parsed.dob || "",
+              sex: parsed.sex || "",
+              gender: parsed.gender || "",
+              pronouns: parsed.pronouns || "",
+              email: parsed.email || "",
+              phone: parsed.phone || "",
+              alternative_phone: parsed.alternative_phone || "",
+              address: parsed.address || "",
+              tax_number: parsed.tax_number || "",
+              nationality: parsed.nationality || "South Africa",
+              passport_number: parsed.passport_number || "",
+              passport_document_url: parsed.passport_document_url || "",
+              work_permit_url: parsed.work_permit_url || "",
+              job_title_id: parsed.job_title_id || "",
+              date_hired: parsed.date_hired || "",
+              employment_status: parsed.employment_status || "probation"
+            })
+            // Set date for DOB picker if available
+            if (parsed.dob) {
+              setDate(new Date(parsed.dob))
+            }
+          } catch (e) {
+            console.error('Error parsing stored employee:', e)
+          }
+        }
+
+        // Fetch fresh data from API, include token if available
+        let authHeaders: Record<string, string> = {}
+        const storedSession = localStorage.getItem('xspark_session')
+        if (storedSession) {
+          try {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              authHeaders['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          } catch {}
+        }
+
+        const response = await fetch('/api/auth/me', {
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders
+          }
+        })
+        const json = await response.json()
+
+        if (response.ok && json.success && json.data?.employee) {
+          const employee = json.data.employee
+          setProfile(employee)
+          
+          // Update localStorage with fresh data
+          localStorage.setItem('xspark_employee', JSON.stringify(employee))
+
+          // Prepopulate form with fetched data
+          setFormData({
+            first_name: employee.first_name || "",
+            middle_name: employee.middle_name || "",
+            last_name: employee.last_name || "",
+            preferred_name: employee.preferred_name || "",
+            id_number: employee.id_number || "",
+            dob: employee.dob || "",
+            sex: employee.sex || "",
+            gender: employee.gender || "",
+            pronouns: employee.pronouns || "",
+            email: employee.email || "",
+            phone: employee.phone || "",
+            alternative_phone: employee.alternative_phone || "",
+            address: employee.address || "",
+            tax_number: employee.tax_number || "",
+            nationality: employee.nationality || "South Africa",
+            passport_number: employee.passport_number || "",
+            passport_document_url: employee.passport_document_url || "",
+            work_permit_url: employee.work_permit_url || "",
+            job_title_id: employee.job_title_id || "",
+            date_hired: employee.date_hired || "",
+            employment_status: employee.employment_status || "probation"
+          })
+
+          // Set date for DOB picker if available
+          if (employee.dob) {
+            setDate(new Date(employee.dob))
+          }
+
+          // Fetch decrypted sensitive fields (id_number, tax_number)
+          try {
+            const decResponse = await fetch('/api/profile/decrypted', {
+              headers: {
+                'Content-Type': 'application/json',
+                ...authHeaders
+              }
+            })
+            const decJson = await decResponse.json()
+
+            if (decResponse.ok && decJson.success && decJson.data) {
+              // Update form data with decrypted sensitive fields
+              setFormData(prev => ({
+                ...prev,
+                id_number: decJson.data.id_number || prev.id_number || "",
+                tax_number: decJson.data.tax_number || prev.tax_number || ""
+              }))
+            }
+          } catch (error) {
+            console.error('Error fetching decrypted fields:', error)
+            // Silently continue - user may not have permission
+          }
+        } else if (response.status === 401) {
+          // Not authenticated - redirect to login or show create form
+          setProfile(null)
+        } else if (response.status === 404 || !json.data?.employee) {
+          // Employee not found - show create form
+          setProfile(null)
+        }
+      } catch (error) {
+        console.error('Error fetching employee data:', error)
+        // On error, check if we have stored data, otherwise show create form
+        const storedEmployee = localStorage.getItem('xspark_employee')
+        if (!storedEmployee) {
+          setProfile(null)
+        }
+      } finally {
       setIsLoading(false)
-    }, 1000)
+      }
+    }
+
+    fetchEmployeeData()
   }, [])
 
   // Validation functions
@@ -1037,7 +1173,7 @@ export default function MyProfilePage() {
                     <h2 className="text-xl font-semibold text-navy">
                       {profile.preferred_name || profile.first_name} {profile.last_name}
                     </h2>
-                    <p className="text-muted-foreground">{profile.employee_ID}</p>
+                    <p className="text-muted-foreground">{profile.employee_id}</p>
                     <Badge variant="secondary" className="mt-2">
                       Active Employee
                     </Badge>
@@ -1066,6 +1202,10 @@ export default function MyProfilePage() {
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Preferred Name</Label>
                     <p className="text-sm">{profile.preferred_name || "Not specified"}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">ID Number</Label>
+                    <p className="text-sm">{formData.id_number || "Not specified"}</p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Date of Birth</Label>
@@ -1126,7 +1266,7 @@ export default function MyProfilePage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Employee ID</Label>
-                    <p className="text-sm font-mono">{profile.employee_ID}</p>
+                    <p className="text-sm font-mono">{profile.employee_id}</p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-muted-foreground">Date Hired</Label>

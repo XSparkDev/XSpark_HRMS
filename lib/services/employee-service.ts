@@ -6,6 +6,8 @@
 // ============================================================================
 
 import { supabase } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { encrypt } from '@/lib/crypto'
 
 // Database types matching our schema
 export interface Employee {
@@ -183,7 +185,7 @@ export class EmployeeService {
         .from('employees')
         .select('*')
         .eq('email', email)
-        .single()
+        .maybeSingle()
 
       if (error) throw error
       return data
@@ -239,12 +241,34 @@ export class EmployeeService {
   /**
    * Create a new employee
    * This will trigger the employee_id generation trigger automatically
+   * Encrypts sensitive fields (id_number, tax_number) before storage
    */
   async create(employeeData: CreateEmployeeData): Promise<Employee> {
     try {
-      const { data, error } = await supabase
+      // Prepare data with encryption for sensitive fields
+      const encryptedData: any = { ...employeeData }
+
+      // Encrypt id_number if provided
+      if (employeeData.id_number) {
+        // Encrypt returns base64 string, convert to Buffer for BYTEA storage
+        const base64Encrypted = encrypt(employeeData.id_number)
+        encryptedData.encrypted_id_number = Buffer.from(base64Encrypted, 'base64')
+        // Remove plaintext from insert
+        delete encryptedData.id_number
+      }
+
+      // Encrypt tax_number if provided
+      if (employeeData.tax_number) {
+        // Encrypt returns base64 string, convert to Buffer for BYTEA storage
+        const base64Encrypted = encrypt(employeeData.tax_number)
+        encryptedData.encrypted_tax_number = Buffer.from(base64Encrypted, 'base64')
+        // Remove plaintext from insert
+        delete encryptedData.tax_number
+      }
+
+      const { data, error } = await supabaseAdmin
         .from('employees')
-        .insert([employeeData])
+        .insert([encryptedData])
         .select()
         .single()
 
@@ -265,9 +289,26 @@ export class EmployeeService {
    */
   async update(id: string, updates: Partial<UpdateEmployeeData>): Promise<Employee | null> {
     try {
-      const { data, error } = await supabase
+      // Handle encryption for sensitive fields if being updated
+      const updateData: any = { ...updates }
+
+      // Encrypt id_number if being updated
+      if ('id_number' in updateData && updateData.id_number) {
+        const base64Encrypted = encrypt(updateData.id_number)
+        updateData.encrypted_id_number = Buffer.from(base64Encrypted, 'base64')
+        delete updateData.id_number
+      }
+
+      // Encrypt tax_number if being updated
+      if ('tax_number' in updateData && updateData.tax_number) {
+        const base64Encrypted = encrypt(updateData.tax_number)
+        updateData.encrypted_tax_number = Buffer.from(base64Encrypted, 'base64')
+        delete updateData.tax_number
+      }
+
+      const { data, error } = await supabaseAdmin
         .from('employees')
-        .update(updates)
+        .update(updateData)
         .eq('id', id)
         .select()
         .single()
@@ -426,6 +467,56 @@ export class EmployeeService {
     } catch (error) {
       console.error('Error searching employees:', error)
       throw new Error('Failed to search employees')
+    }
+  }
+
+  /**
+   * Retroactively assign default "employee" role to employees without role_id
+   * This utility function should be run once to fix existing employee records
+   */
+  async assignDefaultRoleToEmployeesWithoutRole(): Promise<{ updated: number; errors: number }> {
+    try {
+      // Get the "employee" role_id
+      const { data: roleData, error: roleError } = await supabaseAdmin
+        .from('roles')
+        .select('id')
+        .eq('role_name', 'employee')
+        .single()
+
+      if (roleError || !roleData) {
+        throw new Error(`Failed to fetch employee role_id: ${roleError?.message || 'Role not found'}`)
+      }
+
+      const employeeRoleId = roleData.id
+
+      // Find all employees without a role_id
+      const { data: employees, error: fetchError } = await supabaseAdmin
+        .from('employees')
+        .select('id')
+        .is('role_id', null)
+
+      if (fetchError) throw fetchError
+
+      if (!employees || employees.length === 0) {
+        return { updated: 0, errors: 0 }
+      }
+
+      // Update all employees without role_id
+      const { data: updatedData, error: updateError } = await supabaseAdmin
+        .from('employees')
+        .update({ role_id: employeeRoleId })
+        .is('role_id', null)
+        .select('id')
+
+      if (updateError) throw updateError
+
+      return {
+        updated: updatedData?.length || 0,
+        errors: (employees?.length || 0) - (updatedData?.length || 0)
+      }
+    } catch (error) {
+      console.error('Error assigning default role to employees:', error)
+      throw new Error('Failed to assign default role to employees')
     }
   }
 }

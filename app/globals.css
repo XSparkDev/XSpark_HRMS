@@ -164,4 +164,9 @@
   .bg-navy {
     background-color: #1b2b4a;
   }
+
+  /* Uniform input sizing to ensure Inputs, Selects, Dates look identical */
+  .uniform-input {
+    @apply h-10 w-full rounded-md border border-input px-3 py-2;
+  }
 }

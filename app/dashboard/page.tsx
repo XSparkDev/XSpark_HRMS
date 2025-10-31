@@ -1,12 +1,26 @@
 "use client"
 
+import { memo, useMemo, useState, useEffect } from "react"
+import dynamic from "next/dynamic"
 import { DashboardLayout } from "@/components/dashboard-layout"
+import { ContactHrModal } from "@/components/contact-hr-modal"
+import { MyHrCases } from "@/components/my-hr-cases"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { getCurrentUser } from "@/lib/auth"
-import { HighAlertNotes } from "@/components/high-alert-notes"
+import { useRouter } from "next/navigation"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar as DatePicker } from "@/components/ui/calendar"
+import { cn } from "@/lib/utils"
+import { addDays, format } from "date-fns"
+import { calculateLeaveBalance, calculateWorkingDays, getLeaveTypeDisplayName } from "@/lib/validation/leave"
 import {
   Calendar,
   FileText,
@@ -19,8 +33,41 @@ import {
   MessageSquare,
 } from "lucide-react"
 
+// Lazy load heavy components
+const HighAlertNotes = dynamic(() => import("@/components/high-alert-notes").then(mod => ({ default: mod.HighAlertNotes })), {
+  loading: () => <div className="h-32" />,
+  ssr: false,
+})
+
 export default function DashboardPage() {
+  const router = useRouter()
   const user = getCurrentUser()
+  const [showContactHrModal, setShowContactHrModal] = useState(false)
+  const [showLeaveModal, setShowLeaveModal] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+
+  // Leave modal local state
+  const [leaveType, setLeaveType] = useState("annual")
+  const [reason, setReason] = useState("")
+  const [leaveFrom, setLeaveFrom] = useState<Date | undefined>(undefined)
+  const [leaveTo, setLeaveTo] = useState<Date | undefined>(undefined)
+  const [totalDays, setTotalDays] = useState(0)
+  const [supportingFile, setSupportingFile] = useState<File | null>(null)
+  const employeeIdForBalance = user?.id || ""
+
+  useEffect(() => {
+    if (leaveFrom && leaveTo) {
+      setTotalDays(calculateWorkingDays(leaveFrom, leaveTo))
+    } else {
+      setTotalDays(0)
+    }
+  }, [leaveFrom, leaveTo])
+
+  // Upload modal local state
+  const [docTitle, setDocTitle] = useState("")
+  const [docDescription, setDocDescription] = useState("")
+  const [docFile, setDocFile] = useState<File | null>(null)
+  const [uploadSuccess, setUploadSuccess] = useState(false)
 
   if (!user) return null
 
@@ -111,11 +158,19 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-4">
-                  <Button className="h-auto flex-col gap-2 py-6 bg-transparent" variant="outline">
+                  <Button 
+                    className="h-auto flex-col gap-2 py-6 bg-transparent" 
+                    variant="outline"
+                    onClick={() => { setShowUploadModal(false); setShowContactHrModal(false); setShowLeaveModal(true) }}
+                  >
                     <Calendar className="h-6 w-6 text-primary" />
                     <span>Request Leave</span>
                   </Button>
-                  <Button className="h-auto flex-col gap-2 py-6 bg-transparent" variant="outline">
+                  <Button 
+                    className="h-auto flex-col gap-2 py-6 bg-transparent" 
+                    variant="outline"
+                    onClick={() => { setShowLeaveModal(false); setShowContactHrModal(false); setShowUploadModal(true); setUploadSuccess(false) }}
+                  >
                     <Upload className="h-6 w-6 text-primary" />
                     <span>Upload Document</span>
                   </Button>
@@ -123,7 +178,11 @@ export default function DashboardPage() {
                     <FileText className="h-6 w-6 text-primary" />
                     <span>View Payslips</span>
                   </Button>
-                  <Button className="h-auto flex-col gap-2 py-6 bg-transparent" variant="outline">
+                  <Button 
+                    className="h-auto flex-col gap-2 py-6 bg-transparent" 
+                    variant="outline"
+                    onClick={() => setShowContactHrModal(true)}
+                  >
                     <MessageSquare className="h-6 w-6 text-primary" />
                     <span>Contact HR</span>
                   </Button>
@@ -133,6 +192,9 @@ export default function DashboardPage() {
 
             {/* High Alert Notes */}
             <HighAlertNotes />
+
+            {/* My HR Cases */}
+            <MyHrCases />
 
             {/* Recent Notifications */}
             <Card>
@@ -456,6 +518,179 @@ export default function DashboardPage() {
           </>
         )}
       </div>
+
+      {/* Contact HR Modal */}
+      <ContactHrModal 
+        open={showContactHrModal} 
+        onClose={() => setShowContactHrModal(false)} 
+      />
+
+      {/* Quick Action: Request Leave Modal */}
+      <Dialog open={showLeaveModal} onOpenChange={setShowLeaveModal}>
+        <DialogContent className="max-w-2xl animate-in fade-in-0">
+          <DialogHeader>
+            <DialogTitle>Request Leave</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6">
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-navy flex items-center gap-2">
+                <Calendar className="h-5 w-5" />
+                Leave Details
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label>Leave Type <span className="text-red-500">*</span></Label>
+                  <Select value={leaveType} onValueChange={setLeaveType}>
+                    <SelectTrigger className="uniform-input">
+                      <SelectValue placeholder="Select leave type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[
+                        { value: "annual", label: "Annual Leave" },
+                        { value: "sick", label: "Sick Leave" },
+                        { value: "family_responsibility", label: "Family Responsibility Leave" },
+                        { value: "maternity", label: "Maternity Leave" },
+                        { value: "paternity", label: "Paternity Leave" },
+                        { value: "unpaid", label: "Unpaid Leave" },
+                        { value: "other", label: "Other" },
+                      ].map(opt => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col space-y-1.5">
+                  <Label>Available Balance ({getLeaveTypeDisplayName(leaveType)})</Label>
+                  <div className="flex items-center gap-2">
+                    <Input value={calculateLeaveBalance(employeeIdForBalance, leaveType, undefined)} readOnly className="bg-gray-100" />
+                    <Badge variant={calculateLeaveBalance(employeeIdForBalance, leaveType, undefined) > 0 ? "default" : "destructive"}>
+                      {calculateLeaveBalance(employeeIdForBalance, leaveType, undefined) > 0 ? "Available" : "No Balance"}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2">
+                  <Label>Reason for Leave <span className="text-red-500">*</span></Label>
+                  <Textarea
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Briefly describe your reason for leave"
+                    rows={3}
+                  />
+                </div>
+
+                <div className="flex flex-col">
+                  <Label>Start Date <span className="text-red-500">*</span></Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className={cn("w-full justify-between", !leaveFrom && "text-muted-foreground")}> 
+                        {leaveFrom ? format(leaveFrom, "PPP") : <span>Pick a date</span>}
+                        <Calendar className="ml-2 h-4 w-4 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <DatePicker
+                        mode="single"
+                        selected={leaveFrom}
+                        onSelect={(d) => setLeaveFrom(d || undefined)}
+                        disabled={(date) => date < addDays(new Date(), -1)}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+
+                <div className="flex flex-col">
+                  <Label>End Date <span className="text-red-500">*</span></Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className={cn("w-full justify-between", !leaveTo && "text-muted-foreground")}>
+                        {leaveTo ? format(leaveTo, "PPP") : <span>Pick a date</span>}
+                        <Calendar className="ml-2 h-4 w-4 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <DatePicker
+                        mode="single"
+                        selected={leaveTo}
+                        onSelect={(d) => setLeaveTo(d || undefined)}
+                        disabled={(date) => date < (leaveFrom || addDays(new Date(), -1))}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+
+                <div>
+                  <Label>Total Days (Working Days)</Label>
+                  <Input value={totalDays} readOnly className="bg-gray-100" />
+                </div>
+
+                <div className="md:col-span-2">
+                  <Label>Supporting Document (Optional)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={(e) => setSupportingFile(e.target.files?.[0] || null)}
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">Upload supporting documents (JPG, PNG, PDF up to 10MB)</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button className="px-8" onClick={() => setShowLeaveModal(false)}>Submit Request</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Action: Upload Document Modal */}
+      <Dialog open={showUploadModal} onOpenChange={setShowUploadModal}>
+        <DialogContent className="max-w-lg animate-in fade-in-0">
+          <DialogHeader>
+            <DialogTitle>Upload Document</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {uploadSuccess ? (
+              <div className="text-center py-6">
+                <CheckCircle2 className="h-10 w-10 text-green-600 mx-auto mb-2" />
+                <p className="font-medium">Successfully uploaded</p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <Label>Document Title <span className="text-red-500">*</span></Label>
+                  <Input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="e.g., Medical Certificate" />
+                </div>
+                <div>
+                  <Label>Description (optional)</Label>
+                  <Textarea value={docDescription} onChange={(e) => setDocDescription(e.target.value)} rows={3} placeholder="Add a short description" />
+                </div>
+                <div>
+                  <Label>Upload File <span className="text-red-500">*</span></Label>
+                  <Input
+                    type="file"
+                    accept="application/pdf,image/png,image/jpeg"
+                    onChange={(e) => setDocFile(e.target.files?.[0] || null)}
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">PDF, JPG, PNG up to 10MB</p>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => {
+                      if (!docTitle || !docFile) return
+                      if (docFile.size > 10 * 1024 * 1024) return
+                      setUploadSuccess(true)
+                    }}
+                  >
+                    Upload
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   )
 }

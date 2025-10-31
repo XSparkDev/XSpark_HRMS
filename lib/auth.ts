@@ -23,7 +23,7 @@ export function logout() {
 }
 
 export function hasPermission(user: User | null, permission: string): boolean {
-  if (!user) return false
+  if (!user || !user.role) return false
 
   const permissions: Record<UserRole, string[]> = {
     employee: ["view_own_profile", "request_leave", "upload_documents", "view_payslips"],
@@ -52,6 +52,11 @@ export function hasPermission(user: User | null, permission: string): boolean {
   }
 
   const userPermissions = permissions[user.role]
+  if (!userPermissions || !Array.isArray(userPermissions)) {
+    console.warn(`Unknown role: ${user.role}, defaulting to employee permissions`)
+    return permissions.employee.includes(permission)
+  }
+
   return userPermissions.includes("*") || userPermissions.includes(permission)
 }
 
