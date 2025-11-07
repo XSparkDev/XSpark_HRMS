@@ -286,7 +286,7 @@ export default function DashboardPage() {
           </>
         )}
 
-        {/* HR Manager View */}
+        {/* Admin View */}
         {isHRManager && (
           <>
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -448,7 +448,7 @@ export default function DashboardPage() {
                 <div className="space-y-2">
                   {[
                     {
-                      user: "Sarah Smith (HR Manager)",
+                      user: "Sarah Smith (Admin)",
                       action: "Approved leave request",
                       target: "John Doe",
                       time: "2 min ago",

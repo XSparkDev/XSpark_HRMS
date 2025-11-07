@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { profileSchema, validateProfile, type ProfileFormData } from "@/lib/validation/profile"
+import { appFormSchema, validateProfile, type ProfileFormData } from "@/lib/validation/app-form"
 import { encrypt, decrypt, sanitizeInput, validateFileUpload, checkRateLimit, logAuditEvent } from "@/lib/crypto"
 import { getCurrentUser } from "@/lib/auth"
 

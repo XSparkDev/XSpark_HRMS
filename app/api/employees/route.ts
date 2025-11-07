@@ -9,12 +9,25 @@ import { employeeService } from '@/lib/services'
 import { z } from 'zod'
 
 // Validation schemas
+const NextOfKinSchema = z.object({
+  full_name: z.string().min(1).max(100),
+  relationship: z.string().min(1).max(100),
+  phone: z.string().min(1).max(20),
+  address: z.string().max(500).optional()
+})
+
+const NextOfKinWithIdSchema = NextOfKinSchema.extend({
+  id: z.string().uuid().optional()
+})
+
+const NextOfKinArraySchema = z.array(NextOfKinWithIdSchema)
+
 const CreateEmployeeSchema = z.object({
   auth_user_id: z.string().uuid().optional(),
   first_name: z.string().min(1).max(100),
   middle_name: z.string().max(100).optional(),
   last_name: z.string().min(1).max(100),
-  preferred_name: z.string().max(100).optional(),
+  preferred_name: z.string().max(50).optional(),
   id_number: z.string().length(13).optional(),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   sex: z.enum(['male', 'female']),
@@ -107,16 +120,35 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    
+
+    const { next_of_kin: rawNextOfKin, ...employeePayload } = body ?? {}
+
     // Validate request body
-    const employeeData = CreateEmployeeSchema.parse(body)
+    const employeeData = CreateEmployeeSchema.parse(employeePayload)
+    const nextOfKinData = rawNextOfKin ? NextOfKinArraySchema.parse(rawNextOfKin) : []
 
     // Create employee via service
     const employee = await employeeService.create(employeeData)
 
+    let nextOfKin: any[] = []
+    if (nextOfKinData.length) {
+      try {
+        nextOfKin = await employeeService.saveNextOfKins(employee.id, nextOfKinData)
+      } catch (nokError) {
+        console.error('Error saving next_of_kin:', nokError)
+        return NextResponse.json({
+          success: false,
+          error: 'Failed to save next_of_kin'
+        }, { status: 500 })
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      data: employee,
+      data: {
+        employee,
+        next_of_kin: nextOfKin
+      },
       message: 'Employee created successfully'
     }, { status: 201 })
   } catch (error) {
@@ -143,9 +175,12 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    
+
+    const { next_of_kin: rawNextOfKin, ...employeePayload } = body ?? {}
+
     // Validate request body
-    const updateData = UpdateEmployeeSchema.parse(body)
+    const updateData = UpdateEmployeeSchema.parse(employeePayload)
+    const nextOfKinData = rawNextOfKin ? NextOfKinArraySchema.parse(rawNextOfKin) : []
 
     // Update employee via service
     const employee = await employeeService.update(updateData.id, updateData)
@@ -157,9 +192,25 @@ export async function PUT(request: NextRequest) {
       }, { status: 404 })
     }
 
+    let nextOfKin: any[] = []
+    if (nextOfKinData.length) {
+      try {
+        nextOfKin = await employeeService.saveNextOfKins(employee.id, nextOfKinData)
+      } catch (nokError) {
+        console.error('Error saving next_of_kin:', nokError)
+        return NextResponse.json({
+          success: false,
+          error: 'Failed to save next_of_kin'
+        }, { status: 500 })
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      data: employee,
+      data: {
+        employee,
+        next_of_kin: nextOfKin
+      },
       message: 'Employee updated successfully'
     })
   } catch (error) {

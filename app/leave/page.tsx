@@ -65,6 +65,8 @@ export default function LeaveRequestPage() {
 
   const form = useForm<LeaveRequestFormData>({
     resolver: zodResolver(leaveRequestSchema),
+    mode: "onBlur",
+    reValidateMode: "onChange",
     defaultValues: {
       employee_id: "",
       full_name: "",
