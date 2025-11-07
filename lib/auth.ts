@@ -1,6 +1,14 @@
-export type UserRole = "employee" | "junior_hr" | "hr_manager" | "super_admin"
+export type UserRole =
+  | "employee"
+  | "junior_hr"
+  | "hr_manager"
+  | "hr_admin"
+  | "manager"
+  | "admin"
+  | "super_admin"
 
 export interface User {
+  id?: string
   email: string
   name: string
   role: UserRole
@@ -65,6 +73,9 @@ export function getRoleBadgeColor(role: UserRole): string {
     employee: "bg-gradient-to-r from-blue-500 to-blue-600",
     junior_hr: "bg-gradient-to-r from-green-500 to-green-600",
     hr_manager: "gradient-primary",
+    hr_admin: "gradient-primary",
+    manager: "bg-gradient-to-r from-purple-500 to-purple-600",
+    admin: "bg-gradient-to-r from-purple-500 to-purple-600",
     super_admin: "bg-gradient-to-r from-red-500 to-amber-500",
   }
   return colors[role]
@@ -74,7 +85,10 @@ export function getRoleDisplayName(role: UserRole): string {
   const names: Record<UserRole, string> = {
     employee: "Employee",
     junior_hr: "Junior HR",
-    hr_manager: "HR Manager",
+    hr_manager: "Admin",
+    hr_admin: "Admin",
+    manager: "Manager",
+    admin: "Admin",
     super_admin: "Super Admin",
   }
   return names[role]

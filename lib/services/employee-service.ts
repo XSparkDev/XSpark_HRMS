@@ -50,6 +50,57 @@ export interface Employee {
   updated_at: string
 }
 
+export interface NextOfKin {
+  id: string
+  employee_id: string
+  first_name: string
+  middle_name?: string | null
+  last_name: string
+  email?: string | null
+  phone: string
+  alternative_phone?: string | null
+  relationship: string
+  is_primary?: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface NextOfKinInput {
+  id?: string
+  full_name?: string
+  name?: string
+  first_name?: string
+  middle_name?: string
+  last_name?: string
+  email?: string
+  phone: string
+  alternative_phone?: string
+  relationship: string
+  is_primary?: boolean
+}
+
+const splitFullName = (fullName: string): {
+  firstName: string
+  middleName?: string
+  lastName: string
+} => {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean)
+
+  if (parts.length === 0) {
+    return { firstName: '', lastName: '' }
+  }
+
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: parts[0] }
+  }
+
+  const firstName = parts[0]
+  const lastName = parts[parts.length - 1]
+  const middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : undefined
+
+  return { firstName, middleName, lastName }
+}
+
 export interface CreateEmployeeData {
   auth_user_id?: string
   first_name: string
@@ -319,6 +370,115 @@ export class EmployeeService {
       console.error('Error updating employee:', error)
       throw new Error('Failed to update employee')
     }
+  }
+
+  /**
+   * Create or update multiple next of kin records for an employee
+   */
+  async saveNextOfKins(employeeId: string, nokArray: NextOfKinInput[]): Promise<NextOfKin[]> {
+    if (!employeeId) {
+      throw new Error('Employee ID is required to save next of kin')
+    }
+
+    if (!Array.isArray(nokArray) || nokArray.length === 0) {
+      return []
+    }
+
+    const savedRecords: NextOfKin[] = []
+    const timestamp = new Date().toISOString()
+
+    try {
+      for (const nok of nokArray) {
+        let firstName = nok.first_name?.trim()
+        let middleName = nok.middle_name?.trim()
+        let lastName = nok.last_name?.trim()
+
+        const fallbackName = (nok.full_name ?? nok.name ?? '').trim()
+        if ((!firstName || !lastName) && fallbackName) {
+          const split = splitFullName(fallbackName)
+          if (!firstName && split.firstName) firstName = split.firstName
+          if (!middleName && split.middleName) middleName = split.middleName
+          if (!lastName && split.lastName) lastName = split.lastName
+        }
+
+        if (!firstName || !lastName) {
+          throw new Error('Next of kin first_name and last_name are required')
+        }
+
+        const relationship = nok.relationship?.trim()
+        if (!relationship) {
+          throw new Error('Next of kin relationship is required')
+        }
+
+        const phone = nok.phone?.trim()
+        if (!phone) {
+          throw new Error('Next of kin phone is required')
+        }
+
+        const basePayload: Record<string, any> = {
+          employee_id: employeeId,
+          first_name: firstName,
+          last_name: lastName,
+          relationship,
+          phone,
+          updated_at: timestamp,
+          is_primary: typeof nok.is_primary === 'boolean' ? nok.is_primary : false
+        }
+
+        if (middleName) basePayload.middle_name = middleName
+        if (nok.email) basePayload.email = nok.email.trim()
+        if (nok.alternative_phone) basePayload.alternative_phone = nok.alternative_phone.trim()
+
+        if (nok.id) {
+          const { data, error } = await supabaseAdmin
+            .from('next_of_kin')
+            .update(basePayload)
+            .eq('id', nok.id)
+            .eq('employee_id', employeeId)
+            .select()
+            .single()
+
+          if (error) {
+            console.error('Supabase next_of_kin update error:', error)
+            throw new Error('Failed to save next_of_kin')
+          }
+
+          if (data) savedRecords.push(data as NextOfKin)
+        } else {
+          const insertPayload = {
+            ...basePayload,
+            created_at: timestamp
+          }
+
+          const { data, error } = await supabaseAdmin
+            .from('next_of_kin')
+            .insert([insertPayload])
+            .select()
+            .single()
+
+          if (error) {
+            console.error('Supabase next_of_kin insert error:', error)
+            throw new Error('Failed to save next_of_kin')
+          }
+
+          if (data) savedRecords.push(data as NextOfKin)
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        console.error('Unexpected error saving next of kin:', error)
+        throw new Error('Failed to save next_of_kin')
+      }
+
+      if (!error.message.startsWith('Next of kin')) {
+        console.error('Error saving next of kin:', error)
+        throw new Error('Failed to save next_of_kin')
+      }
+
+      throw error
+    }
+
+    return savedRecords
   }
 
   /**

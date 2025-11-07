@@ -38,60 +38,6 @@ export default function EmployeeManagementPage() {
   const itemsPerPage = 10
   const user = getCurrentUser()
 
-  // Mock data - replace with actual API calls
-  useEffect(() => {
-    // Simulate API call
-    setTimeout(() => {
-      const mockEmployees: EmployeeProfile[] = [
-        {
-          id: "1",
-          user_id: "user1",
-          first_name: "John",
-          last_name: "Doe",
-          preferred_name: "Johnny",
-          employee_ID: "XSP25/01/001",
-          email: "john.doe@company.com",
-          phone: "+27 82 123 4567",
-          address: "123 Main St, Cape Town",
-          dob: "1990-05-15",
-          sex: "male",
-          gender: "male",
-          nationality: "South Africa",
-          job_title_id: "developer",
-          date_hired: "2023-01-15",
-          id_verified: true,
-          bank_verified: true,
-          work_permit_verified: true,
-          created_at: "2023-01-15T00:00:00Z",
-          updated_at: "2023-01-15T00:00:00Z"
-        },
-        {
-          id: "2",
-          user_id: "user2",
-          first_name: "Jane",
-          last_name: "Smith",
-          employee_ID: "XSP25/01/002",
-          email: "jane.smith@company.com",
-          phone: "+27 83 234 5678",
-          address: "456 Oak Ave, Johannesburg",
-          dob: "1988-12-03",
-          sex: "female",
-          gender: "female",
-          nationality: "South Africa",
-          job_title_id: "designer",
-          date_hired: "2023-02-01",
-          id_verified: true,
-          bank_verified: false,
-          work_permit_verified: true,
-          created_at: "2023-02-01T00:00:00Z",
-          updated_at: "2023-02-01T00:00:00Z"
-        }
-      ]
-      setEmployees(mockEmployees)
-      setFilteredEmployees(mockEmployees)
-      setIsLoading(false)
-    }, 1000)
-  }, [])
 
   // Filter employees based on search and filters
   useEffect(() => {
@@ -473,10 +419,45 @@ function EmployeeForm({
     pronouns: employee?.pronouns || "",
   })
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    console.log("Form submitted:", formData)
-    onSubmit()
+
+    try {
+      if (isEdit && employee?.id) {
+        const updates: any = { ...formData }
+
+        // Normalize optional enum and empty strings
+        if (!updates.gender || updates.gender === "") {
+          delete updates.gender
+        } else if (updates.gender === "prefer not to say") {
+          updates.gender = "prefer_not_to_say"
+        }
+
+        // Remove empty-string fields so validation doesn't see ''
+        Object.keys(updates).forEach((key) => {
+          if (updates[key] === "") delete updates[key]
+        })
+
+        const res = await fetch('/api/employees', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: employee.id, ...updates })
+        })
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}))
+          throw new Error(json?.error || 'Failed to update employee')
+        }
+      } else {
+        // Creation path not requested here
+        console.log('Create employee payload:', formData)
+      }
+
+      onSubmit()
+    } catch (err) {
+      console.error('Save profile failed:', err)
+      alert((err as any)?.message || 'Could not save profile')
+    }
   }
 
   return (
@@ -489,6 +470,7 @@ function EmployeeForm({
             <Label htmlFor="first_name">First Name *</Label>
             <Input
               id="first_name"
+              autoComplete="given-name"
               value={formData.first_name}
               onChange={(e) => setFormData({...formData, first_name: e.target.value})}
               required
@@ -499,6 +481,7 @@ function EmployeeForm({
             <Label htmlFor="middle_name">Middle Name</Label>
             <Input
               id="middle_name"
+              autoComplete="additional-name"
               value={formData.middle_name}
               onChange={(e) => setFormData({...formData, middle_name: e.target.value})}
               className="uniform-input"
@@ -508,6 +491,7 @@ function EmployeeForm({
             <Label htmlFor="last_name">Last Name *</Label>
             <Input
               id="last_name"
+              autoComplete="family-name"
               value={formData.last_name}
               onChange={(e) => setFormData({...formData, last_name: e.target.value})}
               required
@@ -527,10 +511,11 @@ function EmployeeForm({
             <Label htmlFor="id_number">ID Number *</Label>
             <Input
               id="id_number"
+              autoComplete="off"
               value={formData.id_number}
               onChange={(e) => setFormData({...formData, id_number: e.target.value})}
               className="uniform-input"
-              required
+              required={!isEdit}
             />
           </div>
           <div>
@@ -538,6 +523,7 @@ function EmployeeForm({
             <Input
               id="dob"
               type="date"
+              autoComplete="bday"
               value={formData.dob}
               onChange={(e) => setFormData({...formData, dob: e.target.value})}
               required
@@ -566,7 +552,7 @@ function EmployeeForm({
                 <SelectItem value="male">Male</SelectItem>
                 <SelectItem value="female">Female</SelectItem>
                 <SelectItem value="other">Other</SelectItem>
-                <SelectItem value="prefer not to say">Prefer not to say</SelectItem>
+                <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -592,6 +578,7 @@ function EmployeeForm({
             <Input
               id="email"
               type="email"
+              autoComplete="email"
               value={formData.email}
               onChange={(e) => setFormData({...formData, email: e.target.value})}
               className="uniform-input"
@@ -601,9 +588,10 @@ function EmployeeForm({
             <Label htmlFor="phone">Phone Number *</Label>
             <Input
               id="phone"
+              autoComplete="tel"
               value={formData.phone}
               onChange={(e) => setFormData({...formData, phone: e.target.value})}
-              required
+              required={!isEdit}
               className="uniform-input"
             />
           </div>
@@ -611,6 +599,7 @@ function EmployeeForm({
             <Label htmlFor="alternative_phone">Alternative Phone</Label>
             <Input
               id="alternative_phone"
+              autoComplete="tel"
               value={formData.alternative_phone}
               onChange={(e) => setFormData({...formData, alternative_phone: e.target.value})}
               className="uniform-input"
@@ -620,9 +609,10 @@ function EmployeeForm({
             <Label htmlFor="address">Address *</Label>
             <Textarea
               id="address"
+              autoComplete="street-address"
               value={formData.address}
               onChange={(e) => setFormData({...formData, address: e.target.value})}
-              required
+              required={!isEdit}
               className="uniform-input"
             />
           </div>

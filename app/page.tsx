@@ -371,7 +371,7 @@ const roles = [
   },
   {
     icon: "⭐",
-    title: "HR Manager",
+    title: "Admin",
     gradient: "gradient-primary",
     capabilities: ["Full employee management", "Edit all profiles", "Manage permissions", "Access all reports"],
   },

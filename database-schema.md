@@ -1440,7 +1440,7 @@ FOR EACH ROW EXECUTE FUNCTION encrypt_banking_data();
 INSERT INTO roles (role_name, description, can_view_sensitive_data, can_edit_employee_data, can_approve_leave, can_manage_users, can_access_audit_logs, can_manage_system_config) VALUES
     ('employee', 'Regular staff member with access to own data', FALSE, FALSE, FALSE, FALSE, FALSE, FALSE),
     ('junior_hr', 'Supporting HR role with limited responsibilities', TRUE, TRUE, FALSE, FALSE, FALSE, FALSE),
-    ('hr_manager', 'HR Manager with full access to employee records', TRUE, TRUE, TRUE, TRUE, TRUE, FALSE),
+    ('hr_manager', 'Admin with full access to employee records', TRUE, TRUE, TRUE, TRUE, TRUE, FALSE),
     ('admin', 'Administrator with elevated privileges', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE),
     ('super_admin', 'Highest-level system role with unrestricted access', TRUE, TRUE, TRUE, TRUE, TRUE, TRUE);
 
@@ -1451,7 +1451,7 @@ INSERT INTO roles (role_name, description, can_view_sensitive_data, can_edit_emp
 INSERT INTO job_titles (title, department, hourly_rate, description) VALUES
     ('Software Engineer', 'Engineering', 350.00, 'Develops and maintains software applications'),
     ('Senior Software Engineer', 'Engineering', 500.00, 'Lead engineer with advanced responsibilities'),
-    ('HR Manager', 'Human Resources', 400.00, 'Manages HR operations and employee relations'),
+    ('Admin', 'Human Resources', 400.00, 'Manages HR operations and employee relations'),
     ('HR Assistant', 'Human Resources', 250.00, 'Supports HR department with administrative tasks'),
     ('Project Manager', 'Management', 450.00, 'Oversees project delivery and team coordination'),
     ('Accountant', 'Finance', 380.00, 'Manages financial records and reporting'),

@@ -14,67 +14,42 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Checkbox } from "@/components/ui/checkbox"
+import EditNoteForm from "@/components/EditNoteForm"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 
-import { noteSchema, NoteFormData, alertLevelEnum, visibilityEnum, reminderRepeatEnum } from "@/lib/validation/leave"
 import { getCurrentUser } from "@/lib/auth"
 
-// Mock notes data
-const mockNotes = [
-  {
-    note_id: "1",
-    employee_id: "a1b2c3d4-e5f6-7890-1234-567890abcdef",
-    author_id: "hr-admin-1",
-    author_role: "HR Admin",
-    content: "Employee completed probation successfully. Performance review scheduled for next month.",
-    created_at: new Date("2024-12-01T10:00:00Z"),
-    updated_at: new Date("2024-12-01T10:00:00Z"),
-    alert_level: "medium" as const,
-    visibility: "public" as const,
-    reminder_enabled: false,
-    reminder_repeat: "none" as const,
-    pinned: true,
-    attachments: [],
-    tags: "probation,performance",
-    status: "active" as const,
-  },
-  {
-    note_id: "2",
-    employee_id: "a1b2c3d4-e5f6-7890-1234-567890abcdef",
-    author_id: "manager-1",
-    author_role: "Manager",
-    content: "Training completed for new software system. Employee shows good adaptability.",
-    created_at: new Date("2024-11-28T14:30:00Z"),
-    updated_at: new Date("2024-11-28T14:30:00Z"),
-    alert_level: "low" as const,
-    visibility: "public" as const,
-    reminder_enabled: false,
-    reminder_repeat: "none" as const,
-    pinned: false,
-    attachments: [],
-    tags: "training,software",
-    status: "active" as const,
-  },
-  {
-    note_id: "3",
-    employee_id: "a1b2c3d4-e5f6-7890-1234-567890abcdef",
-    author_id: "a1b2c3d4-e5f6-7890-1234-567890abcdef",
-    author_role: "Employee",
-    content: "Personal reminder: Annual performance review preparation due next week.",
-    created_at: new Date("2024-11-25T09:15:00Z"),
-    updated_at: new Date("2024-11-25T09:15:00Z"),
-    reminder_at: new Date("2024-12-10T09:00:00Z"),
-    alert_level: "high" as const,
-    visibility: "personal" as const,
-    reminder_enabled: true,
-    reminder_repeat: "none" as const,
-    pinned: false,
-    attachments: [],
-    tags: "personal,reminder",
-    status: "active" as const,
-  }
-]
+type NoteVisibility = "public" | "personal"
+
+type NoteItem = {
+  id: string
+  employee_id: string
+  author_id: string
+  author_role?: string | null
+  title?: string | null
+  content: string
+  alert_level: "high" | "medium" | "low"
+  visibility: NoteVisibility
+  is_confidential: boolean
+  reminder_enabled?: boolean | null
+  reminder_at?: string | null
+  pinned: boolean
+  tags?: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface NewNoteInput {
+  title?: string
+  content: string
+  alert_level: "high" | "medium" | "low"
+  visibility: NoteVisibility
+  pinned?: boolean
+  tags?: string
+  reminder_enabled?: boolean
+  reminder_at?: Date
+}
 
 interface NotesSectionProps {
   employeeId: string
@@ -83,24 +58,89 @@ interface NotesSectionProps {
 
 export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionProps) {
   const { toast } = useToast()
-  const [notes, setNotes] = useState<typeof mockNotes>([])
+  const [notes, setNotes] = useState<NoteItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
-  const [editingNote, setEditingNote] = useState<string | null>(null)
+  const [editingNote, setEditingNote] = useState<NoteItem | null>(null)
   const [filter, setFilter] = useState<"all" | "high" | "medium" | "low">("all")
   const [visibilityFilter, setVisibilityFilter] = useState<"all" | "public" | "personal">("all")
 
   const currentUser = getCurrentUser()
-  const isHRAdmin = currentUser?.role === "hr_admin" || currentUser?.role === "admin"
+  const isHRAdmin = ["hr_admin", "hr_manager", "admin", "super_admin"].includes(currentUser?.role ?? "")
   const isManager = currentUser?.role === "manager"
 
+  const buildHeaders = () => {
+    const headers: Record<string, string> = {}
+    if (currentUser?.id) headers["x-user-id"] = currentUser.id
+    if (currentUser?.role) headers["x-user-role"] = currentUser.role
+    if (employeeId) headers["x-employee-id"] = employeeId
+    return headers
+  }
+
+  const normalizeNote = (note: any): NoteItem => ({
+    id: note.id ?? note.note_id ?? `note-${Date.now()}`,
+    employee_id: note.employee_id ?? employeeId,
+    author_id: note.author_id ?? currentUser?.id ?? "",
+    author_role: note.author_role ?? null,
+    title: note.title ?? null,
+    content: note.content ?? "",
+    alert_level: note.alert_level ?? "low",
+    visibility: note.visibility ?? (note.is_confidential ? "personal" : "public"),
+    is_confidential: note.is_confidential ?? (note.visibility ? note.visibility === "personal" : true),
+    reminder_enabled: note.reminder_enabled ?? false,
+    reminder_at: note.reminder_at ?? null,
+    pinned: note.pinned ?? false,
+    tags: note.tags ?? null,
+    created_at: note.created_at ?? new Date().toISOString(),
+    updated_at: note.updated_at ?? note.created_at ?? new Date().toISOString(),
+  })
+
   useEffect(() => {
-    // Mock API call - replace with actual API
-    setTimeout(() => {
-      setNotes(mockNotes)
-      setIsLoading(false)
-    }, 1000)
-  }, [employeeId])
+    let isMounted = true
+
+    const fetchNotes = async () => {
+      if (!employeeId || !currentUser?.id) {
+        setIsLoading(false)
+        return
+      }
+
+      try {
+        setIsLoading(true)
+        const headers = buildHeaders()
+        console.log("Loading notes for:", { employeeId, currentUser })
+        const res = await fetch(`/api/notes`, { headers })
+        if (!res.ok) {
+          throw new Error(`Failed to load notes (${res.status})`)
+        }
+
+        const json = await res.json()
+        if (!isMounted) return
+
+        const fetchedNotes: NoteItem[] = Array.isArray(json?.notes)
+          ? json.notes.map((note: any) => normalizeNote(note))
+          : []
+
+        setNotes(fetchedNotes)
+      } catch (error) {
+        console.error("Error loading notes:", error)
+        if (isMounted) {
+          toast({
+            title: "Unable to load notes",
+            description: "We couldn't retrieve your notes. Please try again shortly.",
+            variant: "destructive",
+          })
+        }
+      } finally {
+        if (isMounted) setIsLoading(false)
+      }
+    }
+
+    fetchNotes()
+
+    return () => {
+      isMounted = false
+    }
+  }, [employeeId, currentUser, toast])
 
   const getAlertLevelColor = (level: string) => {
     switch (level) {
@@ -130,7 +170,7 @@ export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionP
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   })
 
-  const canEditNote = (note: typeof mockNotes[0]) => {
+  const canEditNote = (note: NoteItem) => {
     if (isHRAdmin) return true
     if (isManager && note.author_id === currentUser?.id) return true
     if (isOwnProfile && note.author_id === currentUser?.id) return true
@@ -141,27 +181,80 @@ export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionP
     return isHRAdmin || isManager
   }
 
-  const handleCreateNote = async (data: NoteFormData) => {
-    try {
-      // Mock API call - replace with actual API
-      const newNote = {
-        ...data,
-        note_id: Date.now().toString(),
-        employee_id: employeeId,
-        author_id: currentUser?.id || "",
-        author_role: currentUser?.role || "employee",
-        created_at: new Date(),
-        updated_at: new Date(),
-      }
-      
-      setNotes(prev => [newNote, ...prev])
-      setIsCreateModalOpen(false)
-      
+  const handleCreateNote = async (data: NewNoteInput) => {
+    if (!employeeId || !currentUser?.id) {
       toast({
-        title: "Note Created",
-        description: "Your note has been successfully created.",
+        title: "Unable to create note",
+        description: "Please sign in again before adding a note.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const headers = {
+      "Content-Type": "application/json",
+      ...buildHeaders(),
+    }
+
+    console.log("Creating note with headers:", headers)
+
+    const tempId = `temp-${Date.now()}`
+    const now = new Date().toISOString()
+
+    const optimisticNote: NoteItem = {
+      id: tempId,
+      employee_id: employeeId,
+      author_id: currentUser.id,
+      author_role: currentUser.role,
+      title: data.title || null,
+      content: data.content,
+      alert_level: data.alert_level,
+      visibility: data.visibility,
+      is_confidential: data.visibility === "personal",
+      pinned: data.pinned || false,
+      tags: data.tags || null,
+      reminder_enabled: data.reminder_enabled || false,
+      reminder_at: data.reminder_enabled && data.reminder_at ? data.reminder_at.toISOString() : null,
+      created_at: now,
+      updated_at: now,
+    }
+
+    setNotes((prev) => [optimisticNote, ...prev])
+    setIsCreateModalOpen(false)
+
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          title: data.title || null,
+          content: data.content,
+          alert_level: data.alert_level,
+          visibility: data.visibility,
+          pinned: data.pinned || false,
+          tags: data.tags || null,
+          reminder_enabled: data.reminder_enabled || false,
+          reminder_at: data.reminder_enabled && data.reminder_at ? data.reminder_at.toISOString() : undefined,
+        }),
+      })
+
+      if (!res.ok) {
+        throw new Error(`Failed to create note (${res.status})`)
+      }
+
+      const created = await res.json()
+
+      setNotes((prev) =>
+        prev.map((note) => (note.id === tempId ? normalizeNote(created) : note))
+      )
+
+      toast({
+        title: "Note created",
+        description: "Your note has been saved.",
       })
     } catch (error) {
+      console.error(error)
+      setNotes((prev) => prev.filter((note) => note.id !== tempId))
       toast({
         title: "Error",
         description: "Failed to create note. Please try again.",
@@ -171,20 +264,82 @@ export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionP
   }
 
   const handleDeleteNote = async (noteId: string) => {
-    try {
-      // Mock API call - replace with actual API
-      setNotes(prev => prev.filter(note => note.note_id !== noteId))
-      
+    if (!employeeId || !currentUser?.id) {
       toast({
-        title: "Note Deleted",
-        description: "The note has been successfully deleted.",
+        title: "Unable to delete note",
+        description: "Please sign in again before deleting a note.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const previous = notes
+    setNotes((prev) => prev.filter((note) => note.id !== noteId))
+
+    try {
+      const res = await fetch(`/api/notes/${noteId}`, {
+        method: 'DELETE',
+        headers: buildHeaders(),
+      })
+
+      if (!res.ok) {
+        throw new Error(`Failed to delete note (${res.status})`)
+      }
+
+      toast({
+        title: "Note deleted",
+        description: "The note has been removed.",
       })
     } catch (error) {
+      console.error(error)
+      setNotes(() => [...previous])
       toast({
         title: "Error",
         description: "Failed to delete note. Please try again.",
         variant: "destructive",
       })
+    }
+  }
+
+  const handleEditNote = async (noteId: string, data: Partial<NewNoteInput>) => {
+    if (!employeeId || !currentUser?.id) return
+
+    const headers = {
+      "Content-Type": "application/json",
+      ...buildHeaders(),
+    }
+
+    const previous = notes
+    setNotes((prev) =>
+      prev.map((n) =>
+        n.id === noteId
+          ? {
+              ...n,
+              ...data,
+              reminder_at:
+                data.reminder_at instanceof Date
+                  ? data.reminder_at.toISOString()
+                  : data.reminder_at ?? n.reminder_at,
+              visibility: data.visibility ?? n.visibility,
+              updated_at: new Date().toISOString(),
+            }
+          : n
+      )
+    )
+
+    try {
+      const res = await fetch(`/api/notes/${noteId}`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify(data),
+      })
+      if (!res.ok) throw new Error()
+      const updated = await res.json()
+      setNotes((prev) => prev.map((n) => (n.id === noteId ? normalizeNote(updated) : n)))
+      toast({ title: "Note updated" })
+    } catch (error) {
+      setNotes(previous)
+      toast({ title: "Error updating note", variant: "destructive" })
     }
   }
 
@@ -224,6 +379,23 @@ export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionP
                 canCreatePublic={canCreatePublicNote()}
                 onCancel={() => setIsCreateModalOpen(false)}
               />
+            </DialogContent>
+          </Dialog>
+          <Dialog open={!!editingNote} onOpenChange={(open) => setEditingNote(open ? editingNote : null)}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Edit Note</DialogTitle>
+              </DialogHeader>
+              {editingNote && (
+                <EditNoteForm
+                  note={editingNote}
+                  onSave={async (id, data) => {
+                    await handleEditNote(id, data)
+                    setEditingNote(null)
+                  }}
+                  onCancel={() => setEditingNote(null)}
+                />
+              )}
             </DialogContent>
           </Dialog>
         </div>
@@ -266,7 +438,7 @@ export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionP
             <AnimatePresence>
               {filteredNotes.map((note) => (
                 <motion.div
-                  key={note.note_id}
+                  key={note.id}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
@@ -294,14 +466,14 @@ export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionP
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => setEditingNote(note.note_id)}
+                          onClick={() => setEditingNote(note)}
                         >
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDeleteNote(note.note_id)}
+                          onClick={() => handleDeleteNote(note.id)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -315,7 +487,7 @@ export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionP
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-1">
                         <User className="h-3 w-3" />
-                        <span>{note.author_role}</span>
+                        <span>{note.author_role || "Employee"}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
@@ -350,48 +522,50 @@ export function NotesSection({ employeeId, isOwnProfile = false }: NotesSectionP
 }
 
 interface CreateNoteFormProps {
-  onSubmit: (data: NoteFormData) => void
+  onSubmit: (data: NewNoteInput) => void
   canCreatePublic: boolean
   onCancel: () => void
 }
 
 function CreateNoteForm({ onSubmit, canCreatePublic, onCancel }: CreateNoteFormProps) {
-  const [formData, setFormData] = useState<Partial<NoteFormData>>({
+  const [formData, setFormData] = useState<Partial<NewNoteInput>>({
     content: "",
     alert_level: "low",
     visibility: "personal",
     reminder_enabled: false,
-    reminder_repeat: "none",
     pinned: false,
     tags: "",
+    title: "",
   })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.content?.trim()) return
-    
+
     onSubmit({
-      note_id: undefined,
-      employee_id: "",
-      author_id: "",
-      author_role: "",
+      title: formData.title?.trim() || undefined,
       content: formData.content,
-      created_at: new Date(),
-      updated_at: new Date(),
-      reminder_at: formData.reminder_enabled ? formData.reminder_at : undefined,
-      alert_level: formData.alert_level || "low",
-      visibility: formData.visibility || "personal",
-      reminder_enabled: formData.reminder_enabled || false,
-      reminder_repeat: formData.reminder_repeat || "none",
+      alert_level: (formData.alert_level as NewNoteInput["alert_level"]) || "low",
+      visibility: (formData.visibility as NoteVisibility) || "personal",
       pinned: formData.pinned || false,
-      attachments: [],
       tags: formData.tags,
-      status: "active",
+      reminder_enabled: formData.reminder_enabled || false,
+      reminder_at: formData.reminder_enabled && formData.reminder_at ? new Date(formData.reminder_at) : undefined,
     })
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="title">Title</Label>
+        <Input
+          id="title"
+          value={formData.title || ""}
+          onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
+          placeholder="Optional title for this note"
+        />
+      </div>
+
       <div>
         <Label htmlFor="content">Note Content *</Label>
         <Textarea
@@ -408,7 +582,7 @@ function CreateNoteForm({ onSubmit, canCreatePublic, onCancel }: CreateNoteFormP
         <div>
           <Label htmlFor="alert_level">Alert Level</Label>
           <Select 
-            value={formData.alert_level} 
+            value={formData.alert_level ?? "low"} 
             onValueChange={(value) => setFormData(prev => ({ ...prev, alert_level: value as any }))}
           >
             <SelectTrigger>
@@ -425,7 +599,7 @@ function CreateNoteForm({ onSubmit, canCreatePublic, onCancel }: CreateNoteFormP
         <div>
           <Label htmlFor="visibility">Visibility</Label>
           <Select 
-            value={formData.visibility} 
+            value={formData.visibility ?? "personal"} 
             onValueChange={(value) => setFormData(prev => ({ ...prev, visibility: value as any }))}
             disabled={!canCreatePublic}
           >
@@ -465,7 +639,7 @@ function CreateNoteForm({ onSubmit, canCreatePublic, onCancel }: CreateNoteFormP
           <Input
             id="reminder_at"
             type="datetime-local"
-            value={formData.reminder_at ? new Date(formData.reminder_at).toISOString().slice(0, 16) : ""}
+            value={formData.reminder_at ? formData.reminder_at.toISOString().slice(0, 16) : ""}
             onChange={(e) => setFormData(prev => ({ ...prev, reminder_at: e.target.value ? new Date(e.target.value) : undefined }))}
           />
         </div>

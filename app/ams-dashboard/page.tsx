@@ -317,7 +317,7 @@ export default function AMSDashboardPage() {
               </>
             )}
 
-            {/* HR Manager View */}
+            {/* Admin View */}
             {(user.role === "hr_manager" || user.role === "super_admin") && (
               <>
                 <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">

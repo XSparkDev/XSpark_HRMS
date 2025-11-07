@@ -49,6 +49,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
   const [user, setUser] = useState<User | undefined>(undefined)
+  const [displayName, setDisplayName] = useState<string>("")
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
@@ -57,6 +58,27 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       router.replace("/login")
     }
     setUser(currentUser)
+    // Initial load of profile for display name
+    const loadProfile = async () => {
+      try {
+        const res = await fetch('/api/auth/me', { headers: { 'Content-Type': 'application/json' } })
+        const json = await res.json().catch(() => ({}))
+        const profile = json?.data?.employee || null
+        if (profile) {
+          const dn = profile.preferred_name || `${profile.first_name} ${profile.last_name}`
+          setDisplayName(dn)
+        } else if (currentUser?.name) {
+          setDisplayName(currentUser.name)
+        }
+      } catch {
+        if (currentUser?.name) setDisplayName(currentUser.name)
+      }
+    }
+    loadProfile()
+
+    const onProfileUpdated = () => loadProfile()
+    window.addEventListener('profile-updated', onProfileUpdated as EventListener)
+    return () => window.removeEventListener('profile-updated', onProfileUpdated as EventListener)
   }, [router])
 
   if (user === undefined) {
@@ -104,7 +126,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <XSparkLogo className="h-8 w-auto" />
           </Link>
 
-          {/* Search (HR Manager and above) */}
+          {/* Search (Admin and above) */}
           {hasPermission(user, "view_employees") && (
             <div className="hidden md:flex flex-1 max-w-md">
               <div className="relative w-full">
@@ -132,14 +154,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <Button variant="ghost" className="gap-2">
                 <Avatar className="h-8 w-8">
                   <AvatarFallback className="gradient-primary text-white text-xs">
-                    {user.name
+                    {(displayName || user.name)
                       .split(" ")
                       .map((n) => n[0])
                       .join("")}
                   </AvatarFallback>
                 </Avatar>
                 <div className="hidden md:flex flex-col items-start">
-                  <span className="text-sm font-medium">{user.name}</span>
+                  <span className="text-sm font-medium">{displayName || user.name}</span>
                   <Badge className={cn("text-xs", getRoleBadgeColor(user.role))}>{getRoleDisplayName(user.role)}</Badge>
                 </div>
               </Button>

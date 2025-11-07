@@ -44,6 +44,17 @@ export {
   type NoteFilters
 } from './notes-service-new'
 
+export {
+  createEmployeeNote,
+  getEmployeeNotesByEmployee,
+  getEmployeeNoteById,
+  updateEmployeeNote,
+  deleteEmployeeNote,
+  type EmployeeNote,
+  type CreateEmployeeNoteData,
+  type UpdateEmployeeNoteData
+} from './employee-notes-service'
+
 export { 
   StorageService,
   storageService,
