@@ -33,22 +33,30 @@ export async function GET(request: NextRequest) {
       // If RLS allows user to read their own employee record, this works
       // Otherwise, fall back to admin client only after verifying ownership
       let employee = null
+      // PREVIOUS QUERY: .select('*, job_titles(title)')
+      // UPDATED QUERY: includes next_of_kin so profile consumers receive NOK rows.
       const { data: employeeData, error: empError } = await userClient
         .from('employees')
-        .select('*, job_titles(title)')
+        .select('*, job_titles(title), next_of_kin(*)')
         .eq('auth_user_id', user.id)
         .single()
+
+      console.log('Employee data with next_of_kin (user client):', employeeData)
 
       employee = employeeData || null
 
       // If RLS blocks access, verify ownership and use admin client as fallback
       if (empError || !employee) {
         // Double-check: verify this token belongs to this user before using admin client
+        // PREVIOUS QUERY: .select('*, job_titles(title)')
+        // UPDATED QUERY: .select('*, job_titles(title), next_of_kin(*)')
         const { data: adminEmployee } = await supabaseAdmin
           .from('employees')
-          .select('*, job_titles(title)')
+          .select('*, job_titles(title), next_of_kin(*)')
           .eq('auth_user_id', user.id)
           .single()
+
+        console.log('Employee data with next_of_kin (admin client):', adminEmployee)
         
         if (!adminEmployee) {
           return NextResponse.json({ success: false, error: 'Employee not found' }, { status: 404 })

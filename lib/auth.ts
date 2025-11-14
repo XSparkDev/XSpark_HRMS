@@ -1,6 +1,7 @@
 export type UserRole = "employee" | "junior_hr" | "hr_manager" | "super_admin"
 
 export interface User {
+  id?: string
   email: string
   name: string
   role: UserRole
