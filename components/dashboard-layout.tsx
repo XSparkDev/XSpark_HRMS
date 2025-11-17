@@ -48,7 +48,7 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
-  const [user, setUser] = useState<User | undefined>(undefined)
+  const [user, setUser] = useState<User | null | undefined>(undefined)
   const [displayName, setDisplayName] = useState<string>("")
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
