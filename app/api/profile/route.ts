@@ -3,8 +3,19 @@ import { appFormSchema, validateProfile, type ProfileFormData } from "@/lib/vali
 import { encrypt, decrypt, sanitizeInput, validateFileUpload, checkRateLimit, logAuditEvent } from "@/lib/crypto"
 import { getCurrentUser } from "@/lib/auth"
 
+type StoredBankingDetails = (NonNullable<ProfileFormData["banking_details"]> & {
+  encrypted_account_number?: string | null
+  encrypted_id_number?: string | null
+}) | undefined
+
+type StoredProfile = (ProfileFormData & {
+  encrypted_id_number?: string | null
+  encrypted_tax_number?: string | null
+  banking_details?: StoredBankingDetails
+}) & Record<string, any>
+
 // Mock database - replace with actual database calls
-const profiles: Map<string, ProfileFormData> = new Map()
+const profiles: Map<string, StoredProfile> = new Map()
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,12 +35,13 @@ export async function POST(request: NextRequest) {
 
     // Get current user
     const user = getCurrentUser()
-    if (!user) {
+    if (!user || !user.id) {
       return NextResponse.json(
         { message: "Unauthorized" },
         { status: 401 }
       )
     }
+    const userId = user.id
 
     // Parse and validate request body
     const body = await request.json()
@@ -38,11 +50,11 @@ export async function POST(request: NextRequest) {
     const validationResult = validateProfile(body)
     if (!validationResult.success) {
       logAuditEvent('profile_validation_failed', {
-        userId: user.id,
+        userId,
         errors: validationResult.errors,
         ip: clientIP,
         userAgent: request.headers.get('user-agent')
-      }, user.id, 'medium')
+      }, userId, 'medium')
       
       return NextResponse.json(
         { 
@@ -66,21 +78,21 @@ export async function POST(request: NextRequest) {
       // Sanitize next of kin data
       next_of_kin: body.next_of_kin ? {
         ...body.next_of_kin,
-        first_name: sanitizeInput(body.next_of_kin.first_name),
+        first_name: sanitizeInput(body.next_of_kin.first_name || ''),
         middle_name: sanitizeInput(body.next_of_kin.middle_name || ''),
-        last_name: sanitizeInput(body.next_of_kin.last_name),
+        last_name: sanitizeInput(body.next_of_kin.last_name || ''),
         email: sanitizeInput(body.next_of_kin.email || ''),
-        relationship: sanitizeInput(body.next_of_kin.relationship)
+        relationship: sanitizeInput(body.next_of_kin.relationship || '')
       } : undefined,
       // Sanitize banking data
       banking_details: body.banking_details ? {
         ...body.banking_details,
-        full_name: sanitizeInput(body.banking_details.full_name),
-        email: sanitizeInput(body.banking_details.email),
-        address: sanitizeInput(body.banking_details.address),
-        bank_name: sanitizeInput(body.banking_details.bank_name),
+        full_name: sanitizeInput(body.banking_details.full_name || ''),
+        email: sanitizeInput(body.banking_details.email || ''),
+        address: sanitizeInput(body.banking_details.address || ''),
+        bank_name: sanitizeInput(body.banking_details.bank_name || ''),
         branch_number: sanitizeInput(body.banking_details.branch_number || ''),
-        account_type: sanitizeInput(body.banking_details.account_type)
+        account_type: sanitizeInput(body.banking_details.account_type || '')
       } : undefined
     }
 
@@ -93,8 +105,8 @@ export async function POST(request: NextRequest) {
       // Encrypt banking details
       banking_details: sanitizedData.banking_details ? {
         ...sanitizedData.banking_details,
-        encrypted_account_number: encrypt(sanitizedData.banking_details.account_number),
-        encrypted_id_number: encrypt(sanitizedData.banking_details.id_number)
+        encrypted_account_number: sanitizedData.banking_details.account_number ? encrypt(sanitizedData.banking_details.account_number) : null,
+        encrypted_id_number: sanitizedData.banking_details.id_number ? encrypt(sanitizedData.banking_details.id_number) : null
       } : undefined
     }
 
@@ -119,7 +131,7 @@ export async function POST(request: NextRequest) {
     const profileData = {
       ...encryptedData,
       id: crypto.randomUUID(),
-      auth_user_id: user.id,
+      auth_user_id: userId,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       is_active: true,
@@ -130,16 +142,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Store profile (in production, save to database)
-    profiles.set(user.id, profileData)
+    profiles.set(userId, profileData as StoredProfile)
 
     // Log successful creation
     logAuditEvent('profile_created', {
-      userId: user.id,
+      userId,
       employeeId: profileData.employee_id,
       nationality: profileData.nationality,
       ip: clientIP,
       userAgent: request.headers.get('user-agent')
-    }, user.id, 'high')
+    }, userId, 'high')
 
     return NextResponse.json(
       { 
@@ -187,15 +199,16 @@ export async function GET(request: NextRequest) {
 
     // Get current user
     const user = getCurrentUser()
-    if (!user) {
+    if (!user || !user.id) {
       return NextResponse.json(
         { message: "Unauthorized" },
         { status: 401 }
       )
     }
+    const userId = user.id
 
     // Get profile from database
-    const profile = profiles.get(user.id)
+    const profile = profiles.get(userId)
     if (!profile) {
       return NextResponse.json(
         { message: "Profile not found" },
@@ -227,10 +240,10 @@ export async function GET(request: NextRequest) {
 
     // Log profile access
     logAuditEvent('profile_accessed', {
-      userId: user.id,
+      userId,
       ip: clientIP,
       userAgent: request.headers.get('user-agent')
-    }, user.id, 'low')
+    }, userId, 'low')
 
     return NextResponse.json(decryptedProfile)
 
@@ -264,15 +277,16 @@ export async function PUT(request: NextRequest) {
 
     // Get current user
     const user = getCurrentUser()
-    if (!user) {
+    if (!user || !user.id) {
       return NextResponse.json(
         { message: "Unauthorized" },
         { status: 401 }
       )
     }
+    const userId = user.id
 
     // Check if profile exists
-    const existingProfile = profiles.get(user.id)
+    const existingProfile = profiles.get(userId)
     if (!existingProfile) {
       return NextResponse.json(
         { message: "Profile not found" },
@@ -287,11 +301,11 @@ export async function PUT(request: NextRequest) {
     const validationResult = validateProfile(body)
     if (!validationResult.success) {
       logAuditEvent('profile_update_validation_failed', {
-        userId: user.id,
+        userId,
         errors: validationResult.errors,
         ip: clientIP,
         userAgent: request.headers.get('user-agent')
-      }, user.id, 'medium')
+      }, userId, 'medium')
       
       return NextResponse.json(
         { 
@@ -336,21 +350,21 @@ export async function PUT(request: NextRequest) {
       // Sanitize next of kin data
       next_of_kin: body.next_of_kin ? {
         ...body.next_of_kin,
-        first_name: sanitizeInput(body.next_of_kin.first_name),
+        first_name: sanitizeInput(body.next_of_kin.first_name || ''),
         middle_name: sanitizeInput(body.next_of_kin.middle_name || ''),
-        last_name: sanitizeInput(body.next_of_kin.last_name),
+        last_name: sanitizeInput(body.next_of_kin.last_name || ''),
         email: sanitizeInput(body.next_of_kin.email || ''),
-        relationship: sanitizeInput(body.next_of_kin.relationship)
+        relationship: sanitizeInput(body.next_of_kin.relationship || '')
       } : undefined,
       // Sanitize banking data
       banking_details: body.banking_details ? {
         ...body.banking_details,
-        full_name: sanitizeInput(body.banking_details.full_name),
-        email: sanitizeInput(body.banking_details.email),
-        address: sanitizeInput(body.banking_details.address),
-        bank_name: sanitizeInput(body.banking_details.bank_name),
+        full_name: sanitizeInput(body.banking_details.full_name || ''),
+        email: sanitizeInput(body.banking_details.email || ''),
+        address: sanitizeInput(body.banking_details.address || ''),
+        bank_name: sanitizeInput(body.banking_details.bank_name || ''),
         branch_number: sanitizeInput(body.banking_details.branch_number || ''),
-        account_type: sanitizeInput(body.banking_details.account_type)
+        account_type: sanitizeInput(body.banking_details.account_type || '')
       } : undefined
     }
 
@@ -363,8 +377,8 @@ export async function PUT(request: NextRequest) {
       // Encrypt banking details
       banking_details: sanitizedData.banking_details ? {
         ...sanitizedData.banking_details,
-        encrypted_account_number: encrypt(sanitizedData.banking_details.account_number),
-        encrypted_id_number: encrypt(sanitizedData.banking_details.id_number)
+        encrypted_account_number: sanitizedData.banking_details.account_number ? encrypt(sanitizedData.banking_details.account_number) : existingProfile.banking_details?.encrypted_account_number ?? null,
+        encrypted_id_number: sanitizedData.banking_details.id_number ? encrypt(sanitizedData.banking_details.id_number) : existingProfile.banking_details?.encrypted_id_number ?? null
       } : existingProfile.banking_details
     }
 
@@ -384,16 +398,16 @@ export async function PUT(request: NextRequest) {
     }
 
     // Store updated profile
-    profiles.set(user.id, updatedProfile)
+    profiles.set(userId, updatedProfile)
 
     // Log successful update
     logAuditEvent('profile_updated', {
-      userId: user.id,
+      userId,
       employeeId: updatedProfile.employee_id,
       sensitiveFieldsChanged: hasSensitiveChanges,
       ip: clientIP,
       userAgent: request.headers.get('user-agent')
-    }, user.id, 'high')
+    }, userId, 'high')
 
     return NextResponse.json(
       { 
@@ -439,15 +453,16 @@ export async function DELETE(request: NextRequest) {
 
     // Get current user
     const user = getCurrentUser()
-    if (!user) {
+    if (!user || !user.id) {
       return NextResponse.json(
         { message: "Unauthorized" },
         { status: 401 }
       )
     }
+    const userId = user.id
 
     // Check if profile exists
-    const existingProfile = profiles.get(user.id)
+    const existingProfile = profiles.get(userId)
     if (!existingProfile) {
       return NextResponse.json(
         { message: "Profile not found" },
@@ -463,15 +478,15 @@ export async function DELETE(request: NextRequest) {
       updated_at: new Date().toISOString()
     }
 
-    profiles.set(user.id, deletedProfile)
+    profiles.set(userId, deletedProfile)
 
     // Log deletion
     logAuditEvent('profile_deleted', {
-      userId: user.id,
+      userId,
       employeeId: deletedProfile.employee_id,
       ip: clientIP,
       userAgent: request.headers.get('user-agent')
-    }, user.id, 'critical')
+    }, userId, 'critical')
 
     return NextResponse.json(
       { message: "Profile deleted successfully" }

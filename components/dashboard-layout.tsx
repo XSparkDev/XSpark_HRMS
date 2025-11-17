@@ -61,7 +61,20 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     // Initial load of profile for display name
     const loadProfile = async () => {
       try {
-        const res = await fetch('/api/auth/me', { headers: { 'Content-Type': 'application/json' } })
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        try {
+          const storedSession = localStorage.getItem('xspark_session')
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to parse session for profile fetch:', error)
+        }
+
+        const res = await fetch('/api/auth/me', { headers })
         const json = await res.json().catch(() => ({}))
         const profile = json?.data?.employee || null
         if (profile) {

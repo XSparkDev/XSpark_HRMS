@@ -251,9 +251,11 @@ export class EmployeeService {
    */
   async getByAuthUserId(authUserId: string): Promise<Employee | null> {
     try {
+      // PREVIOUS QUERY: .select('*')
+      // UPDATED QUERY: .select('*, next_of_kin(*)') to keep NOK data in profile payloads.
       const { data, error } = await supabase
         .from('employees')
-        .select('*')
+        .select('*, next_of_kin(*)')
         .eq('auth_user_id', authUserId)
         .single()
 
@@ -301,18 +303,20 @@ export class EmployeeService {
 
       // Encrypt id_number if provided
       if (employeeData.id_number) {
-        // Encrypt returns base64 string, convert to Buffer for BYTEA storage
+        // Encrypt returns base64 string, convert to hex format expected by PostgREST for BYTEA
         const base64Encrypted = encrypt(employeeData.id_number)
-        encryptedData.encrypted_id_number = Buffer.from(base64Encrypted, 'base64')
+        const encryptedBuffer = Buffer.from(base64Encrypted, 'base64')
+        encryptedData.encrypted_id_number = '\\x' + encryptedBuffer.toString('hex')
         // Remove plaintext from insert
         delete encryptedData.id_number
       }
 
       // Encrypt tax_number if provided
       if (employeeData.tax_number) {
-        // Encrypt returns base64 string, convert to Buffer for BYTEA storage
+        // Encrypt returns base64 string, convert to hex format expected by PostgREST for BYTEA
         const base64Encrypted = encrypt(employeeData.tax_number)
-        encryptedData.encrypted_tax_number = Buffer.from(base64Encrypted, 'base64')
+        const encryptedBuffer = Buffer.from(base64Encrypted, 'base64')
+        encryptedData.encrypted_tax_number = '\\x' + encryptedBuffer.toString('hex')
         // Remove plaintext from insert
         delete encryptedData.tax_number
       }
@@ -346,14 +350,16 @@ export class EmployeeService {
       // Encrypt id_number if being updated
       if ('id_number' in updateData && updateData.id_number) {
         const base64Encrypted = encrypt(updateData.id_number)
-        updateData.encrypted_id_number = Buffer.from(base64Encrypted, 'base64')
+        const encryptedBuffer = Buffer.from(base64Encrypted, 'base64')
+        updateData.encrypted_id_number = '\\x' + encryptedBuffer.toString('hex')
         delete updateData.id_number
       }
 
       // Encrypt tax_number if being updated
       if ('tax_number' in updateData && updateData.tax_number) {
         const base64Encrypted = encrypt(updateData.tax_number)
-        updateData.encrypted_tax_number = Buffer.from(base64Encrypted, 'base64')
+        const encryptedBuffer = Buffer.from(base64Encrypted, 'base64')
+        updateData.encrypted_tax_number = '\\x' + encryptedBuffer.toString('hex')
         delete updateData.tax_number
       }
 
