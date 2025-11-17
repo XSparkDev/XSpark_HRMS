@@ -490,8 +490,8 @@ export default function LeaveRequestPage() {
                     control={form.control}
                     name="leave_day_from"
                     render={({ field }) => (
-                      <FormItem className="flex flex-col">
-                        <FormLabel>Start Date <span className="text-red-500">*</span></FormLabel>
+                      <FormItem className="flex flex-col md:col-span-2">
+                        <FormLabel>Leave Dates <span className="text-red-500">*</span></FormLabel>
                         <Popover>
                           <PopoverTrigger asChild>
                             <FormControl>
@@ -499,13 +499,13 @@ export default function LeaveRequestPage() {
                                 variant={"outline"}
                                 className={cn(
                                   "w-full pl-3 text-left font-normal",
-                                  !field.value && "text-muted-foreground"
+                                  !(leaveDayFrom && leaveDayTo) && "text-muted-foreground"
                                 )}
                               >
-                                {field.value ? (
-                                  format(field.value, "PPP")
+                                {leaveDayFrom && leaveDayTo ? (
+                                  `${format(leaveDayFrom, "PPP")} - ${format(leaveDayTo, "PPP")}`
                                 ) : (
-                                  <span>Pick a date</span>
+                                  <span>Select date range</span>
                                 )}
                                 <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                               </Button>
@@ -513,55 +513,30 @@ export default function LeaveRequestPage() {
                           </PopoverTrigger>
                           <PopoverContent className="w-auto p-0" align="start">
                             <Calendar
-                              mode="single"
-                              selected={field.value}
-                              onSelect={field.onChange}
+                              mode="range"
+                              selected={{
+                                from: leaveDayFrom ?? undefined,
+                                to: leaveDayTo ?? undefined,
+                              }}
+                              defaultMonth={leaveDayFrom ?? undefined}
+                              onSelect={(range) => {
+                                const fromDate = range?.from
+                                const toDate = range?.to
+                                field.onChange(fromDate)
+                                setValue("leave_day_to", toDate ?? undefined, { shouldValidate: true })
+                                trigger(["leave_day_from", "leave_day_to"])
+                              }}
                               disabled={(date) => date < addDays(new Date(), -1)}
                               initialFocus
                             />
                           </PopoverContent>
                         </Popover>
                         <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  
-                  <FormField
-                    control={form.control}
-                    name="leave_day_to"
-                    render={({ field }) => (
-                      <FormItem className="flex flex-col">
-                        <FormLabel>End Date <span className="text-red-500">*</span></FormLabel>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <FormControl>
-                              <Button
-                                variant={"outline"}
-                                className={cn(
-                                  "w-full pl-3 text-left font-normal",
-                                  !field.value && "text-muted-foreground"
-                                )}
-                              >
-                                {field.value ? (
-                                  format(field.value, "PPP")
-                                ) : (
-                                  <span>Pick a date</span>
-                                )}
-                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                              </Button>
-                            </FormControl>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0" align="start">
-                            <Calendar
-                              mode="single"
-                              selected={field.value}
-                              onSelect={field.onChange}
-                              disabled={(date) => date < (leaveDayFrom || addDays(new Date(), -1))}
-                              initialFocus
-                            />
-                          </PopoverContent>
-                        </Popover>
-                        <FormMessage />
+                        {errors.leave_day_to && (
+                          <p className="text-sm font-medium text-destructive mt-1">
+                            {errors.leave_day_to.message}
+                          </p>
+                        )}
                       </FormItem>
                     )}
                   />

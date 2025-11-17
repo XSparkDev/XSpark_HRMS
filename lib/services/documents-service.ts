@@ -337,11 +337,21 @@ export const documentsService = {
     
     if (query) {
       const searchTerm = query.toLowerCase()
-      results = results.filter(doc => 
-        doc.name.toLowerCase().includes(searchTerm) ||
-        doc.description.toLowerCase().includes(searchTerm) ||
-        doc.tags.toLowerCase().includes(searchTerm) ||
-        doc.employee_name.toLowerCase().includes(searchTerm)
+      results = results.filter(doc => {
+        const description = typeof doc.description === "string" ? doc.description.toLowerCase() : ""
+        const tagsValue = Array.isArray(doc.tags)
+          ? doc.tags.join(" ").toLowerCase()
+          : typeof doc.tags === "string"
+            ? doc.tags.toLowerCase()
+            : ""
+
+        return (
+          doc.name.toLowerCase().includes(searchTerm) ||
+          description.includes(searchTerm) ||
+          tagsValue.includes(searchTerm) ||
+          doc.employee_name.toLowerCase().includes(searchTerm)
+        )
+      }
       )
     }
     

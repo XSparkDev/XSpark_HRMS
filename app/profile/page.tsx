@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit, AlertCircle, Loader2, CheckCircle2 } from "lucide-react"
@@ -18,6 +19,38 @@ import { cn } from "@/lib/utils"
 import { AnimatePresence, motion } from "framer-motion"
 import { useToast } from "@/hooks/use-toast"
 import { sanitizeInput, normalizePhone, type ValidationError, type ProfileFormData, appFormSchema } from "@/lib/validation/app-form"
+import { createClient, type SupabaseClient } from "@supabase/supabase-js"
+
+let browserSupabase: SupabaseClient | null = null
+let supabaseWarningLogged = false
+
+const getBrowserSupabase = (): SupabaseClient | null => {
+  if (typeof window === "undefined") return null
+  if (browserSupabase) return browserSupabase
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    if (!supabaseWarningLogged) {
+      console.info("Next of kin sync falling back to API route because Supabase environment variables are not set.")
+      supabaseWarningLogged = true
+    }
+    return null
+  }
+
+  browserSupabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+    db: {
+      schema: "public",
+    },
+  })
+
+  return browserSupabase
+}
 import { getCurrentUser } from "@/lib/auth"
 
 export default function MyProfilePage() {
@@ -50,17 +83,123 @@ export default function MyProfilePage() {
   })
   
   // Next of Kin state
-  const [nokData, setNokData] = useState({
+  const createEmptyNextOfKin = () => ({
+    id: undefined as string | undefined,
     first_name: "",
     middle_name: "",
     last_name: "",
-    email: "",
+    relationship: "",
     phone: "",
     alternative_phone: "",
-    relationship: "",
-    name: "",
-    address: ""
+    email: "",
+    address: "",
+    is_primary: false
   })
+  const [nokData, setNokData] = useState([createEmptyNextOfKin()])
+  const [openPanels, setOpenPanels] = useState<string[]>([])
+  type NextOfKinField = Exclude<keyof ReturnType<typeof createEmptyNextOfKin>, "id" | "is_primary">
+
+type NextOfKinUpsertEntry = {
+  id?: string
+  first_name: string
+  middle_name: string | null
+  last_name: string
+  email: string | null
+  phone: string
+  alternative_phone: string | null
+  relationship: string
+  is_primary: boolean
+}
+
+const mapNokEntryToSchema = (entry: ReturnType<typeof createEmptyNextOfKin>) => {
+  const firstName = entry.first_name.trim()
+  const middleName = entry.middle_name.trim()
+  const lastName = entry.last_name.trim()
+  const fullName = [firstName, middleName, lastName].filter(Boolean).join(" ")
+
+  return {
+    name: fullName,
+    first_name: firstName,
+    middle_name: middleName,
+    last_name: lastName,
+    relationship: entry.relationship.trim(),
+    phone: entry.phone.trim(),
+    alternative_phone: entry.alternative_phone.trim(),
+    address: entry.address.trim(),
+    email: entry.email.trim()
+  }
+}
+
+const mapNokEntryToPayload = (entry: ReturnType<typeof createEmptyNextOfKin>) => {
+  const firstName = entry.first_name.trim()
+  const middleName = entry.middle_name.trim()
+  const lastName = entry.last_name.trim()
+  const relationship = entry.relationship.trim()
+  const phone = entry.phone.trim()
+  const altPhone = entry.alternative_phone.trim()
+  const address = entry.address.trim()
+  const email = entry.email.trim()
+  if (!firstName || !lastName || !relationship || !phone) {
+    return null
+  }
+
+  const payload: Record<string, any> = {
+    id: entry.id,
+    first_name: firstName || undefined,
+    middle_name: middleName || undefined,
+    last_name: lastName || undefined,
+    relationship: relationship || undefined,
+    phone: phone || undefined,
+    alternative_phone: altPhone || undefined,
+    address: address || undefined,
+    email: email || undefined,
+    full_name: [firstName, middleName, lastName].filter(Boolean).join(" ") || undefined,
+    is_primary: entry.is_primary ? true : undefined
+  }
+
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined || payload[key] === "") {
+      delete payload[key]
+    }
+  })
+
+  return Object.keys(payload).length ? payload : null
+}
+
+const toStringSafe = (value: any) => {
+  if (typeof value === "string") return value
+  if (value === null || value === undefined) return ""
+  return String(value)
+}
+
+const splitLegacyName = (fullName: string) => {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) {
+    return { first: "", middle: "", last: "" }
+  }
+  const first = parts[0] || ""
+  const last = parts.length > 1 ? parts[parts.length - 1] : ""
+  const middle = parts.length > 2 ? parts.slice(1, -1).join(" ") : ""
+  return { first, middle, last }
+}
+
+const mapProfileNokToState = (entry: any) => {
+  const fallbackName = toStringSafe(entry?.full_name ?? entry?.name ?? "")
+  const legacyParts = splitLegacyName(fallbackName)
+
+  return {
+    id: entry?.id || entry?.next_of_kin_id || entry?.nok_id || undefined,
+    first_name: toStringSafe(entry?.first_name ?? legacyParts.first).trim(),
+    middle_name: toStringSafe(entry?.middle_name ?? legacyParts.middle).trim(),
+    last_name: toStringSafe(entry?.last_name ?? legacyParts.last).trim(),
+    relationship: toStringSafe(entry?.relationship).trim(),
+    phone: toStringSafe(entry?.phone).trim(),
+    alternative_phone: toStringSafe(entry?.alternative_phone ?? "").trim(),
+    email: toStringSafe(entry?.email).trim(),
+    address: toStringSafe(entry?.address).trim(),
+    is_primary: Boolean(entry?.is_primary)
+  }
+}
   
   // Banking state
   const [bankData, setBankData] = useState({
@@ -94,6 +233,236 @@ export default function MyProfilePage() {
     passport_document: null,
     work_permit: null
   })
+
+const nokNameRegex = /^[a-zA-Z\s\-']+$/
+
+const NOK_VALIDATORS: Record<string, { regex: RegExp; message: string }> = {
+  first_name: {
+    regex: nokNameRegex,
+    message: "Enter a valid first name."
+  },
+  last_name: {
+    regex: nokNameRegex,
+    message: "Enter a valid last name."
+  },
+  phone: {
+    regex: /^\+?\d{7,15}$/,
+    message: "Enter a valid phone number (digits only, optional +, 7–15 digits)."
+  },
+  email: {
+    regex: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+    message: "Enter a valid email address."
+  }
+}
+
+const hasNextOfKinEntries = (data = nokData) =>
+  data.some(entry => {
+    const valuesToCheck = [
+      entry.first_name,
+      entry.last_name,
+      entry.relationship,
+      entry.phone,
+      entry.alternative_phone,
+      entry.email,
+      entry.address
+    ]
+    return valuesToCheck.some(value => typeof value === "string" ? value.trim() !== "" : Boolean(value))
+  })
+
+const getNokErrorKey = (index: number, field: string) => `nok${index + 1}_${field}`
+
+const getPrimaryNokEntry = () => {
+  const populated = nokData.find(entry =>
+    Object.values(entry).some(value =>
+      typeof value === "string" ? value.trim() !== "" : Boolean(value)
+    )
+  )
+  return populated ?? nokData[0]
+}
+
+const buildNextOfKinUpsertEntries = (): NextOfKinUpsertEntry[] => {
+  return nokData
+    .map<NextOfKinUpsertEntry | null>((entry, index) => {
+      const firstName = entry.first_name.trim()
+      const middleName = entry.middle_name.trim()
+      const lastName = entry.last_name.trim()
+      const relationship = entry.relationship.trim()
+      const phone = entry.phone.trim()
+      const altPhone = entry.alternative_phone.trim()
+      const email = entry.email.trim()
+
+      if (!firstName && !lastName && !relationship && !phone && !email) {
+        return null
+      }
+
+      if (!firstName || !lastName || !relationship || !phone) {
+        return null
+      }
+
+      const upsertEntry: NextOfKinUpsertEntry = {
+        id: entry.id,
+        first_name: firstName,
+        middle_name: middleName || null,
+        last_name: lastName,
+        email: email || null,
+        phone,
+        alternative_phone: altPhone || null,
+        relationship,
+        is_primary: index === 0,
+      }
+
+      return upsertEntry
+    })
+    .filter((entry): entry is NextOfKinUpsertEntry => entry !== null)
+}
+
+const handleAddNextOfKin = () => {
+  setNokData(prev => {
+    const nextIndex = prev.length
+    setOpenPanels(current => [...current, `nok-${nextIndex}`])
+    return [...prev, createEmptyNextOfKin()]
+  })
+}
+
+const handlePanelToggle = (value: string) => {
+  setOpenPanels(prev => {
+    const isOpen = prev.includes(value)
+    if (isOpen) {
+      const index = Number(value.replace('nok-', ''))
+      const entry = nokData[index]
+      if (
+        entry &&
+        !entry.id &&
+        !entry.first_name.trim() &&
+        !entry.last_name.trim() &&
+        !entry.relationship.trim() &&
+        !entry.phone.trim() &&
+        !entry.alternative_phone.trim() &&
+        !entry.email.trim() &&
+        !entry.address.trim()
+      ) {
+        setNokData(data => data.filter((_, i) => i !== index))
+        return prev.filter(item => item !== value)
+      }
+    }
+    return prev.includes(value)
+      ? prev.filter(item => item !== value)
+      : [...prev, value]
+  })
+}
+
+const upsertNextOfKinViaApi = async (employeeId: string, entries: NextOfKinUpsertEntry[]) => {
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    }
+
+    try {
+      const storedSession = localStorage.getItem('xspark_session')
+      if (storedSession) {
+        const sessionParsed = JSON.parse(storedSession)
+        if (sessionParsed?.access_token) {
+          headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to parse session for NOK API:', error)
+    }
+
+    const response = await fetch('/api/next-of-kin/upsert', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ employeeId, entries })
+    })
+
+    if (!response.ok) {
+      const errorJson = await response.json().catch(() => ({}))
+      console.error('Next of Kin API upsert error:', errorJson?.error || response.statusText)
+    }
+  } catch (error) {
+    console.error('Next of Kin API upsert request failed:', error)
+  }
+}
+
+const upsertNextOfKinRecords = async (employeeId: string) => {
+  const client = getBrowserSupabase()
+  const entries = buildNextOfKinUpsertEntries()
+  if (!entries.length) return
+
+  try {
+    if (!client) {
+      await upsertNextOfKinViaApi(employeeId, entries)
+      return
+    }
+
+    const { data: existingNok, error: existingError } = await client
+      .from('next_of_kin')
+      .select('id')
+      .eq('employee_id', employeeId)
+      .order('is_primary', { ascending: false })
+      .limit(2)
+
+    if (existingError) {
+      console.error('Next of Kin lookup error:', existingError)
+    }
+
+    const upsertPayload = entries.map((entry, idx) => ({
+      ...entry,
+      employee_id: employeeId,
+      id: existingNok?.[idx]?.id ?? undefined,
+    }))
+
+    const { error: upsertError } = await client
+      .from('next_of_kin')
+      .upsert(upsertPayload, { onConflict: 'id' })
+
+    if (upsertError) {
+      console.error('Next of Kin save error:', upsertError)
+    }
+  } catch (error) {
+    console.error('Unexpected Next of Kin upsert error:', error)
+  }
+}
+
+const validateNokField = (index: number, field: NextOfKinField, value: string) => {
+  const validator = NOK_VALIDATORS[field]
+  const errorKey = getNokErrorKey(index, field)
+
+  if (!validator) {
+    setErrors(prev => ({ ...prev, [errorKey]: "" }))
+    return true
+  }
+
+  const trimmedValue = (value ?? "").trim()
+  if (!trimmedValue) {
+    setErrors(prev => ({ ...prev, [errorKey]: "" }))
+    return true
+  }
+
+  const isValid = validator.regex.test(trimmedValue)
+  setErrors(prev => ({ ...prev, [errorKey]: isValid ? "" : validator.message }))
+  return isValid
+}
+
+const validateAllNokEntries = () => {
+  let allValid = true
+  const touchedUpdates: Record<string, boolean> = {}
+  nokData.forEach((entry, index) => {
+    (Object.keys(NOK_VALIDATORS) as Array<keyof typeof NOK_VALIDATORS>).forEach((fieldKey) => {
+      const key = getNokErrorKey(index, fieldKey)
+      touchedUpdates[key] = true
+      const value = entry[fieldKey as NextOfKinField] as string
+      const isValid = validateNokField(index, fieldKey as NextOfKinField, value)
+      if (!isValid) {
+        allValid = false
+      }
+    })
+  })
+  if (Object.keys(touchedUpdates).length) {
+    setTouched(prev => ({ ...prev, ...touchedUpdates }))
+  }
+  return allValid
+}
 
   // Fetch employee data from backend
   useEffect(() => {
@@ -136,6 +505,12 @@ export default function MyProfilePage() {
             if (parsed.dob) {
               setDate(new Date(parsed.dob))
             }
+            if (Array.isArray(parsed.next_of_kin) && parsed.next_of_kin.length) {
+              setNokData(parsed.next_of_kin.map(mapProfileNokToState))
+            } else {
+              setNokData([createEmptyNextOfKin()])
+            }
+            setOpenPanels([])
           } catch (e) {
             console.error('Error parsing stored employee:', e)
           }
@@ -160,6 +535,7 @@ export default function MyProfilePage() {
           }
         })
         const json = await response.json()
+        console.log('Profile data:', json?.data?.employee, 'Next of kin:', json?.data?.employee?.next_of_kin)
 
         if (response.ok && json.success && json.data?.employee) {
           const employee = json.data.employee
@@ -199,6 +575,12 @@ export default function MyProfilePage() {
           if (employee.dob) {
             setDate(new Date(employee.dob))
           }
+          if (Array.isArray(employee.next_of_kin) && employee.next_of_kin.length) {
+            setNokData(employee.next_of_kin.map(mapProfileNokToState))
+          } else {
+            setNokData([createEmptyNextOfKin()])
+          }
+          setOpenPanels([])
 
           // Fetch decrypted sensitive fields (id_number, tax_number)
           try {
@@ -245,6 +627,15 @@ export default function MyProfilePage() {
   }, [])
 
   useEffect(() => {
+    setOpenPanels(prev =>
+      prev.filter(value => {
+        const index = Number(value.replace("nok-", ""))
+        return !Number.isNaN(index) && index < nokData.length
+      })
+    )
+  }, [nokData.length])
+
+  useEffect(() => {
     const fetchJobTitles = async () => {
       try {
         const res = await fetch('/api/job-titles')
@@ -264,9 +655,12 @@ export default function MyProfilePage() {
   // Validation functions
   const validateField = (field: string, value: any) => {
     // Use shared schema but do not block UI; we only surface field-specific error if present
-    const includeNok = Object.values(nokData).some(v => v)
+  const includeNok = hasNextOfKinEntries()
     const includeBank = Object.values(bankData).some(v => v)
-    const data = { ...formData, [field]: value, next_of_kin: includeNok ? nokData : undefined, banking_details: includeBank ? bankData : undefined }
+  const data: any = { ...formData, [field]: value, banking_details: includeBank ? bankData : undefined }
+  if (includeNok) {
+    data.next_of_kin = mapNokEntryToSchema(getPrimaryNokEntry())
+  }
     const result = appFormSchema.safeParse(data)
     if (!result.success) {
       const issue = result.error.issues.find(i => i.path.join('.') === field)
@@ -278,14 +672,28 @@ export default function MyProfilePage() {
   }
 
   const validateForm = async () => {
-    const includeNok = Object.values(nokData).some(v => v)
+  const includeNok = hasNextOfKinEntries()
     const includeBank = Object.values(bankData).some(v => v)
-    const data = { ...formData, next_of_kin: includeNok ? nokData : undefined, banking_details: includeBank ? bankData : undefined }
+  const data: any = { ...formData, banking_details: includeBank ? bankData : undefined }
+  if (includeNok) {
+    data.next_of_kin = mapNokEntryToSchema(getPrimaryNokEntry())
+  }
     const result = appFormSchema.safeParse(data)
       if (!result.success) {
         const errorMap: Record<string, string> = {}
       for (const issue of result.error.issues) {
-        errorMap[issue.path.join('.')] = issue.message
+        const pathKey = issue.path.join('.')
+        if (pathKey.startsWith('next_of_kin.')) {
+          const [, subField] = pathKey.split('.')
+          if (subField) {
+            const normalisedField = subField === 'full_name'
+                ? 'name'
+                : subField
+            errorMap[getNokErrorKey(0, normalisedField)] = issue.message
+          }
+        } else {
+          errorMap[pathKey] = issue.message
+        }
       }
         setErrors(errorMap)
       // Do not block submit to keep current flow permissive
@@ -316,16 +724,28 @@ export default function MyProfilePage() {
     }
   }
 
-  const handleNokChange = (field: string, value: any) => {
-    if (typeof value === 'string') {
-      value = sanitizeInput(value)
+const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
+  let newValue = value
+  if (typeof newValue === 'string') {
+    newValue = field === 'phone' ? normalizePhone(newValue) : sanitizeInput(newValue)
     }
-    if (field.includes('phone')) {
-      value = normalizePhone(value)
-    }
-    
-    setNokData(prev => ({ ...prev, [field]: value }))
-    setTouched(prev => ({ ...prev, [`nok_${field}`]: true }))
+
+  const coercedValue = typeof newValue === "string" ? newValue : toStringSafe(newValue)
+
+  setNokData(prev => {
+    const updated = [...prev]
+    updated[index] = { ...updated[index], [field]: coercedValue }
+    return updated
+  })
+
+  const errorKey = getNokErrorKey(index, field)
+  setTouched(prev => ({ ...prev, [errorKey]: true }))
+
+  if (field in NOK_VALIDATORS) {
+    validateNokField(index, field, coercedValue)
+  } else {
+    setErrors(prev => ({ ...prev, [errorKey]: "" }))
+  }
   }
 
   const handleBankChange = (field: string, value: any) => {
@@ -370,10 +790,13 @@ export default function MyProfilePage() {
 
   const handleSaveProfile = async () => {
     console.log('handleSaveProfile called')
+  let savedEmployeeId = profile?.id ?? ""
+  const nokValid = validateAllNokEntries()
     const isValid = await validateForm()
-    console.log('Validation result:', isValid, 'Errors:', errors)
+  const overallValid = nokValid && isValid
+  console.log('Validation result:', overallValid, 'Errors:', errors)
     
-    if (!isValid) {
+  if (!overallValid) {
       console.error('Validation failed:', errors)
       toast({
         title: "Validation failed",
@@ -432,23 +855,18 @@ export default function MyProfilePage() {
       }
 
       // Include nested sections only if populated (backend ignores unknown for now)
-      const includeNok = Object.values(nokData).some(v => v)
+      const includeNok = hasNextOfKinEntries()
       const includeBank = Object.values(bankData).some(v => v)
       if (includeNok) {
-        const fullName = (nokData.name || '').trim()
-        const nextOfKinPayload: Record<string, any> = {
-          ...nokData,
-          full_name: fullName || undefined
+        const nextOfKinPayload = nokData
+          .map(mapNokEntryToPayload)
+          .filter((entry): entry is Record<string, any> => !!entry)
+
+        if (nextOfKinPayload.length) {
+          submitData.next_of_kin = nextOfKinPayload
+        } else {
+          delete submitData.next_of_kin
         }
-
-        // Remove empty strings so backend validation doesn't fail
-        Object.keys(nextOfKinPayload).forEach((key) => {
-          if (nextOfKinPayload[key] === "") {
-            delete nextOfKinPayload[key]
-          }
-        })
-
-        submitData.next_of_kin = [nextOfKinPayload]
       } else {
         delete submitData.next_of_kin
       }
@@ -478,6 +896,7 @@ export default function MyProfilePage() {
         const json = await res.json().catch(() => ({}))
         console.log('PUT response:', res.status, json)
         if (!res.ok) throw new Error(json?.error || 'Failed to update profile')
+        savedEmployeeId = json?.data?.employee?.id || json?.data?.id || savedEmployeeId
       } else {
         console.log('POST /api/employees', submitData)
         const res = await fetch('/api/employees', {
@@ -489,6 +908,13 @@ export default function MyProfilePage() {
         const json = await res.json().catch(() => ({}))
         console.log('POST response:', res.status, json)
         if (!res.ok) throw new Error(json?.error || 'Failed to create profile')
+        savedEmployeeId = json?.data?.employee?.id || json?.data?.id || savedEmployeeId
+      }
+
+      if (savedEmployeeId) {
+        await upsertNextOfKinRecords(savedEmployeeId)
+      } else {
+        console.warn('Unable to determine employee ID for Next of Kin upsert')
       }
       
       toast({
@@ -648,9 +1074,17 @@ export default function MyProfilePage() {
                       {(profile?.preferred_name || profile?.first_name || "")} {(profile?.last_name || "")}
                     </h2>
                     <p className="text-muted-foreground">{profile?.employee_id || ""}</p>
-                    <Badge variant="secondary" className="mt-2">
-                      Active Employee
-                    </Badge>
+                    <div className="flex flex-col items-center gap-2 mt-2">
+                      <Badge className="bg-green-100 text-green-800 border border-green-200">
+                        Active Employee
+                      </Badge>
+                      <Badge variant={profile?.id_verified ? "default" : "secondary"}>
+                        ID Verified {profile?.id_verified ? "✓" : "✗"}
+                      </Badge>
+                      <Badge variant={profile?.bank_verified ? "default" : "secondary"}>
+                        Bank Verified {profile?.bank_verified ? "✓" : "✗"}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -731,6 +1165,64 @@ export default function MyProfilePage() {
               </CardContent>
             </Card>
 
+            {/* Next of Kin */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Next of Kin
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {Array.isArray(profile?.next_of_kin) && profile?.next_of_kin.length ? (
+                  <div className="space-y-4">
+                    {profile.next_of_kin.map((kin: any, index: number) => (
+                      <div key={kin.id || index} className="rounded-lg border border-gray-200 p-4 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">Next of Kin {index + 1}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {[kin.first_name, kin.middle_name, kin.last_name].filter(Boolean).join(" ") ||
+                                kin.full_name ||
+                                "Not specified"}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Badge variant="secondary">{kin.relationship || "Relationship not specified"}</Badge>
+                            {kin.is_primary && <Badge variant="default">Primary Contact</Badge>}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <Label className="text-sm font-medium text-muted-foreground">Phone</Label>
+                            <p className="text-sm">{kin.phone || "Not specified"}</p>
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium text-muted-foreground">Alternative Phone</Label>
+                            <p className="text-sm">{kin.alternative_phone || "Not specified"}</p>
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium text-muted-foreground">Email</Label>
+                            <p className="text-sm">{kin.email || "Not specified"}</p>
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium text-muted-foreground">Relationship</Label>
+                            <p className="text-sm">{kin.relationship || "Not specified"}</p>
+                          </div>
+                          <div className="md:col-span-2">
+                            <Label className="text-sm font-medium text-muted-foreground">Address</Label>
+                            <p className="text-sm">{kin.address || "Not specified"}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No next of kin information available.</p>
+                )}
+              </CardContent>
+            </Card>
+
             {/* Employment Information */}
             <Card>
               <CardHeader>
@@ -750,37 +1242,16 @@ export default function MyProfilePage() {
               </CardContent>
             </Card>
 
-            {/* Verification Status */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Verification Status</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant={profile?.id_verified ? "default" : "secondary"}>
-                    ID Verified {profile?.id_verified ? "✓" : "✗"}
-                  </Badge>
-                  <Badge variant={profile?.bank_verified ? "default" : "secondary"}>
-                    Bank Verified {profile?.bank_verified ? "✓" : "✗"}
-                  </Badge>
-                  {profile?.nationality && profile?.nationality !== "South Africa" && (
-                    <Badge variant={profile?.work_permit_verified ? "default" : "secondary"}>
-                      Work Permit Verified {profile?.work_permit_verified ? "✓" : "✗"}
-                    </Badge>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
           </div>
         </div>
 
       {/* Edit/Create Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>{profile ? 'Edit Profile' : 'Create Profile'}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-8">
+          <div className="space-y-8 overflow-y-auto pr-2">
             {/* Personal Information Section */}
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-gray-900 border-b border-gray-200 pb-2">Personal Information</h3>
@@ -881,6 +1352,7 @@ export default function MyProfilePage() {
                     </Select>
                     <ErrorMessage field="gender" />
                   </div>
+                  <InputField field="pronouns" label="Pronouns" placeholder="e.g. They/Them" />
                 </div>
               </div>
             </div>
@@ -999,124 +1471,216 @@ export default function MyProfilePage() {
 
             {/* Next of Kin Section */}
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-gray-900 border-b border-gray-200 pb-2">Next of Kin</h3>
-              <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="nok_name">Full Name</Label>
-                  <Input 
-                    id="nok_name" 
-                    value={nokData.name || ""} 
-                    onChange={(e) => {
-                      const value = sanitizeInput(e.target.value)
-                      setNokData(prev => ({ ...prev, name: value }))
-                      setTouched(prev => ({ ...prev, "nok_name": true }))
-                      // Validate nested field
-                      const includeNok = true
-                      const includeBank = Object.values(bankData).some(v => v)
-                      const data = { ...formData, next_of_kin: { ...nokData, name: value }, banking_details: includeBank ? bankData : undefined }
-                      const result = appFormSchema.safeParse(data)
-                      if (!result.success) {
-                        const issue = result.error.issues.find(i => i.path.join('.') === 'next_of_kin.name')
-                        setErrors(prev => ({ ...prev, "nok_name": issue?.message || "" }))
-                      } else {
-                        setErrors(prev => ({ ...prev, "nok_name": "" }))
-                      }
-                    }}
-                    onBlur={() => setTouched(prev => ({ ...prev, "nok_name": true }))}
-                    className={cn(
-                      errors["nok_name"] && touched["nok_name"] && "border-red-500 focus:border-red-500"
-                    )}
-                  />
-                  <ErrorMessage field="nok_name" />
-                </div>
-                <div>
-                  <Label htmlFor="nok_relationship">Relationship</Label>
-                  <Input 
-                    id="nok_relationship" 
-                    value={nokData.relationship || ""} 
-                    onChange={(e) => {
-                      const value = sanitizeInput(e.target.value)
-                      setNokData(prev => ({ ...prev, relationship: value }))
-                      setTouched(prev => ({ ...prev, "nok_relationship": true }))
-                      const includeNok = true
-                      const includeBank = Object.values(bankData).some(v => v)
-                      const data = { ...formData, next_of_kin: { ...nokData, relationship: value }, banking_details: includeBank ? bankData : undefined }
-                      const result = appFormSchema.safeParse(data)
-                      if (!result.success) {
-                        const issue = result.error.issues.find(i => i.path.join('.') === 'next_of_kin.relationship')
-                        setErrors(prev => ({ ...prev, "nok_relationship": issue?.message || "" }))
-                      } else {
-                        setErrors(prev => ({ ...prev, "nok_relationship": "" }))
-                      }
-                    }}
-                    onBlur={() => setTouched(prev => ({ ...prev, "nok_relationship": true }))}
-                    className={cn(
-                      errors["nok_relationship"] && touched["nok_relationship"] && "border-red-500 focus:border-red-500"
-                    )}
-                  />
-                  <ErrorMessage field="nok_relationship" />
-                </div>
-                <div>
-                  <Label htmlFor="nok_phone">Phone</Label>
-                  <Input 
-                    id="nok_phone" 
-                    value={nokData.phone || ""} 
-                    onChange={(e) => {
-                      const value = normalizePhone(e.target.value)
-                      setNokData(prev => ({ ...prev, phone: value }))
-                      setTouched(prev => ({ ...prev, "nok_phone": true }))
-                      const includeNok = true
-                      const includeBank = Object.values(bankData).some(v => v)
-                      const data = { ...formData, next_of_kin: { ...nokData, phone: value }, banking_details: includeBank ? bankData : undefined }
-                      const result = appFormSchema.safeParse(data)
-                      if (!result.success) {
-                        const issue = result.error.issues.find(i => i.path.join('.') === 'next_of_kin.phone')
-                        setErrors(prev => ({ ...prev, "nok_phone": issue?.message || "" }))
-                      } else {
-                        setErrors(prev => ({ ...prev, "nok_phone": "" }))
-                      }
-                    }}
-                    onBlur={() => setTouched(prev => ({ ...prev, "nok_phone": true }))}
-                    className={cn(
-                      errors["nok_phone"] && touched["nok_phone"] && "border-red-500 focus:border-red-500"
-                    )}
-                  />
-                  <ErrorMessage field="nok_phone" />
-                </div>
-                <div>
-                  <Label htmlFor="nok_address">Address</Label>
-                  <Input 
-                    id="nok_address" 
-                    value={(nokData as any).address || ""} 
-                    onChange={(e) => {
-                      const value = sanitizeInput(e.target.value)
-                      setNokData(prev => ({ ...prev, address: value }))
-                      setTouched(prev => ({ ...prev, "nok_address": true }))
-                      const includeNok = true
-                      const includeBank = Object.values(bankData).some(v => v)
-                      const data = { ...formData, next_of_kin: { ...nokData, address: value }, banking_details: includeBank ? bankData : undefined }
-                      const result = appFormSchema.safeParse(data)
-                      if (!result.success) {
-                        const issue = result.error.issues.find(i => i.path.join('.') === 'next_of_kin.address')
-                        setErrors(prev => ({ ...prev, "nok_address": issue?.message || "" }))
-                      } else {
-                        setErrors(prev => ({ ...prev, "nok_address": "" }))
-                      }
-                    }}
-                    onBlur={() => setTouched(prev => ({ ...prev, "nok_address": true }))}
-                    className={cn(
-                      errors["nok_address"] && touched["nok_address"] && "border-red-500 focus:border-red-500"
-                    )}
-                  />
-                  <ErrorMessage field="nok_address" />
-                </div>
+              <div className="border-b border-gray-200 pb-2">
+                <h3 className="text-lg font-semibold text-gray-900">Next of Kin</h3>
               </div>
-              </div>
+
+              <Accordion
+                type="multiple"
+                value={openPanels}
+                onValueChange={(value) => {
+                  setOpenPanels(current => {
+                    const next = Array.isArray(value) ? value : []
+                    const closed = current.filter(item => !next.includes(item))
+                    closed.forEach(item => {
+                      const index = Number(item.replace('nok-', ''))
+                      const entry = nokData[index]
+                      if (
+                        entry &&
+                        !entry.id &&
+                        !entry.first_name.trim() &&
+                        !entry.last_name.trim() &&
+                        !entry.relationship.trim() &&
+                        !entry.phone.trim() &&
+                        !entry.alternative_phone.trim() &&
+                        !entry.email.trim() &&
+                        !entry.address.trim()
+                      ) {
+                        setNokData(data => data.filter((_, i) => i !== index))
+                      }
+                    })
+                    return next
+                  })
+                }}
+                className="space-y-3"
+              >
+                {nokData.map((entry, index) => {
+                  if (!entry) return null
+                  const value = `nok-${index}`
+                  const getKey = (field: NextOfKinField) => getNokErrorKey(index, field)
+                  const summaryName = [entry.first_name, entry.middle_name, entry.last_name].filter(Boolean).join(" ") || "Details not provided"
+                  const summaryRelationship = entry.relationship?.trim()
+
+                  return (
+                    <AccordionItem key={value} value={value} className="rounded-lg border border-gray-200">
+                      <AccordionTrigger className="px-4 py-3 hover:no-underline [&>svg]:hidden">
+                        <div className="flex w-full items-center justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">Next of Kin {index + 1}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {summaryName}
+                              {summaryRelationship ? ` (${summaryRelationship})` : ""}
+                            </p>
+                          </div>
+                          <span className="pointer-events-none rounded-md border border-primary/40 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
+                            {openPanels.includes(value) ? "Hide" : "View / Edit"}
+                          </span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-6">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor={`${value}_first_name`}>
+                                First Name <span className="text-red-500">*</span>
+                              </Label>
+                              <Input
+                                id={`${value}_first_name`}
+                                name={`${value}_first_name`}
+                                value={entry.first_name}
+                                onChange={(e) => handleNokChange(index, "first_name", e.target.value)}
+                                onBlur={() => {
+                                  setTouched(prev => ({ ...prev, [getKey("first_name")]: true }))
+                                  validateNokField(index, "first_name", entry.first_name)
+                                }}
+                                className={cn(
+                                  errors[getKey("first_name")] && touched[getKey("first_name")] && "border-red-500 focus:border-red-500"
+                                )}
+                              />
+                              <ErrorMessage field={getKey("first_name")} />
+                            </div>
+                            <div>
+                              <Label htmlFor={`${value}_middle_name`}>Middle Name (Optional)</Label>
+                              <Input
+                                id={`${value}_middle_name`}
+                                name={`${value}_middle_name`}
+                                value={entry.middle_name}
+                                onChange={(e) => handleNokChange(index, "middle_name", e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor={`${value}_last_name`}>
+                                Last Name / Surname <span className="text-red-500">*</span>
+                              </Label>
+                              <Input
+                                id={`${value}_last_name`}
+                                name={`${value}_last_name`}
+                                value={entry.last_name}
+                                onChange={(e) => handleNokChange(index, "last_name", e.target.value)}
+                                onBlur={() => {
+                                  setTouched(prev => ({ ...prev, [getKey("last_name")]: true }))
+                                  validateNokField(index, "last_name", entry.last_name)
+                                }}
+                                className={cn(
+                                  errors[getKey("last_name")] && touched[getKey("last_name")] && "border-red-500 focus:border-red-500"
+                                )}
+                              />
+                              <ErrorMessage field={getKey("last_name")} />
+                            </div>
+                            <div>
+                              <Label htmlFor={`${value}_relationship`}>
+                                Relationship <span className="text-red-500">*</span>
+                              </Label>
+                              <Input
+                                id={`${value}_relationship`}
+                                name={`${value}_relationship`}
+                                value={entry.relationship}
+                                onChange={(e) => handleNokChange(index, "relationship", e.target.value)}
+                                onBlur={() => {
+                                  setTouched(prev => ({ ...prev, [getKey("relationship")]: true }))
+                                  validateNokField(index, "relationship", entry.relationship)
+                                }}
+                                className={cn(
+                                  errors[getKey("relationship")] &&
+                                    touched[getKey("relationship")] &&
+                                    "border-red-500 focus:border-red-500"
+                                )}
+                              />
+                              <ErrorMessage field={getKey("relationship")} />
+                            </div>
+                            <div>
+                              <Label htmlFor={`${value}_phone`}>
+                                Phone <span className="text-red-500">*</span>
+                              </Label>
+                              <Input
+                                id={`${value}_phone`}
+                                name={`${value}_phone`}
+                                value={entry.phone}
+                                onChange={(e) => handleNokChange(index, "phone", e.target.value)}
+                                onBlur={() => {
+                                  setTouched(prev => ({ ...prev, [getKey("phone")]: true }))
+                                  validateNokField(index, "phone", entry.phone)
+                                }}
+                                className={cn(
+                                  errors[getKey("phone")] && touched[getKey("phone")] && "border-red-500 focus:border-red-500"
+                                )}
+                              />
+                              <ErrorMessage field={getKey("phone")} />
+                            </div>
+                            <div>
+                              <Label htmlFor={`${value}_alternative_phone`}>Alternative Phone (Optional)</Label>
+                              <Input
+                                id={`${value}_alternative_phone`}
+                                name={`${value}_alternative_phone`}
+                                value={entry.alternative_phone}
+                                onChange={(e) => handleNokChange(index, "alternative_phone", e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor={`${value}_email`}>Email</Label>
+                              <Input
+                                id={`${value}_email`}
+                                name={`${value}_email`}
+                                value={entry.email}
+                                onChange={(e) => handleNokChange(index, "email", e.target.value)}
+                                onBlur={() => {
+                                  setTouched(prev => ({ ...prev, [getKey("email")]: true }))
+                                  validateNokField(index, "email", entry.email)
+                                }}
+                                className={cn(
+                                  errors[getKey("email")] && touched[getKey("email")] && "border-red-500 focus:border-red-500"
+                                )}
+                              />
+                              <ErrorMessage field={getKey("email")} />
+                            </div>
+                            <div className="md:col-span-2">
+                              <Label htmlFor={`${value}_address`}>Address</Label>
+                              <Textarea
+                                id={`${value}_address`}
+                                name={`${value}_address`}
+                                rows={3}
+                                value={entry.address}
+                                onChange={(e) => handleNokChange(index, "address", e.target.value)}
+                                onBlur={() => {
+                                  setTouched(prev => ({ ...prev, [getKey("address")]: true }))
+                                  validateNokField(index, "address", entry.address)
+                                }}
+                                className={cn(
+                                  errors[getKey("address")] && touched[getKey("address")] && "border-red-500 focus:border-red-500"
+                                )}
+                              />
+                              <ErrorMessage field={getKey("address")} />
+                            </div>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  )
+                })}
+              </Accordion>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleAddNextOfKin}
+                className="w-full border-dashed text-sm font-medium"
+              >
+                + Add Next of Kin
+              </Button>
             </div>
 
             {/* Action Buttons */}
-            <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+            <div className="flex justify-end gap-3 pt-4 border-t border-gray-200 sticky bottom-0 bg-background">
               <Button variant="outline" onClick={() => setIsModalOpen(false)} className="min-w-[100px]">Cancel</Button>
               <Button onClick={async () => { 
                 console.log('Save Profile button clicked')
@@ -1125,7 +1689,19 @@ export default function MyProfilePage() {
                   setIsModalOpen(false)
                   // Re-fetch latest profile and broadcast update without full reload
                   try {
-                    const res = await fetch('/api/auth/me', { headers: { 'Content-Type': 'application/json' } })
+                    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+                    try {
+                      const storedSession = localStorage.getItem('xspark_session')
+                      if (storedSession) {
+                        const sessionParsed = JSON.parse(storedSession)
+                        if (sessionParsed?.access_token) {
+                          headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+                        }
+                      }
+                    } catch (error) {
+                      console.warn('Failed to parse session for refresh:', error)
+                    }
+                    const res = await fetch('/api/auth/me', { headers })
                     const json = await res.json().catch(() => ({}))
                     if (json?.data?.employee) {
                       localStorage.setItem('xspark_employee', JSON.stringify(json.data.employee))

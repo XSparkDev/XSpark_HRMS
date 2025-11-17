@@ -314,11 +314,9 @@ export const appFormSchema = z.object({
       .regex(nameLettersSpacesOnlyRegex, "Full name can only contain letters and spaces"),
     
     first_name: trimmed()
+      .min(1, "First name is required")
       .max(60, "First name must be 60 characters or less")
-      .regex(nameRegex, "First name can only contain letters, spaces, hyphens, and apostrophes")
-      .optional()
-      .nullable()
-      .or(z.literal("")),
+      .regex(nameRegex, "First name can only contain letters, spaces, hyphens, and apostrophes"),
     
     middle_name: trimmed()
       .max(60, "Middle name must be 60 characters or less")
@@ -328,11 +326,9 @@ export const appFormSchema = z.object({
       .or(z.literal("")),
     
     last_name: trimmed()
+      .min(1, "Last name is required")
       .max(60, "Last name must be 60 characters or less")
-      .regex(nameRegex, "Last name can only contain letters, spaces, hyphens, and apostrophes")
-      .optional()
-      .nullable()
-      .or(z.literal("")),
+      .regex(nameRegex, "Last name can only contain letters, spaces, hyphens, and apostrophes"),
     
     email: trimmed()
       .email("Invalid email format")
