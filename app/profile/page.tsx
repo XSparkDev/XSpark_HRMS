@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit, AlertCircle, Loader2, CheckCircle2 } from "lucide-react"
+import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit, AlertCircle, Loader2, CheckCircle2, XCircle } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { AnimatePresence, motion } from "framer-motion"
@@ -544,6 +544,37 @@ export default function MyProfilePage() {
           <h1 className="text-3xl font-bold text-navy">My Profile</h1>
           <p className="text-muted-foreground mt-2">Manage your personal and professional information</p>
         </div>
+        {/* Quick Read-Only Summary */}
+        {profile && (
+          <Card className="mt-6">
+            <CardHeader className="flex flex-row items-center gap-4">
+              <Avatar className="h-16 w-16">
+                <AvatarImage src={profile.profile_picture_url || undefined} alt={profile.first_name} />
+                <AvatarFallback>
+                  {(profile.first_name?.[0] || 'U')}{(profile.last_name?.[0] || 'N')}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <CardTitle className="text-xl">{[profile.first_name, profile.last_name].filter(Boolean).join(' ')}</CardTitle>
+                <p className="text-sm text-muted-foreground">{profile.email}</p>
+              </div>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <Label>Employee ID</Label>
+                <Input readOnly value={profile.employee_id || ''} />
+              </div>
+              <div className="space-y-1">
+                <Label>Department</Label>
+                <Input readOnly value={profile.department || ''} />
+              </div>
+              <div className="space-y-1">
+                <Label>Full Name</Label>
+                <Input readOnly value={[profile.first_name, profile.last_name].filter(Boolean).join(' ')} />
+              </div>
+            </CardContent>
+          </Card>
+        )}
         {profile && !isEditing && (
           <Dialog open={updateRequestOpen} onOpenChange={setUpdateRequestOpen}>
             <DialogTrigger asChild>
@@ -1283,15 +1314,39 @@ export default function MyProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant={profile.id_verified ? "default" : "secondary"}>
-                    ID Verified {profile.id_verified ? "✓" : "✗"}
+                  <Badge
+                    variant={profile.id_verified ? "default" : "secondary"}
+                    className="flex items-center gap-1"
+                  >
+                    {profile.id_verified ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5" />
+                    )}
+                    <span>ID Verified</span>
                   </Badge>
-                  <Badge variant={profile.bank_verified ? "default" : "secondary"}>
-                    Bank Verified {profile.bank_verified ? "✓" : "✗"}
+                  <Badge
+                    variant={profile.bank_verified ? "default" : "secondary"}
+                    className="flex items-center gap-1"
+                  >
+                    {profile.bank_verified ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5" />
+                    )}
+                    <span>Bank Verified</span>
                   </Badge>
                   {profile.nationality !== "South Africa" && (
-                    <Badge variant={profile.work_permit_verified ? "default" : "secondary"}>
-                      Work Permit Verified {profile.work_permit_verified ? "✓" : "✗"}
+                    <Badge
+                      variant={profile.work_permit_verified ? "default" : "secondary"}
+                      className="flex items-center gap-1"
+                    >
+                      {profile.work_permit_verified ? (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5" />
+                      )}
+                      <span>Work Permit Verified</span>
                     </Badge>
                   )}
                 </div>

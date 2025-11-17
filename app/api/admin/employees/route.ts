@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server'
-import { authService } from '@/lib/services'
+import { authService } from '@/lib/services/auth-service'
 import { z } from 'zod'
 
 // Validation schema for admin employee creation

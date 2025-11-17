@@ -150,46 +150,6 @@ export default function DashboardPage() {
               </Card>
             </div>
 
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Quick Actions</CardTitle>
-                <CardDescription>Common tasks and shortcuts</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-4">
-                  <Button 
-                    className="h-auto flex-col gap-2 py-6 bg-transparent" 
-                    variant="outline"
-                    onClick={() => { setShowUploadModal(false); setShowContactHrModal(false); setShowLeaveModal(true) }}
-                  >
-                    <Calendar className="h-6 w-6 text-primary" />
-                    <span>Request Leave</span>
-                  </Button>
-                  <Button 
-                    className="h-auto flex-col gap-2 py-6 bg-transparent" 
-                    variant="outline"
-                    onClick={() => { setShowLeaveModal(false); setShowContactHrModal(false); setShowUploadModal(true); setUploadSuccess(false) }}
-                  >
-                    <Upload className="h-6 w-6 text-primary" />
-                    <span>Upload Document</span>
-                  </Button>
-                  <Button className="h-auto flex-col gap-2 py-6 bg-transparent" variant="outline">
-                    <FileText className="h-6 w-6 text-primary" />
-                    <span>View Payslips</span>
-                  </Button>
-                  <Button 
-                    className="h-auto flex-col gap-2 py-6 bg-transparent" 
-                    variant="outline"
-                    onClick={() => setShowContactHrModal(true)}
-                  >
-                    <MessageSquare className="h-6 w-6 text-primary" />
-                    <span>Contact HR</span>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
             {/* High Alert Notes */}
             <HighAlertNotes />
 

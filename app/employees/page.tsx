@@ -38,60 +38,7 @@ export default function EmployeeManagementPage() {
   const itemsPerPage = 10
   const user = getCurrentUser()
 
-  // Mock data - replace with actual API calls
-  useEffect(() => {
-    // Simulate API call
-    setTimeout(() => {
-      const mockEmployees: EmployeeProfile[] = [
-        {
-          id: "1",
-          user_id: "user1",
-          first_name: "John",
-          last_name: "Doe",
-          preferred_name: "Johnny",
-          employee_ID: "XSP25/01/001",
-          email: "john.doe@company.com",
-          phone: "+27 82 123 4567",
-          address: "123 Main St, Cape Town",
-          dob: "1990-05-15",
-          sex: "male",
-          gender: "male",
-          nationality: "South Africa",
-          job_title_id: "developer",
-          date_hired: "2023-01-15",
-          id_verified: true,
-          bank_verified: true,
-          work_permit_verified: true,
-          created_at: "2023-01-15T00:00:00Z",
-          updated_at: "2023-01-15T00:00:00Z"
-        },
-        {
-          id: "2",
-          user_id: "user2",
-          first_name: "Jane",
-          last_name: "Smith",
-          employee_ID: "XSP25/01/002",
-          email: "jane.smith@company.com",
-          phone: "+27 83 234 5678",
-          address: "456 Oak Ave, Johannesburg",
-          dob: "1988-12-03",
-          sex: "female",
-          gender: "female",
-          nationality: "South Africa",
-          job_title_id: "designer",
-          date_hired: "2023-02-01",
-          id_verified: true,
-          bank_verified: false,
-          work_permit_verified: true,
-          created_at: "2023-02-01T00:00:00Z",
-          updated_at: "2023-02-01T00:00:00Z"
-        }
-      ]
-      setEmployees(mockEmployees)
-      setFilteredEmployees(mockEmployees)
-      setIsLoading(false)
-    }, 1000)
-  }, [])
+  
 
   // Filter employees based on search and filters
   useEffect(() => {

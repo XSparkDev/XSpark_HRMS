@@ -5,6 +5,10 @@ import { XSparkLogo } from "@/components/xspark-logo"
 import {
   Shield,
   Users,
+  User,
+  UserCog,
+  Star,
+  Crown,
   Calendar,
   FolderLock,
   MessageSquare,
@@ -358,25 +362,25 @@ const steps = [
 
 const roles = [
   {
-    icon: "👤",
+    icon: <User className="h-8 w-8" />,
     title: "Employee",
     gradient: "bg-gradient-to-br from-blue-500 to-blue-600",
     capabilities: ["View own profile", "Request leave", "Upload documents", "Access payslips"],
   },
   {
-    icon: "👥",
+    icon: <UserCog className="h-8 w-8" />,
     title: "Junior HR",
     gradient: "bg-gradient-to-br from-green-500 to-green-600",
     capabilities: ["View employee profiles", "Approve leave requests", "Verify documents", "Generate reports"],
   },
   {
-    icon: "⭐",
+    icon: <Star className="h-8 w-8" />,
     title: "HR Manager",
     gradient: "gradient-primary",
     capabilities: ["Full employee management", "Edit all profiles", "Manage permissions", "Access all reports"],
   },
   {
-    icon: "👑",
+    icon: <Crown className="h-8 w-8" />,
     title: "Super Admin",
     gradient: "bg-gradient-to-br from-red-500 to-amber-500",
     capabilities: ["Complete system access", "View audit logs", "Manage all users", "System configuration"],

@@ -3,10 +3,10 @@ import Image from "next/image"
 export function XSparkLogo({ className = "h-10 w-auto" }: { className?: string }) {
   return (
     <Image
-      src="/X Spark Logo Final-01.png"
-      alt="Xspark Logo"
-      width={400}
-      height={200}
+      src="/Screenshot 2025-11-14 at 14.53.35.png"
+      alt="XSpark logo"
+      width={600}
+      height={550}
       className={`object-contain ${className}`}
       priority
     />

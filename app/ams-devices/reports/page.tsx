@@ -13,18 +13,68 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { getCurrentUser } from "@/lib/auth"
 import { ArrowLeft, Search, AlertTriangle, CheckCircle2, Clock, Camera, Upload, FileText, Calendar, User, Package } from "lucide-react"
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, ChangeEvent } from "react"
+
+type DeviceType =
+  | "laptop"
+  | "phone"
+  | "tablet"
+  | "monitor"
+  | "printer"
+  | "headset"
+  | "keyboard"
+  | "mouse"
+
+interface DeviceRecord {
+  id: string
+  name: string
+  serial: string
+  department: string
+  assignedTo: string
+}
+
+type DeviceInventory = Record<DeviceType, DeviceRecord[]>
+
+type DeviceConditionStatus = "Pending" | "Reviewed" | "Resolved"
+type DeviceCondition = "Good" | "Minor Damage" | "Major Damage" | "Needs Repair" | ""
+
+interface DeviceConditionFormState {
+  deviceType: DeviceType | ""
+  deviceName: string
+  serialNumber: string
+  department: string
+  assignedEmployee: string
+  deviceCondition: DeviceCondition
+  reportedIssues: string
+  photos: File[] | null
+  status: DeviceConditionStatus
+}
+
+interface ConditionReportRecord {
+  id: string
+  deviceType: DeviceType | ""
+  deviceName: string
+  serialNumber: string
+  department: string
+  assignedEmployee: string
+  deviceCondition: DeviceCondition
+  reportedIssues: string
+  photos: string[]
+  status: DeviceConditionStatus
+  reportedBy: string
+  reportedAt: string
+}
 
 export default function DeviceConditionReportPage() {
   const user = getCurrentUser()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showConfirmation, setShowConfirmation] = useState(false)
-  const [conditionHistory, setConditionHistory] = useState([])
+  const [conditionHistory, setConditionHistory] = useState<ConditionReportRecord[]>([])
 
   if (!user) return null
 
   // Mock device inventory data
-  const deviceTypes = [
+  const deviceTypes: { value: DeviceType; label: string }[] = [
     { value: "laptop", label: "Laptop" },
     { value: "phone", label: "Phone" },
     { value: "tablet", label: "Tablet" },
@@ -35,7 +85,7 @@ export default function DeviceConditionReportPage() {
     { value: "mouse", label: "Mouse" },
   ]
 
-  const deviceInventory = {
+  const deviceInventory: DeviceInventory = {
     laptop: [
       { id: "LAP-001", name: "Dell XPS 13", serial: "DLXPS13001", department: "Engineering", assignedTo: "John Smith" },
       { id: "LAP-002", name: "MacBook Pro 14", serial: "MBP14002", department: "Design", assignedTo: "Sarah Johnson" },
@@ -74,7 +124,7 @@ export default function DeviceConditionReportPage() {
   }
 
   // Form state
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<DeviceConditionFormState>({
     deviceType: "",
     deviceName: "",
     serialNumber: "",
@@ -86,15 +136,15 @@ export default function DeviceConditionReportPage() {
     status: "Pending",
   })
 
-  const [selectedDevice, setSelectedDevice] = useState(null)
+  const [selectedDevice, setSelectedDevice] = useState<DeviceRecord | null>(null)
 
   // Load condition history
   useEffect(() => {
-    const existingReports = JSON.parse(localStorage.getItem('deviceConditionReports') || '[]')
+    const existingReports = JSON.parse(localStorage.getItem('deviceConditionReports') || '[]') as ConditionReportRecord[]
     setConditionHistory(existingReports)
   }, [])
 
-  const handleDeviceTypeChange = (value) => {
+  const handleDeviceTypeChange = (value: DeviceType) => {
     setFormData({
       ...formData,
       deviceType: value,
@@ -106,8 +156,13 @@ export default function DeviceConditionReportPage() {
     setSelectedDevice(null)
   }
 
-  const handleDeviceNameChange = (value) => {
-    const device = deviceInventory[formData.deviceType]?.find(d => d.id === value)
+  const handleDeviceNameChange = (value: string) => {
+    if (!formData.deviceType) {
+      setSelectedDevice(null)
+      return
+    }
+    const inventory = deviceInventory[formData.deviceType]
+    const device = inventory?.find((d) => d.id === value) || null
     setSelectedDevice(device)
     setFormData({
       ...formData,
@@ -118,7 +173,10 @@ export default function DeviceConditionReportPage() {
     })
   }
 
-  const handleInputChange = (field, value) => {
+  const handleInputChange = <K extends keyof DeviceConditionFormState>(
+    field: K,
+    value: DeviceConditionFormState[K],
+  ) => {
     setFormData({
       ...formData,
       [field]: value,
@@ -126,8 +184,8 @@ export default function DeviceConditionReportPage() {
   }
 
 
-  const handleFileUpload = (event) => {
-    const files = Array.from(event.target.files)
+  const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : []
     setFormData({
       ...formData,
       photos: files,
@@ -138,7 +196,7 @@ export default function DeviceConditionReportPage() {
     setIsSubmitting(true)
     
     // Create condition report
-    const conditionReport = {
+    const conditionReport: ConditionReportRecord = {
       id: `DCR-${Date.now()}`,
       deviceType: formData.deviceType,
       deviceName: formData.deviceName,
@@ -147,7 +205,7 @@ export default function DeviceConditionReportPage() {
       assignedEmployee: formData.assignedEmployee,
       deviceCondition: formData.deviceCondition,
       reportedIssues: formData.reportedIssues,
-      photos: formData.photos?.map(f => f.name) || [],
+      photos: formData.photos?.map((f) => f.name) || [],
       status: formData.status,
       reportedBy: user.name,
       reportedAt: new Date().toISOString(),
@@ -157,7 +215,7 @@ export default function DeviceConditionReportPage() {
     await new Promise(resolve => setTimeout(resolve, 1000))
     
     // Store in localStorage for demo purposes
-    const existingReports = JSON.parse(localStorage.getItem('deviceConditionReports') || '[]')
+    const existingReports = JSON.parse(localStorage.getItem('deviceConditionReports') || '[]') as ConditionReportRecord[]
     existingReports.push(conditionReport)
     localStorage.setItem('deviceConditionReports', JSON.stringify(existingReports))
     
@@ -185,9 +243,10 @@ export default function DeviceConditionReportPage() {
     setConditionHistory(existingReports)
   }
 
-  const isFormValid = formData.deviceType && formData.deviceName && formData.deviceCondition
+  const isFormValid = Boolean(formData.deviceType && formData.deviceName && formData.deviceCondition)
+  const availableDevices: DeviceRecord[] = formData.deviceType ? deviceInventory[formData.deviceType] : []
 
-  const getConditionBadge = (condition) => {
+  const getConditionBadge = (condition: DeviceCondition) => {
     switch (condition) {
       case 'Good':
         return <Badge variant="default" className="bg-green-100 text-green-800">Good</Badge>
@@ -202,7 +261,7 @@ export default function DeviceConditionReportPage() {
     }
   }
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (status: DeviceConditionStatus) => {
     switch (status) {
       case 'Resolved':
         return <Badge variant="default" className="bg-green-100 text-green-800">Resolved</Badge>
@@ -251,7 +310,10 @@ export default function DeviceConditionReportPage() {
                 <div className="grid md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="deviceType">Device Type *</Label>
-                    <Select value={formData.deviceType} onValueChange={handleDeviceTypeChange}>
+                    <Select
+                      value={formData.deviceType}
+                      onValueChange={(value) => handleDeviceTypeChange(value as DeviceType)}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select device type" />
                       </SelectTrigger>
@@ -276,7 +338,7 @@ export default function DeviceConditionReportPage() {
                         <SelectValue placeholder="Select device model" />
                       </SelectTrigger>
                       <SelectContent>
-                        {deviceInventory[formData.deviceType]?.map((device) => (
+                        {availableDevices.map((device) => (
                           <SelectItem key={device.id} value={device.id}>
                             {device.name}
                           </SelectItem>
@@ -321,9 +383,9 @@ export default function DeviceConditionReportPage() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="deviceCondition">Device Condition *</Label>
-                  <Select 
-                    value={formData.deviceCondition} 
-                    onValueChange={(value) => handleInputChange("deviceCondition", value)}
+                  <Select
+                    value={formData.deviceCondition}
+                    onValueChange={(value) => handleInputChange("deviceCondition", value as DeviceCondition)}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select device condition" />
@@ -370,9 +432,9 @@ export default function DeviceConditionReportPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="status">Status</Label>
-                  <Select 
-                    value={formData.status} 
-                    onValueChange={(value) => handleInputChange("status", value)}
+                  <Select
+                    value={formData.status}
+                    onValueChange={(value) => handleInputChange("status", value as DeviceConditionStatus)}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select status" />

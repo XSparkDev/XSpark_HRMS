@@ -56,7 +56,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     if (!currentUser) {
       router.replace("/login")
     }
-    setUser(currentUser)
+    setUser(currentUser as User)
   }, [router])
 
   if (user === undefined) {
@@ -94,14 +94,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       {/* Top Navigation */}
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="flex h-16 items-center gap-4 px-4">
-          {/* Mobile menu button */}
-          <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </Button>
-
           {/* Logo */}
           <Link href="/dashboard" className="flex items-center">
-            <XSparkLogo className="h-8 w-auto" />
+            <XSparkLogo className="h-12 w-auto" />
           </Link>
 
           {/* Search (HR Manager and above) */}
@@ -119,6 +114,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           )}
 
           <div className="flex-1" />
+
+          {/* Switch System button */}
+          <Link href="/system-selector" className="hidden md:block">
+            <Button className="ml-1 gradient-primary text-white">Switch System</Button>
+          </Link>
 
           {/* Notifications */}
           <Button variant="ghost" size="icon" className="relative">

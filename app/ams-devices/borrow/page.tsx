@@ -4,190 +4,173 @@ import { AMSDashboardLayout } from "@/components/ams-dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
+import { Checkbox } from "@/components/ui/checkbox"
 import { getCurrentUser } from "@/lib/auth"
-import { ArrowLeft, Package, Calendar, User, CheckCircle2, Building2, Mail, Phone } from "lucide-react"
+import { ArrowLeft, Package } from "lucide-react"
 import Link from "next/link"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { BUSINESS_START_TIME, BUSINESS_END_TIME, BUSINESS_TIME_PATTERN, isWithinBusinessHours as isBusinessTime } from "@/lib/utils/business-hours"
 
 export default function BorrowDevicePage() {
-  const user = getCurrentUser()
   const router = useRouter()
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [showConfirmation, setShowConfirmation] = useState(false)
+  const [mounted, setMounted] = useState(false)
+  const [user, setUser] = useState<ReturnType<typeof getCurrentUser>>(null)
+  const [availableDevices, setAvailableDevices] = useState<Array<{ id: string; assetTag: string; name: string; raw: any }>>([])
+  const [loadingDevices, setLoadingDevices] = useState(true)
+  const [devicesError, setDevicesError] = useState<string | null>(null)
+  const [borrowTimeError, setBorrowTimeError] = useState<string | null>(null)
 
-  if (!user) return null
-
-  // Mock HRMS data - in real implementation, this would come from HRMS API
-  const employeeDetails = {
-    name: user.name,
-    employeeId: `XSP/23/10/003`, // Format: XSP/YY/MM/NNN (third employee hired in October 2023)
-    department: "Engineering",
-    position: user.role === "employee" ? "Software Developer" : "Senior Developer",
-    supervisorName: "John Smith",
-    contactEmail: user.email,
-    phone: "+27 12 345 6789"
-  }
-
-  // Mock device inventory data
-  const deviceTypes = [
-    { value: "laptop", label: "Laptop" },
-    { value: "phone", label: "Phone" },
-    { value: "tablet", label: "Tablet" },
-    { value: "monitor", label: "Monitor" },
-    { value: "printer", label: "Printer" },
-  ]
-
-  const deviceInventory = {
-    laptop: [
-      { id: "LAP-001", name: "Dell XPS 13", tag: "LAP-001", serial: "DLXPS13001", condition: "Good", available: true },
-      { id: "LAP-002", name: "MacBook Pro 14", tag: "LAP-002", serial: "MBP14002", condition: "Good", available: true },
-      { id: "LAP-003", name: "HP EliteBook", tag: "LAP-003", serial: "HPEB003", condition: "Needs Repair", available: false },
-      { id: "LAP-004", name: "Lenovo ThinkPad", tag: "LAP-004", serial: "LNTK004", condition: "Good", available: true },
-    ],
-    phone: [
-      { id: "PHN-001", name: "iPhone 13", tag: "PHN-001", serial: "IPH13001", condition: "Good", available: true },
-      { id: "PHN-002", name: "Samsung Galaxy S21", tag: "PHN-002", serial: "SGS21002", condition: "Good", available: true },
-      { id: "PHN-003", name: "iPhone 12", tag: "PHN-003", serial: "IPH12003", condition: "Fair", available: true },
-    ],
-    tablet: [
-      { id: "TAB-001", name: "iPad Pro 12.9", tag: "TAB-001", serial: "IPD12001", condition: "Good", available: true },
-      { id: "TAB-002", name: "Samsung Galaxy Tab", tag: "TAB-002", serial: "SGT002", condition: "Good", available: true },
-    ],
-    monitor: [
-      { id: "MON-001", name: "Dell UltraSharp 27", tag: "MON-001", serial: "DUS27001", condition: "Good", available: true },
-      { id: "MON-002", name: "LG 4K Monitor", tag: "MON-002", serial: "LG4K002", condition: "Good", available: true },
-    ],
-    printer: [
-      { id: "PRT-001", name: "HP LaserJet Pro", tag: "PRT-001", serial: "HLP001", condition: "Good", available: true },
-      { id: "PRT-002", name: "Canon ImageClass", tag: "PRT-002", serial: "CIC002", condition: "Needs Repair", available: false },
-    ],
-  }
-
-  // Form state
   const [formData, setFormData] = useState({
-    employeeName: employeeDetails.name,
-    employeeId: employeeDetails.employeeId,
-    department: employeeDetails.department,
-    position: employeeDetails.position,
-    supervisorName: employeeDetails.supervisorName,
-    contactEmail: employeeDetails.contactEmail,
-    phone: employeeDetails.phone,
-    deviceType: "",
-    deviceName: "",
-    assetTag: "",
-    serialNumber: "",
-    availabilityStatus: "",
-    deviceCondition: "",
-    borrowDate: new Date().toISOString().split('T')[0],
+    device: "",
+    borrowerName: "",
+    employeeId: "",
+    deviceId: "",
+    borrowDate: "",
+    borrowTime: "",
     returnDate: "",
     purpose: "",
-    remarks: "",
+    confirmation: false,
   })
 
-  const [selectedDevice, setSelectedDevice] = useState(null)
-
-  const handleDeviceTypeChange = (value) => {
-    setFormData({
-      ...formData,
-      deviceType: value,
-      deviceName: "",
-      assetTag: "",
-      serialNumber: "",
-      availabilityStatus: "",
-      deviceCondition: "",
-    })
-    setSelectedDevice(null)
-  }
-
-  const handleDeviceNameChange = (value) => {
-    const device = deviceInventory[formData.deviceType]?.find(d => d.id === value)
-    setSelectedDevice(device)
-    setFormData({
-      ...formData,
-      deviceName: device?.name || "",
-      assetTag: device?.tag || "",
-      serialNumber: device?.serial || "",
-      availabilityStatus: device?.available ? "Available" : "Unavailable",
-      deviceCondition: device?.condition || "",
-    })
-  }
-
-  const handleInputChange = (field, value) => {
-    setFormData({
-      ...formData,
-      [field]: value,
-    })
-  }
-
-  const handleSubmit = async () => {
-    setIsSubmitting(true)
+  useEffect(() => {
+    setMounted(true)
+    const currentUser = getCurrentUser()
+    setUser(currentUser)
     
-    // Create borrow request with status = "Pending Approval"
-    const borrowRequest = {
-      id: `BR-${Date.now()}`,
-      employeeId: formData.employeeId,
-      employeeName: formData.employeeName,
-      department: formData.department,
-      supervisorName: formData.supervisorName,
-      deviceType: formData.deviceType,
-      deviceName: formData.deviceName,
-      assetTag: formData.assetTag,
-      serialNumber: formData.serialNumber,
-      borrowDate: formData.borrowDate,
-      returnDate: formData.returnDate,
-      purpose: formData.purpose,
-      remarks: formData.remarks,
-      status: "Pending Approval",
-      submittedAt: new Date().toISOString(),
+    // Set default borrow date and time
+    const now = new Date()
+    const dateStr = now.toISOString().split('T')[0]
+    const timeStr = now.toTimeString().slice(0, 5)
+    
+    setFormData((prev) => ({
+      ...prev,
+      borrowerName: currentUser?.name || "John Doe",
+      employeeId: currentUser?.employeeId || "N/A",
+      borrowDate: dateStr,
+      borrowTime: timeStr,
+      returnDate: dateStr,
+    }))
+  }, [])
+
+  useEffect(() => {
+    const loadDevices = async () => {
+      setLoadingDevices(true)
+      setDevicesError(null)
+
+      try {
+        const response = await fetch("/api/devices?status=available")
+        if (!response.ok) throw new Error("Failed to load available devices")
+
+        const payload = await response.json()
+        const data: any[] = Array.isArray(payload) ? payload : payload?.data ?? []
+
+        const mapped = data.map((device) => ({
+          id: device.id ?? device.asset_tag ?? device.serial_number ?? crypto.randomUUID(),
+          assetTag: device.asset_tag ?? device.serial_number ?? "—",
+          name: device.model || device.brand || device.device_type || "Unnamed Device",
+          raw: device,
+        }))
+
+        setAvailableDevices(mapped)
+      } catch (error) {
+        setDevicesError(error instanceof Error ? error.message : "Unable to fetch devices")
+        setAvailableDevices([])
+      } finally {
+        setLoadingDevices(false)
+      }
     }
 
-    // Simulate API call to save borrow request
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    // Store in localStorage for demo purposes (in real app, this would go to database)
-    const existingRequests = JSON.parse(localStorage.getItem('borrowRequests') || '[]')
-    existingRequests.push(borrowRequest)
-    localStorage.setItem('borrowRequests', JSON.stringify(existingRequests))
-    
-    // Show success notification
-    alert(`Request submitted successfully. Status: Pending supervisor approval.`)
-    
-    setIsSubmitting(false)
-    setShowConfirmation(false)
-    
-    // Reset form
-    setFormData({
-      employeeName: employeeDetails.name,
-      employeeId: employeeDetails.employeeId,
-      department: employeeDetails.department,
-      position: employeeDetails.position,
-      supervisorName: employeeDetails.supervisorName,
-      contactEmail: employeeDetails.contactEmail,
-      phone: employeeDetails.phone,
-      deviceType: "",
-      deviceName: "",
-      assetTag: "",
-      serialNumber: "",
-      availabilityStatus: "",
-      deviceCondition: "",
-      borrowDate: new Date().toISOString().split('T')[0],
-      returnDate: "",
-      purpose: "",
-      remarks: "",
-    })
-    setSelectedDevice(null)
-    
-    // Redirect to supervisor page (pending approvals list)
-    router.push('/ams-supervisor/pending-approvals')
+    loadDevices()
+  }, [])
+
+  if (!mounted || !user) return null
+
+  const handleInputChange = (field: string, value: string | boolean) => {
+    setFormData((prev) => ({ ...prev, [field]: value }))
+    if (field === "borrowTime" && typeof value === "string") {
+      if (!value) {
+        setBorrowTimeError(null)
+        return
+      }
+      if (!BUSINESS_TIME_PATTERN.test(value)) {
+        setBorrowTimeError("Enter time in HH:MM format.")
+        return
+      }
+      if (!isBusinessTime(value)) {
+        setBorrowTimeError("Not a business hour")
+        return
+      }
+      setBorrowTimeError(null)
+    }
   }
 
-  const isFormValid = formData.deviceType && formData.deviceName && formData.returnDate && formData.purpose
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!formData.confirmation) {
+      alert("Please confirm that you will handle this device responsibly.")
+      return
+    }
+    if (!formData.borrowTime) {
+      setBorrowTimeError("Select a borrow time.")
+      return
+    }
+    if (!BUSINESS_TIME_PATTERN.test(formData.borrowTime)) {
+      setBorrowTimeError("Enter time in HH:MM format.")
+      return
+    }
+    if (!isBusinessTime(formData.borrowTime)) {
+      setBorrowTimeError("Not a business hour")
+      return
+    }
+    setBorrowTimeError(null)
+    // In a real app, this would send data to an API
+    console.log("Borrow request submitted:", formData)
+    alert("Device borrow request submitted successfully!")
+    // Reset form
+    router.back()
+  }
+
+  const handleCancel = () => {
+    router.back()
+  }
+
+  const isFormValid = !!(
+    formData.device &&
+    formData.borrowDate &&
+    formData.borrowTime &&
+    formData.returnDate &&
+    formData.purpose &&
+    formData.confirmation &&
+    !borrowTimeError
+  )
+
+  // Format date for display
+  const formatDateTime = (date: string, time?: string) => {
+    if (!date) return "--"
+    const d = new Date(date)
+    const dateFormatted = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    if (time) {
+      return `${dateFormatted}, ${time}`
+    }
+    return dateFormatted
+  }
+
+  const formatDuration = () => {
+    if (!formData.borrowDate) return "--"
+    const borrowDate = formatDateTime(formData.borrowDate, formData.borrowTime)
+    const returnDate = formData.returnDate ? formatDateTime(formData.returnDate) : "--"
+    return `${borrowDate} - ${returnDate}`
+  }
+
+  // Available devices list
+  const selectedDeviceDetails = availableDevices.find((device) => device.id === formData.device)
+  const selectedDevice = selectedDeviceDetails ? `${selectedDeviceDetails.assetTag} — ${selectedDeviceDetails.name}` : formData.device || "-"
+  const duration = formatDuration()
+  const purpose = formData.purpose || "-"
 
   return (
     <AMSDashboardLayout>
@@ -202,35 +185,62 @@ export default function BorrowDevicePage() {
           </Link>
         </div>
 
-        {/* Page Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-navy">Borrow Device</h1>
-          <p className="text-muted-foreground mt-2">
-            Submit a request to borrow a company device. Your supervisor will review and approve it.
+        {/* Gradient Banner */}
+        <div className="gradient-primary text-white p-8 rounded-lg">
+          <h1 className="text-3xl md:text-4xl font-bold mb-2">Borrow a Device</h1>
+          <p className="text-white/90 text-lg">
+            Select an available device to borrow and specify the borrowing duration.
           </p>
         </div>
 
+        {/* Two Column Layout */}
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Main Form */}
+          {/* Left Column - Device Selection */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Employee Details Section */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <User className="h-5 w-5 text-primary" />
-                  Employee Details
+                  <Package className="h-5 w-5 text-primary" />
+                  Device Selection
                 </CardTitle>
-                <CardDescription>Your information from HRMS (auto-filled)</CardDescription>
+                <CardDescription>Choose an available device to borrow.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="device">Device *</Label>
+                  <Select
+                    value={formData.device}
+                    onValueChange={(value) => {
+                      const selected = availableDevices.find((d) => d.id === value)
+                      handleInputChange("device", value)
+                      handleInputChange("deviceId", selected?.assetTag ?? value)
+                    }}
+                    disabled={loadingDevices || !!devicesError || availableDevices.length === 0}
+                  >
+                    <SelectTrigger id="device">
+                      <SelectValue placeholder={loadingDevices ? "Loading devices..." : devicesError ? "Devices unavailable" : "Select an available device"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableDevices.map((device) => (
+                        <SelectItem key={device.id} value={device.id}>
+                          {device.assetTag} — {device.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {devicesError && (
+                    <p className="text-xs text-destructive">{devicesError}</p>
+                  )}
+                </div>
+
                 <div className="grid md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="employeeName">Employee Name</Label>
+                    <Label htmlFor="borrowerName">Borrower Name</Label>
                     <Input
-                      id="employeeName"
-                      value={formData.employeeName}
+                      id="borrowerName"
+                      value={formData.borrowerName}
                       readOnly
-                      className="bg-muted"
+                      className="bg-muted text-muted-foreground"
                     />
                   </div>
                   <div className="space-y-2">
@@ -239,282 +249,130 @@ export default function BorrowDevicePage() {
                       id="employeeId"
                       value={formData.employeeId}
                       readOnly
-                      className="bg-muted"
-                    />
-                  </div>
-                </div>
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="department">Department</Label>
-                    <Input
-                      id="department"
-                      value={formData.department}
-                      readOnly
-                      className="bg-muted"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="position">Position</Label>
-                    <Input
-                      id="position"
-                      value={formData.position}
-                      readOnly
-                      className="bg-muted"
-                    />
-                  </div>
-                </div>
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="supervisorName">Supervisor Name</Label>
-                    <Input
-                      id="supervisorName"
-                      value={formData.supervisorName}
-                      readOnly
-                      className="bg-muted"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="contactEmail">Contact Email</Label>
-                    <Input
-                      id="contactEmail"
-                      value={formData.contactEmail}
-                      readOnly
-                      className="bg-muted"
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Device Selection Section */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Package className="h-5 w-5 text-primary" />
-                  Device Selection
-                </CardTitle>
-                <CardDescription>Select the device you want to borrow</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="deviceType">Device Type</Label>
-                    <Select value={formData.deviceType} onValueChange={handleDeviceTypeChange}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select device type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {deviceTypes.map((type) => (
-                          <SelectItem key={type.value} value={type.value}>
-                            {type.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="deviceName">Device Name / Model</Label>
-                    <Select 
-                      value={formData.deviceName} 
-                      onValueChange={handleDeviceNameChange}
-                      disabled={!formData.deviceType}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select device model" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {deviceInventory[formData.deviceType]?.map((device) => (
-                          <SelectItem key={device.id} value={device.id}>
-                            {device.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="assetTag">Asset Tag / ID</Label>
-                    <Input
-                      id="assetTag"
-                      value={formData.assetTag}
-                      readOnly
-                      className="bg-muted"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="availabilityStatus">Availability Status</Label>
-                    <Input
-                      id="availabilityStatus"
-                      value={formData.availabilityStatus}
-                      readOnly
-                      className="bg-muted"
+                      className="bg-muted text-muted-foreground"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="deviceCondition">Device Condition</Label>
+                  <Label htmlFor="deviceId">Device ID</Label>
                   <Input
-                    id="deviceCondition"
-                    value={formData.deviceCondition}
-                    readOnly
-                    className="bg-muted"
+                    id="deviceId"
+                    value={formData.deviceId}
+                    onChange={(e) => handleInputChange("deviceId", e.target.value)}
+                    placeholder="-"
                   />
                 </div>
-              </CardContent>
-            </Card>
 
-            {/* Borrowing Details Section */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Calendar className="h-5 w-5 text-primary" />
-                  Borrowing Details
-                </CardTitle>
-                <CardDescription>Provide details about your borrowing request</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
                 <div className="grid md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="borrowDate">Borrow Date</Label>
-                    <Input
-                      id="borrowDate"
-                      type="date"
-                      value={formData.borrowDate}
-                      onChange={(e) => handleInputChange("borrowDate", e.target.value)}
-                    />
+                    <Label htmlFor="borrowDate">Borrow Date *</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="borrowDate"
+                        type="date"
+                        value={formData.borrowDate}
+                        onChange={(e) => handleInputChange("borrowDate", e.target.value)}
+                        className="flex-1"
+                        required
+                      />
+                      <Input
+                        id="borrowTime"
+                        type="time"
+                        min={BUSINESS_START_TIME}
+                        max={BUSINESS_END_TIME}
+                        value={formData.borrowTime}
+                        onChange={(e) => handleInputChange("borrowTime", e.target.value)}
+                        className={`w-32 ${borrowTimeError ? "border-destructive focus-visible:ring-destructive/40" : ""}`}
+                        aria-invalid={borrowTimeError ? true : undefined}
+                      />
+                      {borrowTimeError && (
+                        <p className="text-xs text-destructive">{borrowTimeError}</p>
+                      )}
+                    </div>
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="returnDate">Expected Return Date *</Label>
+                    <Label htmlFor="returnDate">Return Date *</Label>
                     <Input
                       id="returnDate"
                       type="date"
                       value={formData.returnDate}
                       onChange={(e) => handleInputChange("returnDate", e.target.value)}
-                      min={formData.borrowDate}
                       required
                     />
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="purpose">Purpose of Borrowing *</Label>
+                  <Label htmlFor="purpose">Purpose *</Label>
                   <Textarea
                     id="purpose"
-                    placeholder="e.g., Client demo laptop, Remote work setup, etc."
                     value={formData.purpose}
                     onChange={(e) => handleInputChange("purpose", e.target.value)}
+                    placeholder="Enter the reason for borrowing this device"
+                    rows={4}
                     required
-                    rows={3}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="remarks">Remarks (Optional)</Label>
-                  <Textarea
-                    id="remarks"
-                    placeholder="Additional notes or special requirements..."
-                    value={formData.remarks}
-                    onChange={(e) => handleInputChange("remarks", e.target.value)}
-                    rows={2}
                   />
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Request Summary Panel */}
+          {/* Right Column - Confirmation */}
           <div className="lg:col-span-1">
             <Card className="sticky top-6">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CheckCircle2 className="h-5 w-5 text-primary" />
-                  Request Summary
-                </CardTitle>
-                <CardDescription>Review your borrowing request</CardDescription>
+                <CardTitle>Confirmation</CardTitle>
+                <CardDescription>Review your selection and confirm.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {formData.deviceName ? (
-                  <>
-                    <div className="space-y-3">
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Employee:</span>
-                        <span className="text-sm font-medium">{formData.employeeName}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Employee ID:</span>
-                        <span className="text-sm font-medium">{formData.employeeId}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Device:</span>
-                        <span className="text-sm font-medium">{formData.deviceName}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Asset Tag:</span>
-                        <span className="text-sm font-medium">{formData.assetTag}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Borrow Date:</span>
-                        <span className="text-sm font-medium">{formData.borrowDate}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Return Date:</span>
-                        <span className="text-sm font-medium">{formData.returnDate || "Not set"}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Supervisor:</span>
-                        <span className="text-sm font-medium">{formData.supervisorName}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Status:</span>
-                        <Badge variant="secondary">Pending Approval</Badge>
-                      </div>
-                    </div>
-
-                    <AlertDialog open={showConfirmation} onOpenChange={setShowConfirmation}>
-                      <AlertDialogTrigger asChild>
-                        <Button 
-                          className="w-full gradient-primary text-white hover:opacity-90 transition-opacity" 
-                          disabled={!isFormValid || isSubmitting}
-                        >
-                          {isSubmitting ? "Submitting..." : "Borrow Device"}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Confirm Borrow Request</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Are you sure you want to submit this borrowing request? Your supervisor will review and approve it.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={handleSubmit}>
-                            Submit Request
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                    
-                    {!isFormValid && (
-                      <p className="text-xs text-muted-foreground text-center mt-2">
-                        Please fill in all required fields to submit your request
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <div className="text-center py-8">
-                    <Package className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                    <p className="text-sm text-muted-foreground">
-                      Select a device to see request summary
-                    </p>
+                <div className="space-y-3">
+                  <div>
+                    <Label className="text-sm text-muted-foreground">Device:</Label>
+                    <p className="font-medium">{selectedDevice}</p>
                   </div>
-                )}
+                  <div>
+                    <Label className="text-sm text-muted-foreground">Duration:</Label>
+                    <p className="font-medium">{duration}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm text-muted-foreground">Purpose:</Label>
+                    <p className="font-medium">{purpose}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 pt-2">
+                  <Checkbox
+                    id="confirmation"
+                    checked={formData.confirmation}
+                    onCheckedChange={(checked) => handleInputChange("confirmation", checked === true)}
+                  />
+                  <Label
+                    htmlFor="confirmation"
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    I confirm I will handle this device responsibly.
+                  </Label>
+                </div>
+
+                <div className="flex flex-col gap-2 pt-4">
+                  <Button
+                    type="button"
+                    className="gradient-primary text-white w-full"
+                    disabled={!isFormValid}
+                    onClick={handleSubmit}
+                  >
+                    Borrow Device
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleCancel}
+                  >
+                    Cancel
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>
