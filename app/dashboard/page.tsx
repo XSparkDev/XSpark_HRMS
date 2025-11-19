@@ -34,10 +34,13 @@ import {
 } from "lucide-react"
 
 // Lazy load heavy components
-const HighAlertNotes = dynamic(() => import("@/components/high-alert-notes").then(mod => ({ default: mod.HighAlertNotes })), {
+const Notes2HighAlert = dynamic(
+  () => import("@/components/notes2-high-alert").then((mod) => ({ default: mod.Notes2HighAlert })),
+  {
   loading: () => <div className="h-32" />,
-  ssr: false,
-})
+    ssr: false,
+  },
+)
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -191,7 +194,7 @@ export default function DashboardPage() {
             </Card>
 
             {/* High Alert Notes */}
-            <HighAlertNotes />
+            <Notes2HighAlert />
 
             {/* My HR Cases */}
             <MyHrCases />

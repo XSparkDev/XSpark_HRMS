@@ -807,14 +807,14 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
     }
 
     setIsSubmitting(true)
-    
+
     try {
       // Check if sensitive fields are being updated
       const sensitiveFields = ['id_number', 'tax_number', 'passport_number', 'account_number']
       const hasSensitiveChanges = sensitiveFields.some(field => 
         formData[field as keyof typeof formData] !== profile?.[field]
       )
-      
+
       if (hasSensitiveChanges && !requiresReauth) {
         setRequiresReauth(true)
         toast({
@@ -824,7 +824,7 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
         })
         // Continue to submit to avoid blocking in modal context
       }
-      
+
       // Upload files first
       const uploadedFiles: Record<string, string> = {}
       for (const [field, file] of Object.entries(fileUploads)) {
@@ -833,7 +833,7 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
           uploadedFiles[field] = `https://s3.example.com/${field}/${file.name}`
         }
       }
-      
+
       // Prepare data for API
       const submitData: any = {
         ...formData,
@@ -916,12 +916,12 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
       } else {
         console.warn('Unable to determine employee ID for Next of Kin upsert')
       }
-      
+
       toast({
         title: "Profile saved successfully",
         description: "Your profile has been updated",
       })
-      
+
       setIsEditing(false)
       setRequiresReauth(false)
       

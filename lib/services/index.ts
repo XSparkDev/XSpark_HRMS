@@ -45,6 +45,14 @@ export {
 } from './notes-service-new'
 
 export {
+  notes2Service,
+  type EmployeeNote2,
+  type CreateNotes2Input,
+  type Notes2AlertLevel,
+  type UpdateNotes2Input
+} from './notes2-service'
+
+export {
   createEmployeeNote,
   getEmployeeNotesByEmployee,
   getEmployeeNoteById,
@@ -113,6 +121,7 @@ import { resourcesService } from './resources-service'
 import { bookingsService } from './bookings-service'
 import { scanLogsService } from './scan-logs-service'
 import { incidentsService } from './incidents-service'
+import { notes2Service } from './notes2-service'
 
 // Service factory for dependency injection
 export class ServiceFactory {
@@ -132,6 +141,9 @@ export class ServiceFactory {
           break
         case 'notes':
           this.instances.set(serviceName, notesService)
+          break
+        case 'notes2':
+          this.instances.set(serviceName, notes2Service)
           break
         case 'storage':
           this.instances.set(serviceName, storageService)
@@ -162,6 +174,7 @@ export default {
   leaveManagementService,
   payrollService,
   notesService,
+  notes2Service,
   storageService,
   resourcesService,
   bookingsService,
