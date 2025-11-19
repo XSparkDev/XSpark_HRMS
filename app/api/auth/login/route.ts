@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authService } from '@/lib/services/auth-service'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { getDefaultRouteForRole } from '@/lib/auth'
 import { z } from 'zod'
 
 // Validation schema
@@ -72,8 +73,11 @@ export async function POST(request: NextRequest) {
       ...authResponse.user,
       role: roleName,
       name: `${authResponse.employee.first_name} ${authResponse.employee.last_name}`,
-      employeeId: authResponse.employee.employee_id
+      employeeId: authResponse.employee.employee_id,
+      roleId: authResponse.employee.role_id,
     }
+
+    const defaultInterfacePath = getDefaultRouteForRole(roleName)
 
     return NextResponse.json({
       success: true,
@@ -81,7 +85,8 @@ export async function POST(request: NextRequest) {
       data: {
         user: userWithRole,
         employee: authResponse.employee,
-        session: authResponse.session
+        session: authResponse.session,
+        defaultRoute: defaultInterfacePath,
       }
     })
 

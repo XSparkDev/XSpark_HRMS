@@ -37,8 +37,6 @@ export default function EmployeeManagementPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
   const user = getCurrentUser()
-
-
   // Filter employees based on search and filters
   useEffect(() => {
     let filtered = employees

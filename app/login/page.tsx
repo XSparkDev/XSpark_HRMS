@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { XSparkLogo } from "@/components/xspark-logo"
+import { getDefaultRouteForRole } from "@/lib/auth"
 import { ArrowLeft, Mail, Lock, Eye, EyeOff } from "lucide-react"
 
 // Demo users removed – real authentication is now used
@@ -68,7 +69,9 @@ export default function LoginPage() {
         } catch {}
       }
 
-      router.push('/dashboard')
+      const defaultRoute =
+        json?.data?.defaultRoute || getDefaultRouteForRole(user?.role)
+      router.push(defaultRoute)
     } catch (err) {
       setError('Unable to reach server. Please try again.')
     } finally {
@@ -176,9 +179,12 @@ export default function LoginPage() {
         {/* Demo Accounts removed */}
 
         {/* Security Notice */}
-        <div className="text-center text-xs text-muted-foreground">
-          <p>🔒 Secured with bank-level encryption</p>
-          <p className="mt-1">POPIA Compliant • ISO 27001 Certified</p>
+        <div className="text-center text-xs text-muted-foreground space-y-1">
+          <p className="flex items-center justify-center gap-2">
+            <Lock className="h-4 w-4 text-[#25294B]" />
+            <span>Secured with bank-level encryption</span>
+          </p>
+          <p>POPIA Compliant • ISO 27001 Certified</p>
         </div>
       </div>
     </div>

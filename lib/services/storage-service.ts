@@ -39,12 +39,19 @@ export class StorageService {
     options: FileUploadOptions
   ): Promise<FileUploadResult> {
     try {
+      if (!file || !file.name) {
+        return {
+          success: false,
+          error: 'Invalid file provided'
+        }
+      }
+
       const bucketName = storageConfig.buckets[options.bucket]
       
       // Generate unique filename
       const timestamp = Date.now()
       const randomString = Math.random().toString(36).substring(2, 15)
-      const fileExtension = file.name.split('.').pop()
+      const fileExtension = file.name.split('.').pop() || 'file'
       const fileName = `${timestamp}-${randomString}.${fileExtension}`
       
       // Construct full path
@@ -266,17 +273,24 @@ export class StorageService {
     path: string
   ): Promise<any | null> {
     try {
+      if (!path || typeof path !== 'string') {
+        console.error('Invalid path provided to getFileMetadata')
+        return null
+      }
+
       const bucketName = storageConfig.buckets[bucket]
+      const pathParts = path.split('/').filter(p => p)
+      const directoryPath = pathParts.slice(0, -1).join('/')
       const { data, error } = await supabase.storage
         .from(bucketName)
-        .list(path.split('/').slice(0, -1).join('/'))
+        .list(directoryPath || '')
 
       if (error) {
         console.error('Error getting file metadata:', error)
         return null
       }
 
-      const fileName = path.split('/').pop()
+      const fileName = pathParts[pathParts.length - 1]
       return data?.find((file: any) => file.name === fileName) || null
     } catch (error) {
       console.error('Error getting file metadata:', error)

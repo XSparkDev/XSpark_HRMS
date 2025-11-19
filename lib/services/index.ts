@@ -71,45 +71,26 @@ export {
   type FileMetadata
 } from './storage-service'
 
+export {
+  RoomsService,
+  roomsService,
+  type Room,
+  type RoomFilters,
+  type CreateRoomInput,
+  type UpdateRoomInput
+} from './rooms-service'
+
+export {
+  ResourcesService,
+  resourcesService,
+  type ResourceModel,
+  type ResourceRecord as BaseResourceRecord,
+} from './resources-service'
+
 // Legacy services (to be migrated)
 export { notesService as legacyNotesService } from './notes-service'
 export { documentsService } from './documents-service'
-
-// AMS services
-export { 
-  ResourcesService, 
-  resourcesService,
-  type Resource,
-  type CreateResourceData,
-  type UpdateResourceData,
-  type ResourceFilters
-} from './resources-service'
-
-export { 
-  BookingsService, 
-  bookingsService,
-  type Booking,
-  type CreateBookingData,
-  type UpdateBookingData,
-  type BookingFilters
-} from './bookings-service'
-
-export { 
-  ScanLogsService, 
-  scanLogsService,
-  type ScanLog,
-  type CreateScanLogData,
-  type ScanLogFilters
-} from './scan-logs-service'
-
-export { 
-  IncidentsService, 
-  incidentsService,
-  type Incident,
-  type CreateIncidentData,
-  type UpdateIncidentData,
-  type IncidentFilters
-} from './incidents-service'
+export { assignedDevicesService } from './assigned-devices-service'
 
 // Import services for ServiceFactory
 import { employeeService } from './employee-service'
@@ -117,10 +98,9 @@ import { leaveManagementService } from './leave-service'
 import { payrollService } from './payroll-service'
 import { notesService } from './notes-service-new'
 import { storageService } from './storage-service'
+import { assignedDevicesService } from './assigned-devices-service'
+import { roomsService } from './rooms-service'
 import { resourcesService } from './resources-service'
-import { bookingsService } from './bookings-service'
-import { scanLogsService } from './scan-logs-service'
-import { incidentsService } from './incidents-service'
 import { notes2Service } from './notes2-service'
 
 // Service factory for dependency injection
@@ -148,17 +128,14 @@ export class ServiceFactory {
         case 'storage':
           this.instances.set(serviceName, storageService)
           break
+        case 'assignedDevices':
+          this.instances.set(serviceName, assignedDevicesService)
+          break
+        case 'rooms':
+          this.instances.set(serviceName, roomsService)
+          break
         case 'resources':
           this.instances.set(serviceName, resourcesService)
-          break
-        case 'bookings':
-          this.instances.set(serviceName, bookingsService)
-          break
-        case 'scanLogs':
-          this.instances.set(serviceName, scanLogsService)
-          break
-        case 'incidents':
-          this.instances.set(serviceName, incidentsService)
           break
         default:
           throw new Error(`Unknown service: ${serviceName}`)
@@ -176,9 +153,7 @@ export default {
   notesService,
   notes2Service,
   storageService,
+  roomsService,
   resourcesService,
-  bookingsService,
-  scanLogsService,
-  incidentsService,
   ServiceFactory
 }

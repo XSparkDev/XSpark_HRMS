@@ -3,527 +3,296 @@
 import { AMSDashboardLayout } from "@/components/ams-dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { getCurrentUser } from "@/lib/auth"
-import { useRouter } from "next/navigation"
+import { ArrowLeft, Building2, Calendar, Clock, Users } from "lucide-react"
+import Link from "next/link"
+import { useEffect, useMemo, useState } from "react"
 import {
-  Clock,
-  Users,
-  Building2,
-  Calendar,
-  CheckCircle2,
-  XCircle,
-  RotateCcw,
-  AlertCircle,
-} from "lucide-react"
-import { useState, useEffect } from "react"
+  getBookingTimeBounds,
+  loadRoomBookings,
+  resolveBookingRuntimeStatus,
+  RoomBookingRecord,
+  ROOM_BOOKINGS_UPDATED_EVENT,
+} from "@/lib/storage/room-bookings"
+import { timeStringToMinutes } from "@/lib/utils/business-hours"
 
 export default function CheckRoomAvailabilityPage() {
   const user = getCurrentUser()
-  const router = useRouter()
-  const [currentTime, setCurrentTime] = useState(new Date())
-  const [rooms, setRooms] = useState<any[]>([])
-  const [upcomingMeetings, setUpcomingMeetings] = useState<any[]>([])
+  const [bookings, setBookings] = useState<RoomBookingRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [referenceTime, setReferenceTime] = useState(() => new Date())
 
   if (!user) return null
 
-  // Update time every second for countdown timers
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date())
-    }, 1000)
+    const load = () => {
+      setLoading(true)
+      setError(null)
+      try {
+        setBookings(loadRoomBookings())
+      } catch (err) {
+        console.error("Failed to load room bookings", err)
+        setError(err instanceof Error ? err.message : "Unable to fetch bookings")
+        setBookings([])
+      } finally {
+        setLoading(false)
+      }
+    }
 
-    return () => clearInterval(timer)
+    load()
+
+    if (typeof window === "undefined") return
+    const handleUpdate = () => load()
+    window.addEventListener(ROOM_BOOKINGS_UPDATED_EVENT, handleUpdate)
+
+    return () => {
+      window.removeEventListener(ROOM_BOOKINGS_UPDATED_EVENT, handleUpdate)
+    }
   }, [])
 
-  // Mock data for rooms and meetings
   useEffect(() => {
-    const mockRooms = [
-      {
-        id: "thinking-room",
-        name: "Thinking Room",
-        capacity: 8,
-        status: "available", // "available" or "occupied"
-        currentMeeting: null,
-        nextMeeting: {
-          title: "Interview with Sydney Roy",
-          startTime: "14:15",
-          organizer: "Henrietta Gardner",
-        },
-      },
-      {
-        id: "boardroom",
-        name: "Boardroom",
-        capacity: 10,
-        status: "occupied",
-        currentMeeting: {
-          id: "meeting-001",
-          title: "Board Meeting",
-          organizer: "Alexander Stokes",
-          startTime: "13:00",
-          endTime: "14:00",
-          meetingType: "Offline",
-          category: "Internal Meeting",
-        },
-        nextMeeting: {
-          title: "Client Sales Call",
-          startTime: "15:45",
-          organizer: "Martin Gutierrez",
-        },
-      },
-    ]
-
-    const mockMeetings = [
-      {
-        id: "meeting-001",
-        room: "Boardroom",
-        title: "Board Meeting",
-        organizer: "Alexander Stokes",
-        meetingType: "Offline",
-        category: "Internal Meeting",
-        startTime: "13:00",
-        endTime: "14:00",
-        date: "2025-01-15",
-        status: "active", // "active", "upcoming", "cancelled"
-        cancelledAt: null,
-      },
-      {
-        id: "meeting-002",
-        room: "Thinking Room",
-        title: "Interview with Sydney Roy",
-        organizer: "Henrietta Gardner",
-        meetingType: "Online",
-        category: "External Meeting",
-        startTime: "14:15",
-        endTime: "15:15",
-        date: "2025-01-15",
-        status: "upcoming",
-        cancelledAt: null,
-      },
-      {
-        id: "meeting-003",
-        room: "Boardroom",
-        title: "Client Sales Call",
-        organizer: "Martin Gutierrez",
-        meetingType: "Offline",
-        category: "External Meeting",
-        startTime: "15:45",
-        endTime: "16:45",
-        date: "2025-01-15",
-        status: "upcoming",
-        cancelledAt: null,
-      },
-      {
-        id: "meeting-004",
-        room: "Thinking Room",
-        title: "Project Planning",
-        organizer: "Susie Dunn",
-        meetingType: "Online",
-        category: "Internal Meeting",
-        startTime: "11:00",
-        endTime: "12:30",
-        date: "2025-01-16",
-        status: "upcoming",
-        cancelledAt: null,
-      },
-      {
-        id: "meeting-005",
-        room: "Boardroom",
-        title: "Team Standup",
-        organizer: "John Doe",
-        meetingType: "Online",
-        category: "Internal Meeting",
-        startTime: "10:00",
-        endTime: "10:30",
-        date: "2025-01-15",
-        status: "cancelled",
-        cancelledAt: new Date(Date.now() - 5 * 60 * 1000), // 5 minutes ago
-      },
-    ]
-
-    setRooms(mockRooms)
-    setUpcomingMeetings(mockMeetings)
+    const interval = window.setInterval(() => {
+      setReferenceTime(new Date())
+    }, 60_000)
+    return () => window.clearInterval(interval)
   }, [])
 
-  const formatTime = (timeString: string) => {
-    return timeString
+  const todayIso = referenceTime.toISOString().split("T")[0]
+  const todaysSchedule = useMemo(() => {
+    const nowMinutes = referenceTime.getHours() * 60 + referenceTime.getMinutes()
+    return bookings
+      .filter((booking) => booking.date === todayIso)
+      .map((booking) => {
+        const { startMinutes, endMinutes } = getBookingTimeBounds(booking)
+        return {
+          booking,
+          startMinutes,
+          endMinutes,
+          runtimeStatus: resolveBookingRuntimeStatus(booking, bookings, referenceTime),
+        }
+      })
+      .filter(({ endMinutes }) => endMinutes === null || endMinutes > nowMinutes)
+      .sort((a, b) => {
+        const aStart = a.startMinutes ?? Number.MAX_SAFE_INTEGER
+        const bStart = b.startMinutes ?? Number.MAX_SAFE_INTEGER
+        return aStart - bStart
+      })
+      .map(({ booking, runtimeStatus, startMinutes, endMinutes }) => ({
+        ...booking,
+        runtimeStatus,
+        startMinutes,
+        endMinutes,
+      }))
+  }, [bookings, referenceTime, todayIso])
+
+  const activeBooking = todaysSchedule.find((entry) => entry.runtimeStatus === "In Progress") || todaysSchedule[0]
+  const totalRooms = useMemo(() => {
+    const rooms = new Set<string>()
+    bookings.forEach((booking) => {
+      if (booking.room) {
+        rooms.add(booking.room)
+      }
+    })
+    return rooms.size
+  }, [bookings])
+
+  const formatDate = (iso?: string | null) => {
+    if (!iso) return '—'
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return '—'
+    return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
   }
 
-  const getTimeUntilNextMeeting = (startTime: string) => {
-    const now = currentTime
-    const meetingDate = new Date(`2025-01-15 ${startTime}`)
-    const diff = meetingDate.getTime() - now.getTime()
-    
-    if (diff <= 0) return "Started"
-    
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    const seconds = Math.floor((diff % (1000 * 60)) / 1000)
-    
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-    } else {
-      return `${minutes}:${seconds.toString().padStart(2, '0')}`
-    }
+  const formatTime = (iso?: string | null) => {
+    if (!iso) return '—'
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return '—'
+    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   }
 
-  const getTimeRemaining = (endTime: string, date: string) => {
-    const now = currentTime
-    const meetingDate = new Date(`${date} ${endTime}`)
-    const diff = meetingDate.getTime() - now.getTime()
-    
-    if (diff <= 0) return "Ended"
-    
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    const seconds = Math.floor((diff % (1000 * 60)) / 1000)
-    
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-    } else {
-      return `${minutes}:${seconds.toString().padStart(2, '0')}`
-    }
+  const formatTimeRange = (booking?: RoomBookingRecord) => {
+    if (!booking) return '—'
+    const rawStart = booking.startTime || booking.time?.split("-")[0] || booking.start_time
+    const rawEnd = booking.endTime || booking.time?.split("-")[1] || booking.end_time
+    const start = rawStart ? rawStart.trim() : null
+    const end = rawEnd ? rawEnd.trim() : null
+
+    if (start && end) return `${start} – ${end}`
+    if (start) return start
+    if (end) return end
+    return '—'
   }
 
-  const getTimeUntilStart = (startTime: string, date: string) => {
-    const now = currentTime
-    const meetingDate = new Date(`${date} ${startTime}`)
-    const diff = meetingDate.getTime() - now.getTime()
-    
-    if (diff <= 0) return "Started"
-    
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    
-    if (hours > 0) {
-      return `in ${hours}h ${minutes}m`
-    } else {
-      return `in ${minutes}m`
-    }
+  const statusBadge = (status?: string | null) => {
+    const normalized = (status || 'booked').toLowerCase()
+    const variant: 'default' | 'secondary' | 'outline' | 'destructive' =
+      normalized === 'in progress'
+        ? 'default'
+        : normalized === 'pending'
+        ? 'destructive'
+        : normalized === 'completed'
+        ? 'secondary'
+        : 'outline'
+    return <Badge variant={variant}>{toTitleCase(status)}</Badge>
   }
 
-  const getCancellationTimeRemaining = (cancelledAt: Date) => {
-    const now = currentTime
-    const diff = now.getTime() - cancelledAt.getTime()
-    const remaining = 10 * 60 * 1000 - diff // 10 minutes in milliseconds
-    
-    if (remaining <= 0) return null
-    
-    const minutes = Math.floor(remaining / (1000 * 60))
-    const seconds = Math.floor((remaining % (1000 * 60)) / 1000)
-    
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`
+  const toTitleCase = (value?: string | null) => {
+    if (!value) return 'Unknown'
+    return value
+      .toLowerCase()
+      .split(/\s+|_/)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
   }
-
-  const handleCancelMeeting = (meetingId: string) => {
-    setUpcomingMeetings(prev => 
-      prev.map(meeting => 
-        meeting.id === meetingId 
-          ? { ...meeting, status: "cancelled", cancelledAt: new Date() }
-          : meeting
-      )
-    )
-    alert("Meeting successfully cancelled. You can reschedule within the next 10 minutes.")
-  }
-
-  const handleRescheduleMeeting = (meetingId: string) => {
-    alert("Redirecting to reschedule meeting...")
-    // In a real app, this would redirect to a reschedule form
-  }
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "available":
-        return <CheckCircle2 className="h-4 w-4 text-green-600" />
-      case "occupied":
-        return <XCircle className="h-4 w-4 text-red-600" />
-      case "active":
-        return <Clock className="h-4 w-4 text-blue-600" />
-      case "upcoming":
-        return <AlertCircle className="h-4 w-4 text-yellow-600" />
-      case "cancelled":
-        return <XCircle className="h-4 w-4 text-yellow-600" />
-      default:
-        return <AlertCircle className="h-4 w-4 text-gray-600" />
-    }
-  }
-
-  const todayMeetings = upcomingMeetings.filter(meeting => meeting.date === "2025-01-15")
-  const tomorrowMeetings = upcomingMeetings.filter(meeting => meeting.date === "2025-01-16")
 
   return (
     <AMSDashboardLayout>
-      {/* Everest-inspired design without background photo */}
-      <div className="relative min-h-screen bg-gray-50">
-        {/* Subtle overlay for readability */}
-        <div className="absolute inset-0 bg-black/5"></div>
-        
-        <div className="relative z-10 space-y-6 p-6">
-          {/* Header */}
-          <div>
-            <h1 className="text-3xl font-bold text-navy">Check Room Availability</h1>
-            <p className="text-muted-foreground mt-2">
-              View real-time room status and upcoming meetings
-            </p>
+      <div className="space-y-6">
+        {/* Page Header */}
+        <div>
+          <h1 className="text-3xl font-bold text-navy">Check Room Availability</h1>
+          <p className="text-muted-foreground mt-2">
+            View upcoming room bookings across all rooms
+          </p>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+          <div className="space-y-6">
+            {/* Everest-style Highlight */}
+            <Card className="border-0 shadow-none">
+              <CardContent className="p-0">
+                <div className="rounded-2xl bg-gradient-to-r from-[#FBE8D4] via-[#F8DDEC] to-[#E9F2FF] p-6 md:p-8 border border-white shadow-sm">
+                  {activeBooking ? (
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+                      <div className="space-y-2 text-[#3F3D56]">
+                        <p className="uppercase tracking-wide text-xs text-[#7A768A]">Next meeting</p>
+                        <h2 className="text-3xl font-semibold text-[#2B2E4A]">
+                          {activeBooking?.meetingAgenda || "Room Booking"}
+                        </h2>
+                        <div className="flex items-center gap-3 text-sm text-[#4F5D75]">
+                          <Calendar className="h-4 w-4" />
+                          <span>{formatDate(activeBooking?.date)}</span>
+                          <Clock className="h-4 w-4 ml-3" />
+                          <span>{formatTimeRange(activeBooking)}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm text-[#4F5D75]">
+                          <Building2 className="h-4 w-4" />
+                          <span>{activeBooking?.room || "Unassigned Room"}</span>
+                          <Users className="h-4 w-4 ml-3" />
+                          <span>{activeBooking?.employeeName}</span>
+                        </div>
+                        <div className="mt-4">
+                          {statusBadge(activeBooking?.runtimeStatus || activeBooking?.status)}
+                        </div>
+                      </div>
+                      <div className="bg-white/80 backdrop-blur rounded-xl p-4 md:p-6 min-w-[220px] text-center border border-white">
+                        <p className="text-xs uppercase tracking-wide text-[#7A768A]">Agenda</p>
+                        <p className="mt-2 text-sm text-[#4F5D75]">
+                          {activeBooking.meetingAgenda || "Agenda not provided."}
+                        </p>
+                      </div>
+              </div>
+            ) : (
+                    <div className="py-12 text-center text-[#4F5D75]">
+                      <h2 className="text-2xl font-semibold mb-2">No bookings scheduled today</h2>
+                      <p className="text-sm mb-4">Rooms are available right now. Schedule your next meeting below.</p>
+                <Link href="/ams-bookings">
+                  <Button className="gradient-primary text-white">
+                    <Building2 className="h-4 w-4 mr-2" />
+                    Book a Room
+                  </Button>
+                </Link>
+              </div>
+            )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Today's schedule */}
+            <Card className="border border-[#808285]/20 bg-gradient-to-br from-white to-[#F5F7FB]">
+              <CardHeader>
+                <CardTitle className="text-[#25294B]">Today's Schedule</CardTitle>
+                <CardDescription className="text-[#58595B]">Room bookings grouped by time slot</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {todaysSchedule.length === 0 ? (
+                  <div className="text-center py-6 text-sm text-muted-foreground">No bookings for today.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {todaysSchedule.map((booking) => (
+                      <div key={booking.id} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex flex-col">
+                          <span className="font-medium text-[#25294B]">
+                            {booking.meetingAgenda || "Room Booking"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatTimeRange(booking)} • {booking.employeeName}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-sm font-medium">{booking.room}</span>
+                          <div className="text-xs text-muted-foreground flex items-center gap-2 justify-end">
+                            {booking.meetingCategory}
+                            {statusBadge(booking.runtimeStatus || booking.status)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Main Layout - Everest Style */}
-          <div className="grid lg:grid-cols-3 gap-6">
-            {/* Left Section - Room Status Panel (2/3 width) */}
-            <div className="lg:col-span-2 space-y-4">
-              <h2 className="text-xl font-semibold text-navy mb-4">Room Status</h2>
-              
-              {rooms.map((room) => (
-                <Card key={room.id} className="border-0 overflow-hidden relative min-h-[300px] bg-white">
-                  <CardContent className="p-0 h-full">
-                    {/* Room Status Card with Color Coding */}
-                    <div className={`relative h-full min-h-[300px] flex flex-col justify-between p-6 ${
-                      room.status === "available" 
-                        ? "bg-gradient-to-br from-green-500/80 via-green-600/80 to-green-700/80" 
-                        : "bg-gradient-to-br from-red-500/80 via-red-600/80 to-red-700/80"
-                    }`}>
-                      {/* Subtle overlay for text readability */}
-                      <div className="absolute inset-0 bg-black/30"></div>
-                      
-                      {/* Top section with time and status */}
-                      <div className="relative z-10">
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="text-white/90 text-sm font-medium">
-                            {currentTime.toLocaleTimeString('en-US', { 
-                              hour: '2-digit', 
-                              minute: '2-digit',
-                              hour12: false 
-                            })} {currentTime.toLocaleDateString('en-US', { 
-                              weekday: 'long', 
-                              month: 'long', 
-                              day: 'numeric' 
-                            })}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {getStatusIcon(room.status)}
-                            <span className="text-white font-semibold text-sm">
-                              {room.status === "available" ? "AVAILABLE" : "OCCUPIED"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Center section with main content */}
-                      <div className="relative z-10 flex-1 flex flex-col justify-center items-center text-center">
-                        {room.status === "available" ? (
-                          <div className="space-y-4">
-                            <div className="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center">
-                              <CheckCircle2 className="h-10 w-10 text-white" />
-                            </div>
-                            <div>
-                              <h3 className="text-3xl font-bold text-white mb-2">{room.name}</h3>
-                              <p className="text-white/90 text-lg">Available now</p>
-                              <p className="text-white/80 text-sm mt-2">Capacity: {room.capacity} people</p>
-                              {room.nextMeeting && (
-                                <div className="mt-3 p-3 bg-white/10 rounded-lg">
-                                  <p className="text-white/90 text-sm">Next: {room.nextMeeting.title}</p>
-                                  <p className="text-white/80 text-xs">Organizer: {room.nextMeeting.organizer}</p>
-                                  <p className="text-white/80 text-xs">Starts at: {room.nextMeeting.startTime}</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-4">
-                            <div className="w-20 h-20 rounded-full bg-white/20 flex items-center justify-center">
-                              <Clock className="h-10 w-10 text-white" />
-                            </div>
-                            <div>
-                              <h3 className="text-3xl font-bold text-white mb-2">{room.name}</h3>
-                              <p className="text-white/90 text-lg">{room.currentMeeting?.title}</p>
-                              <p className="text-white/80 text-sm mt-2">Organizer: {room.currentMeeting?.organizer}</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Bottom section with countdown or action */}
-                      <div className="relative z-10">
-                        {room.status === "available" ? (
-                          <div className="text-center space-y-2">
-                            {room.nextMeeting && (
-                              <>
-                                <div className="text-white/90 text-sm">Next meeting starts in:</div>
-                                <div className="text-2xl font-bold text-white font-mono">
-                                  {getTimeUntilNextMeeting(room.nextMeeting.startTime)}
-                                </div>
-                              </>
-                            )}
-                            <Button 
-                              className="bg-white/20 text-white border border-white/30"
-                              onClick={() => router.push("/ams-bookings/book")}
-                            >
-                              <Building2 className="h-4 w-4 mr-2" />
-                              Book This Room
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="text-center space-y-2">
-                            <div className="text-white/90 text-sm">Time Remaining:</div>
-                            <div className="text-2xl font-bold text-white font-mono">
-                              {getTimeRemaining(room.currentMeeting?.endTime || "", "2025-01-15")}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            {/* Right Section - Upcoming Meetings (1/3 width) */}
-            <div className="space-y-4">
-              <h2 className="text-xl font-semibold text-navy mb-4">Upcoming Meetings</h2>
-              
-              {/* Today's Meetings */}
-              <Card className="border border-gray-200 bg-white">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-gray-600">TODAY</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {todayMeetings.length > 0 ? (
-                    todayMeetings.map((meeting) => {
-                      const cancellationTimeRemaining = meeting.status === "cancelled" 
-                        ? getCancellationTimeRemaining(meeting.cancelledAt!)
-                        : null
-                      
-                      return (
-                        <div key={meeting.id} className={`p-3 rounded-lg border ${
-                          meeting.status === "cancelled" 
-                            ? "bg-yellow-50 border-yellow-200" 
-                            : "bg-white border-gray-200"
-                        }`}>
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-sm font-medium text-navy">
-                                  {meeting.startTime} → {meeting.endTime}
-                                </span>
-                                {meeting.status === "cancelled" && (
-                                  <XCircle className="h-4 w-4 text-yellow-600" />
-                                )}
-                              </div>
-                              <h4 className="font-medium text-sm text-navy mb-1">
-                                {meeting.title}
-                              </h4>
-                              <p className="text-xs text-muted-foreground mb-1">
-                                {meeting.organizer}
-                              </p>
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                <span>{meeting.meetingType}</span>
-                                <span>•</span>
-                                <span>{meeting.category}</span>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              {meeting.status === "cancelled" ? (
-                                <div className="space-y-1">
-                                  <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800">
-                                    Cancelled
-                                  </span>
-                                  {cancellationTimeRemaining && (
-                                    <div className="text-xs text-muted-foreground">
-                                      Reschedule in: {cancellationTimeRemaining}
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="text-xs text-muted-foreground">
-                                  {getTimeUntilStart(meeting.startTime, meeting.date)}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          
-                          {meeting.status === "cancelled" && cancellationTimeRemaining && (
-                            <div className="flex gap-2 mt-2">
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={() => handleRescheduleMeeting(meeting.id)}
-                                className="text-xs bg-yellow-100 border-yellow-300 text-yellow-800 hover:bg-yellow-200"
-                              >
-                                <RotateCcw className="h-3 w-3 mr-1" />
-                                Reschedule Meeting
-                              </Button>
-                            </div>
-                          )}
-                          
-                          {meeting.status === "upcoming" && (
-                            <div className="flex gap-2 mt-2">
-                              <Button 
-                                size="sm" 
-                                variant="outline"
-                                onClick={() => handleCancelMeeting(meeting.id)}
-                                className="text-xs"
-                              >
-                                <XCircle className="h-3 w-3 mr-1" />
-                                Cancel
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })
-                  ) : (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      No meetings scheduled for today
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Tomorrow's Meetings */}
-              <Card className="border border-gray-200 bg-white">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-gray-600">TOMORROW, FRIDAY, JANUARY 16</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {tomorrowMeetings.length > 0 ? (
-                    tomorrowMeetings.map((meeting) => (
-                      <div key={meeting.id} className="p-3 rounded-lg border bg-white border-gray-200">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-sm font-medium text-navy">
-                                {meeting.startTime} → {meeting.endTime}
-                              </span>
-                            </div>
-                            <h4 className="font-medium text-sm text-navy mb-1">
-                              {meeting.title}
-                            </h4>
-                            <p className="text-xs text-muted-foreground mb-1">
-                              {meeting.organizer}
-                            </p>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                              <span>{meeting.meetingType}</span>
-                              <span>•</span>
-                              <span>{meeting.category}</span>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-xs text-muted-foreground">
-                              {getTimeUntilStart(meeting.startTime, meeting.date)}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground text-center py-4">
-                      No meetings scheduled for tomorrow
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+          <div className="space-y-4">
+            <Card className="border border-[#808285]/20 bg-gradient-to-br from-white to-[#F5F7FB]">
+              <CardHeader>
+                <CardTitle className="text-[#25294B]">Snapshot</CardTitle>
+                <CardDescription className="text-[#58595B]">Today's bookings at a glance</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-[#4F5D75]">
+                <div className="flex items-center justify-between">
+                  <span>Total Bookings</span>
+                  <span className="font-semibold text-[#25294B]">{todaysSchedule.length}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Rooms in Use</span>
+                  <span className="font-semibold text-[#25294B]">{Math.min(totalRooms, todaysSchedule.length)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Active Booking</span>
+                  <span className="font-semibold text-[#25294B]">
+                    {activeBooking ? formatTimeRange(activeBooking) : "None"}
+                  </span>
+                </div>
+                <div className="pt-3 border-t border-[#E3E6EF]">
+                  <p className="text-xs text-[#7A768A]">
+                    Data refreshes automatically when new bookings are added.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
+
+        {!loading && !error && todaysSchedule.length === 0 && (
+          <Card className="border border-[#808285]/20 bg-gradient-to-br from-white to-[#808285]/5">
+            <CardContent className="py-12 text-center text-muted-foreground">
+              There are currently no bookings. Rooms are open for reservation.
+          </CardContent>
+        </Card>
+        )}
+
+        {error && (
+          <Card className="border-destructive/40">
+            <CardHeader>
+              <CardTitle className="text-lg text-destructive">Unable to load bookings</CardTitle>
+              <CardDescription>{error}</CardDescription>
+            </CardHeader>
+          </Card>
+        )}
       </div>
     </AMSDashboardLayout>
   )

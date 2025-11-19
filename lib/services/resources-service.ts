@@ -1,381 +1,293 @@
-// ============================================================================
-// RESOURCES SERVICE - Asset Management System
-// ============================================================================
-// Manages resources (equipment, rooms, vehicles, etc.)
-// ============================================================================
+// =============================================================================
+// RESOURCES SERVICE - Repository Layer
+// =============================================================================
+// Provides CRUD and hydration helpers for the `resources` table. This service
+// determines which specialised model (room/device/generic) should be returned
+// based on the resource_type stored in the database.
+// =============================================================================
 
 import { supabase } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { BaseService } from './base-service'
+import type { Room } from './rooms-service'
+import type {
+  ResourceRecord,
+  ResourceModel,
+  ResourceKind,
+  RoomResourceModel,
+  DeviceResourceModel,
+  GenericResourceModel,
+} from '@/lib/models/resource-models'
 
-export interface Resource {
-  resource_id: string
-  resource_name: string
-  resource_type: string
-  description?: string
-  location?: string
-  capacity?: number
-  condition?: 'New' | 'Good' | 'Fair' | 'Damaged'
-  qr_code_url?: string
-  is_available: boolean
-  notes?: string
-  created_by?: string
-  created_at: string
-  updated_at: string
-}
-
-export interface CreateResourceData {
-  resource_id: string
-  resource_name: string
-  resource_type: string
-  description?: string
-  location?: string
-  capacity?: number
-  condition?: 'New' | 'Good' | 'Fair' | 'Damaged'
-  qr_code_url?: string
-  is_available?: boolean
-  notes?: string
-  created_by?: string
-}
-
-export interface UpdateResourceData extends Partial<CreateResourceData> {
-  resource_id: string
-}
-
-export interface ResourceFilters {
-  resource_type?: string
-  location?: string
-  is_available?: boolean
-  condition?: string
+type ResourceFilters = {
   search?: string
+  resource_type?: string
+  is_available?: boolean
+  includeDeleted?: boolean
   limit?: number
   offset?: number
 }
 
-export class ResourcesService {
-  // ============================================================================
-  // READ OPERATIONS
-  // ============================================================================
+type ListOptions = ResourceFilters & {
+  hydrate?: boolean
+}
 
-  /**
-   * Get all resources with optional filtering
-   */
-  async getAll(filters?: ResourceFilters): Promise<Resource[]> {
-    try {
-      let query = supabase.from('resources').select('*')
+type DeviceRecord = {
+  id: string
+  asset_tag?: string | null
+  serial_number?: string | null
+  device_type?: string | null
+  brand?: string | null
+  model?: string | null
+  status?: string | null
+  condition?: string | null
+  assigned_to?: string | null
+  location?: string | null
+  notes?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
 
-      if (filters?.resource_type) {
-        query = query.eq('resource_type', filters.resource_type)
-      }
+export class ResourcesService extends BaseService {
+  private readonly table = 'resources'
+  private readonly admin = supabaseAdmin
 
-      if (filters?.location) {
-        query = query.ilike('location', `%${filters.location}%`)
-      }
+  async listResources(options: ListOptions = {}): Promise<ResourceModel[]> {
+    const rows = await this.executeQueryArray<ResourceRecord>(
+      async () => {
+        let query = supabase.from(this.table).select('*')
 
-      if (filters?.is_available !== undefined) {
-        query = query.eq('is_available', filters.is_available)
-      }
+        if (!options.includeDeleted) {
+          query = query.is('deleted_at', null)
+        }
 
-      if (filters?.condition) {
-        query = query.eq('condition', filters.condition)
-      }
+        if (options.resource_type) {
+          query = query.eq('resource_type', options.resource_type)
+        }
 
-      if (filters?.search) {
-        query = query.or(`resource_name.ilike.%${filters.search}%,description.ilike.%${filters.search}%`)
-      }
+        if (options.is_available !== undefined) {
+          query = query.eq('is_available', options.is_available)
+        }
 
-      if (filters?.limit) {
-        query = query.limit(filters.limit)
-      }
+        if (options.search) {
+          const term = `%${options.search}%`
+          query = query.or(
+            `resource_name.ilike.${term},description.ilike.${term},location.ilike.${term}`
+          )
+        }
 
-      if (filters?.offset) {
-        query = query.range(filters.offset, (filters.offset || 0) + (filters.limit || 50) - 1)
-      }
+        if (typeof options.limit === 'number' && typeof options.offset === 'number') {
+          query = query.range(options.offset, options.offset + options.limit - 1)
+        } else if (typeof options.limit === 'number') {
+          query = query.limit(options.limit)
+        }
 
-      const { data, error } = await query.order('resource_name', { ascending: true })
+        const { data, error } = await query.order('created_at', { ascending: false })
+        return { data, error }
+      },
+      'list resources'
+    )
 
-      if (error) throw error
-      return data || []
-    } catch (error) {
-      console.error('Error fetching resources:', error)
-      throw new Error('Failed to fetch resources')
+    if (!options.hydrate) {
+      return rows.map((row) => this.mapRowToModel(row))
     }
+
+    return Promise.all(rows.map((row) => this.hydrateResource(row)))
   }
 
-  /**
-   * Get resource by ID
-   */
-  async getById(resourceId: string): Promise<Resource | null> {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .select('*')
-        .eq('resource_id', resourceId)
-        .single()
+  async getResourceById(id: string, options: { hydrate?: boolean } = {}): Promise<ResourceModel | null> {
+    const row = await this.executeQuery<ResourceRecord | null>(
+      async () => {
+        const { data, error } = await supabase
+          .from(this.table)
+          .select('*')
+          .eq('resource_id', id)
+          .maybeSingle()
+        return { data, error }
+      },
+      'get resource by id'
+    )
 
-      if (error) throw error
-      return data
+    if (!row) return null
+    return options.hydrate ? this.hydrateResource(row) : this.mapRowToModel(row)
+  }
+
+  async createResource(payload: ResourceRecord): Promise<ResourceModel> {
+    const sanitized = this.sanitizeInput({
+      ...payload,
+      created_at: payload.created_at ?? new Date().toISOString(),
+      updated_at: payload.updated_at ?? new Date().toISOString(),
+    })
+
+    const row = await this.executeInsert<ResourceRecord>(
+      async () => {
+        const { data, error } = await this.admin
+          .from(this.table)
+          .insert(sanitized)
+          .select('*')
+          .single()
+        return { data, error }
+      },
+      'create resource'
+    )
+
+    return this.mapRowToModel(row)
+  }
+
+  async updateResource(id: string, updates: Partial<ResourceRecord>): Promise<ResourceModel | null> {
+    const sanitized = this.sanitizeInput({ ...updates, updated_at: new Date().toISOString() })
+
+    const row = await this.executeUpdate<ResourceRecord | null>(
+      async () => {
+        const { data, error } = await this.admin
+          .from(this.table)
+          .update(sanitized)
+          .eq('resource_id', id)
+          .select('*')
+          .maybeSingle()
+        return { data, error }
+      },
+      'update resource'
+    )
+
+    if (!row) return null
+    return this.mapRowToModel(row)
+  }
+
+  async deleteResource(id: string, options: { hardDelete?: boolean } = {}): Promise<boolean> {
+    const { hardDelete = false } = options
+
+    if (hardDelete) {
+      return this.executeDelete(
+        async () => {
+          const { error } = await this.admin.from(this.table).delete().eq('resource_id', id)
+          return { error }
+        },
+        'hard delete resource'
+      )
+    }
+
+    return this.executeDelete(
+      async () => {
+        const { error } = await this.admin
+          .from(this.table)
+          .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq('resource_id', id)
+        return { error }
+      },
+      'soft delete resource'
+    )
+  }
+
+  async restoreResource(id: string): Promise<ResourceModel | null> {
+    const row = await this.executeUpdate<ResourceRecord | null>(
+      async () => {
+        const { data, error } = await this.admin
+          .from(this.table)
+          .update({ deleted_at: null, updated_at: new Date().toISOString() })
+          .eq('resource_id', id)
+          .select('*')
+          .maybeSingle()
+        return { data, error }
+      },
+      'restore resource'
+    )
+
+    if (!row) return null
+    return this.mapRowToModel(row)
+  }
+
+  private mapRowToModel(row: ResourceRecord): ResourceModel {
+    const kind = this.resolveKind(row.resource_type)
+
+    if (kind === 'room') {
+      const model: RoomResourceModel = {
+        ...row,
+        kind,
+        roomDetails: undefined,
+        features: undefined,
+      }
+      return model
+    }
+
+    if (kind === 'device') {
+      const model: DeviceResourceModel = {
+        ...row,
+        kind,
+        deviceId: row.resource_id,
+        asset_tag: undefined,
+        serial_number: undefined,
+        device_type: undefined,
+        status: undefined,
+      }
+      return model
+    }
+
+    const model: GenericResourceModel = { ...row, kind }
+    return model
+  }
+
+  private async hydrateResource(row: ResourceRecord): Promise<ResourceModel> {
+    const kind = this.resolveKind(row.resource_type)
+
+    if (kind === 'room') {
+      const [roomDetails] = await Promise.all([this.fetchRoom(row.resource_id)])
+      const model: RoomResourceModel = {
+        ...row,
+        kind,
+        roomDetails,
+        features: roomDetails?.features ?? null,
+      }
+      return model
+    }
+
+    if (kind === 'device') {
+      const device = await this.fetchDevice(row.resource_id)
+      const model: DeviceResourceModel = {
+        ...row,
+        kind,
+        deviceId: device?.id ?? row.resource_id,
+        asset_tag: device?.asset_tag ?? null,
+        serial_number: device?.serial_number ?? null,
+        device_type: device?.device_type ?? null,
+        status: device?.status ?? null,
+      }
+      return model
+    }
+
+    return { ...row, kind: 'other' }
+  }
+
+  private resolveKind(resourceType?: string | null): ResourceKind {
+    const normalized = (resourceType || '').trim().toLowerCase()
+    if (['room', 'meeting_room', 'conference_room'].includes(normalized)) return 'room'
+    if (['device', 'hardware', 'computer', 'laptop'].includes(normalized)) return 'device'
+    return 'other'
+  }
+
+  private async fetchRoom(id: string): Promise<Room | null> {
+    try {
+      const { roomsService } = await import('./rooms-service')
+      return await roomsService.getRoomById(id)
     } catch (error) {
-      console.error('Error fetching resource by ID:', error)
+      console.warn(`Unable to hydrate room resource ${id}:`, error)
       return null
     }
   }
 
-  /**
-   * Get available resources (not currently booked)
-   */
-  async getAvailable(resourceType?: string): Promise<Resource[]> {
+  private async fetchDevice(id: string): Promise<DeviceRecord | null> {
     try {
-      // Use the available_resources view
-      const { data, error } = await supabase
-        .from('available_resources')
-        .select('*')
-        .eq('is_available', true)
-
+      const { data, error } = await supabase.from('devices').select('*').eq('id', id).maybeSingle()
       if (error) throw error
-
-      // Filter by type if provided
-      if (resourceType) {
-        return (data || []).filter(r => r.resource_type === resourceType)
-      }
-
-      return data || []
+      return (data as DeviceRecord | null) ?? null
     } catch (error) {
-      console.error('Error fetching available resources:', error)
-      throw new Error('Failed to fetch available resources')
-    }
-  }
-
-  /**
-   * Get resources by type
-   */
-  async getByType(resourceType: string): Promise<Resource[]> {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .select('*')
-        .eq('resource_type', resourceType)
-        .order('resource_name', { ascending: true })
-
-      if (error) throw error
-      return data || []
-    } catch (error) {
-      console.error('Error fetching resources by type:', error)
-      throw new Error('Failed to fetch resources by type')
-    }
-  }
-
-  /**
-   * Search resources
-   */
-  async search(query: string, limit: number = 10): Promise<Resource[]> {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .select('*')
-        .or(`resource_name.ilike.%${query}%,description.ilike.%${query}%,resource_id.ilike.%${query}%`)
-        .limit(limit)
-        .order('resource_name', { ascending: true })
-
-      if (error) throw error
-      return data || []
-    } catch (error) {
-      console.error('Error searching resources:', error)
-      throw new Error('Failed to search resources')
-    }
-  }
-
-  // ============================================================================
-  // CREATE OPERATIONS
-  // ============================================================================
-
-  /**
-   * Create a new resource
-   */
-  async create(resourceData: CreateResourceData): Promise<Resource> {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .insert([resourceData])
-        .select()
-        .single()
-
-      if (error) throw error
-      return data
-    } catch (error) {
-      console.error('Error creating resource:', error)
-      throw new Error('Failed to create resource')
-    }
-  }
-
-  /**
-   * Create multiple resources
-   */
-  async createMultiple(resourcesData: CreateResourceData[]): Promise<Resource[]> {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .insert(resourcesData)
-        .select()
-
-      if (error) throw error
-      return data || []
-    } catch (error) {
-      console.error('Error creating multiple resources:', error)
-      throw new Error('Failed to create resources')
-    }
-  }
-
-  // ============================================================================
-  // UPDATE OPERATIONS
-  // ============================================================================
-
-  /**
-   * Update resource
-   */
-  async update(resourceId: string, updates: Partial<UpdateResourceData>): Promise<Resource | null> {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .update(updates)
-        .eq('resource_id', resourceId)
-        .select()
-        .single()
-
-      if (error) throw error
-      return data
-    } catch (error) {
-      console.error('Error updating resource:', error)
-      throw new Error('Failed to update resource')
-    }
-  }
-
-  /**
-   * Mark resource as unavailable
-   */
-  async markUnavailable(resourceId: string): Promise<boolean> {
-    try {
-      const { error } = await supabase
-        .from('resources')
-        .update({ is_available: false })
-        .eq('resource_id', resourceId)
-
-      if (error) throw error
-      return true
-    } catch (error) {
-      console.error('Error marking resource as unavailable:', error)
-      throw new Error('Failed to mark resource as unavailable')
-    }
-  }
-
-  /**
-   * Mark resource as available
-   */
-  async markAvailable(resourceId: string): Promise<boolean> {
-    try {
-      const { error } = await supabase
-        .from('resources')
-        .update({ is_available: true })
-        .eq('resource_id', resourceId)
-
-      if (error) throw error
-      return true
-    } catch (error) {
-      console.error('Error marking resource as available:', error)
-      throw new Error('Failed to mark resource as available')
-    }
-  }
-
-  /**
-   * Update resource condition
-   */
-  async updateCondition(resourceId: string, condition: 'New' | 'Good' | 'Fair' | 'Damaged'): Promise<boolean> {
-    try {
-      const { error } = await supabase
-        .from('resources')
-        .update({ condition })
-        .eq('resource_id', resourceId)
-
-      if (error) throw error
-      return true
-    } catch (error) {
-      console.error('Error updating resource condition:', error)
-      throw new Error('Failed to update resource condition')
-    }
-  }
-
-  // ============================================================================
-  // DELETE OPERATIONS
-  // ============================================================================
-
-  /**
-   * Delete a resource
-   */
-  async delete(resourceId: string): Promise<boolean> {
-    try {
-      const { error } = await supabase
-        .from('resources')
-        .delete()
-        .eq('resource_id', resourceId)
-
-      if (error) throw error
-      return true
-    } catch (error) {
-      console.error('Error deleting resource:', error)
-      throw new Error('Failed to delete resource')
-    }
-  }
-
-  // ============================================================================
-  // UTILITY OPERATIONS
-  // ============================================================================
-
-  /**
-   * Get resource count by type
-   */
-  async getCountByType(): Promise<Record<string, number>> {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .select('resource_type')
-
-      if (error) throw error
-
-      const counts = data.reduce((acc: Record<string, number>, resource: { resource_type: string }) => {
-        acc[resource.resource_type] = (acc[resource.resource_type] || 0) + 1
-        return acc
-      }, {} as Record<string, number>)
-
-      return counts
-    } catch (error) {
-      console.error('Error getting resource count by type:', error)
-      throw new Error('Failed to get resource count by type')
-    }
-  }
-
-  /**
-   * Get resource count by condition
-   */
-  async getCountByCondition(): Promise<Record<string, number>> {
-    try {
-      const { data, error } = await supabase
-        .from('resources')
-        .select('condition')
-
-      if (error) throw error
-
-      const counts = data.reduce((acc: Record<string, number>, resource: { condition: string }) => {
-        acc[resource.condition] = (acc[resource.condition] || 0) + 1
-        return acc
-      }, {} as Record<string, number>)
-
-      return counts
-    } catch (error) {
-      console.error('Error getting resource count by condition:', error)
-      throw new Error('Failed to get resource count by condition')
+      console.warn(`Unable to hydrate device resource ${id}:`, error)
+      return null
     }
   }
 }
 
-// Export singleton instance
 export const resourcesService = new ResourcesService()
-export default resourcesService
+
+
 

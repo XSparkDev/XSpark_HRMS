@@ -15,33 +15,56 @@ import { ArrowLeft, CheckCircle2, Clock, Package, ArrowRight, QrCode, Camera, Up
 import Link from "next/link"
 import { useState, useEffect } from "react"
 
+type BorrowRequest = {
+  id: string
+  employeeName: string
+  employeeId: string
+  deviceName: string
+  assetTag: string
+  borrowDate: string
+  purpose: string
+  status: string
+}
+
+type ReturnRequest = {
+  id: string
+  employeeName: string
+  employeeId: string
+  deviceName: string
+  assetTag: string
+  returnDate: string
+  deviceCondition: string
+  status: string
+  borrowRequestId?: string
+}
+
 export default function PendingApprovalsPage() {
   const user = getCurrentUser()
 
   if (!user) return null
 
-  const [pendingBorrowRequests, setPendingBorrowRequests] = useState([])
-  const [pendingReturnRequests, setPendingReturnRequests] = useState([])
+  const [pendingBorrowRequests, setPendingBorrowRequests] = useState<BorrowRequest[]>([])
+  const [pendingReturnRequests, setPendingReturnRequests] = useState<ReturnRequest[]>([])
   const [showScanDialog, setShowScanDialog] = useState(false)
-  const [scanningRequest, setScanningRequest] = useState(null)
-  const [scanType, setScanType] = useState('') // 'borrow' or 'return'
+  const [scanningRequest, setScanningRequest] = useState<BorrowRequest | ReturnRequest | null>(null)
+  const [scanType, setScanType] = useState<'' | 'borrow' | 'return'>('')
   const [scanData, setScanData] = useState({
     qrCode: '',
     deviceCondition: '',
     remarks: '',
-    inspectionPhoto: null
+    inspectionPhoto: null as File | null,
   })
 
   // Load pending requests from localStorage (in real app, this would come from API)
   useEffect(() => {
-    const borrowRequests = JSON.parse(localStorage.getItem('borrowRequests') || '[]')
-    const returnRequests = JSON.parse(localStorage.getItem('returnRequests') || '[]')
+    const borrowRequests = (JSON.parse(localStorage.getItem('borrowRequests') || '[]') || []) as BorrowRequest[]
+    const returnRequests = (JSON.parse(localStorage.getItem('returnRequests') || '[]') || []) as ReturnRequest[]
     
-    setPendingBorrowRequests(borrowRequests.filter(req => req.status === "Pending Approval"))
-    setPendingReturnRequests(returnRequests.filter(req => req.status === "Pending Return Approval"))
+    setPendingBorrowRequests(borrowRequests.filter((req: BorrowRequest) => req.status === "Pending Approval"))
+    setPendingReturnRequests(returnRequests.filter((req: ReturnRequest) => req.status === "Pending Return Approval"))
   }, [])
 
-  const handleScanDevice = (request, type) => {
+  const handleScanDevice = (request: BorrowRequest | ReturnRequest, type: 'borrow' | 'return') => {
     setScanningRequest(request)
     setScanType(type)
     setScanData({
@@ -59,6 +82,7 @@ export default function PendingApprovalsPage() {
       return
     }
 
+    if (!scanningRequest) return
     if (scanType === 'borrow') {
       await handleApproveBorrow(scanningRequest.id)
     } else {
@@ -75,9 +99,9 @@ export default function PendingApprovalsPage() {
     })
   }
 
-  const handleApproveBorrow = async (requestId) => {
+  const handleApproveBorrow = async (requestId: string) => {
     const existingRequests = JSON.parse(localStorage.getItem('borrowRequests') || '[]')
-    const updatedRequests = existingRequests.map(req => 
+    const updatedRequests = existingRequests.map((req: any) => 
       req.id === requestId 
         ? { 
             ...req, 
@@ -93,12 +117,12 @@ export default function PendingApprovalsPage() {
     localStorage.setItem('borrowRequests', JSON.stringify(updatedRequests))
     
     // Refresh the list
-    setPendingBorrowRequests(updatedRequests.filter(req => req.status === "Pending Approval"))
+    setPendingBorrowRequests(updatedRequests.filter((req: any) => req.status === "Pending Approval"))
     
     alert("Borrow request approved and device scanned successfully!")
   }
 
-  const handleApproveReturn = async (requestId) => {
+  const handleApproveReturn = async (requestId: string) => {
     const existingReturns = JSON.parse(localStorage.getItem('returnRequests') || '[]')
     const existingBorrows = JSON.parse(localStorage.getItem('borrowRequests') || '[]')
     
@@ -106,7 +130,7 @@ export default function PendingApprovalsPage() {
     const finalStatus = scanData.deviceCondition === 'Damaged' ? 'Under Maintenance' : 'Returned'
     
     // Update return request
-    const updatedReturns = existingReturns.map(req => 
+    const updatedReturns = existingReturns.map((req: any) => 
       req.id === requestId 
         ? { 
             ...req, 
@@ -122,8 +146,8 @@ export default function PendingApprovalsPage() {
     localStorage.setItem('returnRequests', JSON.stringify(updatedReturns))
     
     // Update original borrow request
-    const returnRequest = existingReturns.find(req => req.id === requestId)
-    const updatedBorrows = existingBorrows.map(req => 
+    const returnRequest = existingReturns.find((req: ReturnRequest) => req.id === requestId)
+    const updatedBorrows = existingBorrows.map((req: any) => 
       req.id === returnRequest.borrowRequestId 
         ? { 
             ...req, 
@@ -136,37 +160,37 @@ export default function PendingApprovalsPage() {
     localStorage.setItem('borrowRequests', JSON.stringify(updatedBorrows))
     
     // Refresh the list
-    setPendingReturnRequests(updatedReturns.filter(req => req.status === "Pending Return Approval"))
+    setPendingReturnRequests(updatedReturns.filter((req: any) => req.status === "Pending Return Approval"))
     
     alert(`Return request approved and device scanned successfully!\nStatus: ${finalStatus}`)
   }
 
-  const handleRejectRequest = (requestId, type) => {
+  const handleRejectRequest = (requestId: string, type: 'borrow' | 'return') => {
     if (type === 'borrow') {
       const existingRequests = JSON.parse(localStorage.getItem('borrowRequests') || '[]')
-      const updatedRequests = existingRequests.map(req => 
+      const updatedRequests = existingRequests.map((req: any) => 
         req.id === requestId 
           ? { ...req, status: "Rejected", rejectedAt: new Date().toISOString() }
           : req
       )
       localStorage.setItem('borrowRequests', JSON.stringify(updatedRequests))
-      setPendingBorrowRequests(updatedRequests.filter(req => req.status === "Pending Approval"))
+      setPendingBorrowRequests(updatedRequests.filter((req: any) => req.status === "Pending Approval"))
     } else {
       const existingReturns = JSON.parse(localStorage.getItem('returnRequests') || '[]')
-      const updatedReturns = existingReturns.map(req => 
+      const updatedReturns = existingReturns.map((req: any) => 
         req.id === requestId 
           ? { ...req, status: "Rejected", rejectedAt: new Date().toISOString() }
           : req
       )
       localStorage.setItem('returnRequests', JSON.stringify(updatedReturns))
-      setPendingReturnRequests(updatedReturns.filter(req => req.status === "Pending Return Approval"))
+      setPendingReturnRequests(updatedReturns.filter((req: any) => req.status === "Pending Return Approval"))
     }
     
     alert("Request rejected successfully!")
   }
 
-  const handleFileUpload = (event) => {
-    const file = event.target.files[0]
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
     if (file) {
       setScanData({
         ...scanData,
@@ -369,7 +393,7 @@ export default function PendingApprovalsPage() {
                   <div><strong>Employee:</strong> {scanningRequest?.employeeName}</div>
                   <div><strong>Device:</strong> {scanningRequest?.deviceName}</div>
                   <div><strong>Asset Tag:</strong> {scanningRequest?.assetTag}</div>
-                  <div><strong>Date:</strong> {scanningRequest?.borrowDate || scanningRequest?.returnDate}</div>
+                  <div><strong>Date:</strong> {(scanningRequest as any)?.borrowDate || (scanningRequest as any)?.returnDate}</div>
                 </div>
               </div>
 

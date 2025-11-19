@@ -1,0 +1,20 @@
+0 verbose cli /usr/local/Cellar/node/23.9.0/bin/node /usr/local/bin/npm
+1 info using npm@10.9.2
+2 info using node@v23.9.0
+3 silly config load:file:/usr/local/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/xspark3/ASM & HRMS/XSpark_HRMS/.npmrc
+5 silly config load:file:/Users/xspark3/.npmrc
+6 silly config load:file:/usr/local/etc/npmrc
+7 verbose title npm view @radix-ui/react-dialog description dist-tags.latest homepage version time
+8 verbose argv "view" "--json" "--" "@radix-ui/react-dialog" "description" "dist-tags.latest" "homepage" "version" "time"
+9 verbose logfile logs-max:10 dir:/Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2025-11-17T07_47_21_168Z-
+10 verbose logfile /Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2025-11-17T07_47_21_168Z-debug-0.log
+11 silly logfile start cleaning logs, removing 1 files
+12 silly logfile done cleaning log files
+13 http fetch GET 200 https://registry.npmjs.org/@radix-ui%2freact-dialog 1113ms (cache miss)
+14 verbose cwd /Users/xspark3/ASM & HRMS/XSpark_HRMS
+15 verbose os Darwin 23.6.0
+16 verbose node v23.9.0
+17 verbose npm  v10.9.2
+18 verbose exit 0
+19 info ok
