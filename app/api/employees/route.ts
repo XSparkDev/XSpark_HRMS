@@ -6,6 +6,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { employeeService } from '@/lib/services'
+import { getRequestUser } from '@/lib/auth/request-user'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { supabase } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 
 // Validation schemas
@@ -70,6 +74,61 @@ const EmployeeFiltersSchema = z.object({
 // ============================================================================
 export async function GET(request: NextRequest) {
   try {
+    // Try custom headers first (for notes API consistency)
+    let user = getRequestUser(request)
+    
+    // Fallback to Bearer token authentication (like /api/auth/me)
+    if (!user) {
+      const authHeader = request.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7)
+        const supabaseUrl = process.env.SUPABASE_URL!
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        })
+
+        const { data: { user: authUser }, error } = await userClient.auth.getUser(token)
+        if (!error && authUser) {
+          // Get employee record to get employee ID
+          const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('id, role_id, roles(role_name)')
+            .eq('auth_user_id', authUser.id)
+            .single()
+          
+          if (employee) {
+            const roleName = (employee.roles as any)?.role_name?.toLowerCase?.() || 'employee'
+            user = {
+              id: authUser.id,
+              employeeId: employee.id,
+              role: roleName
+            }
+          }
+        }
+      }
+    }
+    
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized'
+      }, { status: 401 })
+    }
+
+    // Only admins/HR can access employee list
+    const allowedRoles = ['admin', 'super_admin', 'junior_hr', 'hr_manager', 'hr_admin']
+    if (!allowedRoles.includes(user.role.toLowerCase())) {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Only admins and HR can access employee list'
+      }, { status: 403 })
+    }
+
     const { searchParams } = new URL(request.url)
     
     // Parse and validate query parameters
@@ -84,7 +143,7 @@ export async function GET(request: NextRequest) {
       offset: searchParams.get('offset') ? parseInt(searchParams.get('offset')!) : 0
     })
 
-    // Get employees from service
+    // Get employees from service (uses employees table with is_active filter)
     const employees = await employeeService.getAllActive(filters)
 
     return NextResponse.json({
@@ -97,7 +156,7 @@ export async function GET(request: NextRequest) {
       }
     })
   } catch (error) {
-    console.error('Error fetching employees:', error)
+    console.error('[Employees API] Full error:', error)
     
     if (error instanceof z.ZodError) {
       return NextResponse.json({
@@ -107,9 +166,21 @@ export async function GET(request: NextRequest) {
       }, { status: 400 })
     }
 
+    // Extract error details
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    const errorDetails = (error as any)?.details || (error as any)?.hint || (error as any)?.code || null
+    
+    console.error('[Employees API] Error details:', {
+      message: errorMessage,
+      details: errorDetails,
+      fullError: JSON.stringify(error, null, 2)
+    })
+
     return NextResponse.json({
       success: false,
-      error: 'Failed to fetch employees'
+      error: 'Failed to fetch employees',
+      details: errorMessage,
+      ...(errorDetails && { hint: errorDetails })
     }, { status: 500 })
   }
 }

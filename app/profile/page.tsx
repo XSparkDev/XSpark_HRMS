@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit, AlertCircle, Loader2, CheckCircle2 } from "lucide-react"
+import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit, AlertCircle, Loader2, CheckCircle2, XCircle } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { AnimatePresence, motion } from "framer-motion"
@@ -1046,15 +1046,79 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
   return (
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-3xl font-bold text-navy">My Profile</h1>
           <p className="text-muted-foreground mt-2">Manage your personal and professional information</p>
         </div>
-        <Button variant="default" onClick={() => setIsModalOpen(true)} className="ml-2">
-          {profile ? 'Edit Profile' : 'Create Profile'}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="default" onClick={() => setIsModalOpen(true)}>
+            {profile ? "Edit Profile" : "Create Profile"}
+          </Button>
+        {profile && !isEditing && (
+          <Dialog open={updateRequestOpen} onOpenChange={setUpdateRequestOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="flex items-center gap-2">
+                <Edit className="h-4 w-4" />
+                Request to Update Profile
               </Button>
-                </div>
+            </DialogTrigger>
+              <DialogContent className="max-w-lg">
+              <DialogHeader>
+                  <DialogTitle>Request Profile Changes</DialogTitle>
+              </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  Submit your change request to HR. You can include supporting documents or extra details in the next
+                  screen.
+                </p>
+                <div className="flex justify-end gap-2 pt-4">
+                  <Button variant="secondary" onClick={() => setUpdateRequestOpen(false)}>
+                    Close
+                  </Button>
+                  <Button onClick={() => setUpdateRequestOpen(false)} className="gradient-primary text-white">
+                    Got it
+                  </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
+        </div>
+      </div>
+
+      {profile && (
+        <Card className="mt-6">
+          <CardHeader className="flex flex-row items-center gap-4">
+            <Avatar className="h-16 w-16">
+              <AvatarImage src={profile.profile_picture_url || undefined} alt={profile.first_name} />
+              <AvatarFallback>
+                {(profile.first_name?.[0] || "U")}
+                {(profile.last_name?.[0] || "N")}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+              <CardTitle className="text-xl">
+                {[profile.first_name, profile.last_name].filter(Boolean).join(" ")}
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">{profile.email}</p>
+              </div>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="space-y-1">
+              <Label>Employee ID</Label>
+              <Input readOnly value={profile.employee_id || ""} />
+            </div>
+            <div className="space-y-1">
+              <Label>Department</Label>
+              <Input readOnly value={profile.department || ""} />
+                  </div>
+            <div className="space-y-1">
+              <Label>Full Name</Label>
+              <Input readOnly value={[profile.first_name, profile.last_name].filter(Boolean).join(" ")} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* View Profile */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Profile Summary */}
@@ -1241,7 +1305,51 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
                 </div>
               </CardContent>
             </Card>
-
+            {/* Verification Status */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Verification Status</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-2">
+                  <Badge
+                    variant={profile.id_verified ? "default" : "secondary"}
+                    className="flex items-center gap-1"
+                  >
+                    {profile.id_verified ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5" />
+                    )}
+                    <span>ID Verified</span>
+                  </Badge>
+                  <Badge
+                    variant={profile.bank_verified ? "default" : "secondary"}
+                    className="flex items-center gap-1"
+                  >
+                    {profile.bank_verified ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5" />
+                    )}
+                    <span>Bank Verified</span>
+                  </Badge>
+                  {profile.nationality !== "South Africa" && (
+                    <Badge
+                      variant={profile.work_permit_verified ? "default" : "secondary"}
+                      className="flex items-center gap-1"
+                    >
+                      {profile.work_permit_verified ? (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5" />
+                      )}
+                      <span>Work Permit Verified</span>
+                    </Badge>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
 

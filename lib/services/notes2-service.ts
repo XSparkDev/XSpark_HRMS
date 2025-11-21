@@ -7,30 +7,38 @@
 // ============================================================================
 
 import { supabase } from "@/lib/supabase"
+import { supabaseAdmin } from "@/lib/supabase-admin"
 
 export type Notes2AlertLevel = "high" | "medium" | "low"
+export type Notes2Visibility = "private" | "public"
 
 export interface Notes2Record {
   id: string
   employee_id: string
+  target_employee_id: string | null
   title: string | null
   content: string
   alert_level: Notes2AlertLevel
+  visibility: Notes2Visibility
   created_at: string
   updated_at: string
+  creator_role?: string | null // Role name of the note creator
 }
 
 export interface CreateNotes2Input {
   employee_id: string
+  target_employee_id?: string | null
   title?: string | null
   content: string
   alert_level: Notes2AlertLevel
+  visibility?: Notes2Visibility
 }
 
 export interface UpdateNotes2Input {
   title?: string | null
   content?: string
   alert_level?: Notes2AlertLevel
+  visibility?: Notes2Visibility
 }
 
 const TABLE_NAME = "notes2"
@@ -41,32 +49,69 @@ const log = (...args: unknown[]) => {
   }
 }
 
-const mapRecord = (record: any): Notes2Record => ({
-  id: record.id,
-  employee_id: record.employee_id,
-  title: record.title ?? null,
-  content: record.content ?? "",
-  alert_level: (record.alert_level ?? "low") as Notes2AlertLevel,
-  created_at: record.created_at ?? new Date().toISOString(),
-  updated_at: record.updated_at ?? record.created_at ?? new Date().toISOString(),
-})
+const mapRecord = (record: any): Notes2Record => {
+  // Extract creator role from joined data
+  let creatorRole: string | null = null
+  if (record.creator?.role?.role_name) {
+    creatorRole = record.creator.role.role_name
+  } else if (record.employees?.role?.role_name) {
+    creatorRole = record.employees.role.role_name
+  } else if (typeof record.creator_role === 'string') {
+    creatorRole = record.creator_role
+  }
+
+  return {
+    id: record.id,
+    employee_id: record.employee_id,
+    target_employee_id: record.target_employee_id ?? null,
+    title: record.title ?? null,
+    content: record.content ?? "",
+    alert_level: (record.alert_level ?? "low") as Notes2AlertLevel,
+    visibility: (record.visibility ?? "private") as Notes2Visibility,
+    created_at: record.created_at ?? new Date().toISOString(),
+    updated_at: record.updated_at ?? record.created_at ?? new Date().toISOString(),
+    creator_role: creatorRole,
+  }
+}
 
 class Notes2Service {
   /**
    * Return all notes created by the employee (newest first)
+   * Excludes notes targeted to other employees
    */
   async getNotesByEmployee(employeeId: string): Promise<Notes2Record[]> {
     try {
-      const { data, error } = await supabase
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // notes2.employee_id references auth.users.id, so we fetch employees by auth_user_id
+      const { data: notes, error } = await supabaseAdmin
         .from(TABLE_NAME)
         .select("*")
         .eq("employee_id", employeeId)
+        .eq("visibility", "private")
+        .is("target_employee_id", null)
         .order("created_at", { ascending: false })
 
       log("getNotesByEmployee:query", { employeeId })
-      log("getNotesByEmployee:rows", data?.length ?? 0)
+      log("getNotesByEmployee:rows", notes?.length ?? 0)
       if (error) throw error
-      return (data ?? []).map(mapRecord)
+
+      // Fetch creator roles for each note
+      const notesWithRoles = await Promise.all(
+        (notes ?? []).map(async (note) => {
+          const { data: employee } = await supabaseAdmin
+            .from("employees")
+            .select("role:roles(role_name)")
+            .eq("auth_user_id", note.employee_id)
+            .single()
+
+          return {
+            ...note,
+            creator: employee ? { role: employee.role } : null,
+          }
+        })
+      )
+
+      return notesWithRoles.map(mapRecord)
     } catch (error) {
       console.error("Notes2Service.getNotesByEmployee error:", error)
       throw new Error("Unable to load your notes right now.")
@@ -74,24 +119,245 @@ class Notes2Service {
   }
 
   /**
-   * Return only high alert notes for dashboards
+   * Return all notes targeted to a specific employee (newest first)
+   * These are notes created by admins/HR specifically for this employee
+   * Note: Uses supabaseAdmin to bypass RLS since this is called from authenticated API routes
+   */
+  async getNotesForEmployee(employeeId: string): Promise<Notes2Record[]> {
+    try {
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // notes2.employee_id references auth.users.id, so we fetch employees by auth_user_id
+      const { data: notes, error } = await supabaseAdmin
+        .from(TABLE_NAME)
+        .select("*")
+        .eq("target_employee_id", employeeId)
+        .order("created_at", { ascending: false })
+
+      log("getNotesForEmployee:query", { employeeId })
+      log("getNotesForEmployee:rows", notes?.length ?? 0)
+      if (error) throw error
+
+      // Fetch creator roles for each note
+      const notesWithRoles = await Promise.all(
+        (notes ?? []).map(async (note) => {
+          const { data: employee } = await supabaseAdmin
+            .from("employees")
+            .select("role:roles(role_name)")
+            .eq("auth_user_id", note.employee_id)
+            .single()
+
+          return {
+            ...note,
+            creator: employee ? { role: employee.role } : null,
+          }
+        })
+      )
+
+      return notesWithRoles.map(mapRecord)
+    } catch (error) {
+      console.error("Notes2Service.getNotesForEmployee error:", error)
+      throw new Error("Unable to load notes for you right now.")
+    }
+  }
+
+  /**
+   * Return all notes created by a user for specific employees (where target_employee_id IS NOT NULL)
+   * This is used by admins/HR to see notes they sent to specific employees
+   */
+  async getNotesSentToEmployees(authUserId: string): Promise<Notes2Record[]> {
+    try {
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // notes2.employee_id references auth.users.id, so we fetch employees by auth_user_id
+      const { data: notes, error } = await supabaseAdmin
+        .from(TABLE_NAME)
+        .select("*")
+        .eq("employee_id", authUserId)
+        .not("target_employee_id", "is", null)
+        .order("created_at", { ascending: false })
+
+      log("getNotesSentToEmployees:query", { authUserId })
+      log("getNotesSentToEmployees:rows", notes?.length ?? 0)
+      if (error) throw error
+
+      // Fetch creator roles for each note
+      const notesWithRoles = await Promise.all(
+        (notes ?? []).map(async (note) => {
+          const { data: employee } = await supabaseAdmin
+            .from("employees")
+            .select("role:roles(role_name)")
+            .eq("auth_user_id", note.employee_id)
+            .single()
+
+          return {
+            ...note,
+            creator: employee ? { role: employee.role } : null,
+          }
+        })
+      )
+
+      return notesWithRoles.map(mapRecord)
+    } catch (error) {
+      console.error("Notes2Service.getNotesSentToEmployees error:", error)
+      throw new Error("Unable to load notes sent to employees right now.")
+    }
+  }
+
+  /**
+   * Return only high alert notes for dashboards (created by the employee)
    */
   async getHighAlertNotesByEmployee(employeeId: string): Promise<Notes2Record[]> {
     try {
-      const { data, error } = await supabase
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // notes2.employee_id references auth.users.id, so we fetch employees by auth_user_id
+      const { data: notes, error } = await supabaseAdmin
         .from(TABLE_NAME)
         .select("*")
         .eq("employee_id", employeeId)
+        .eq("visibility", "private")
         .eq("alert_level", "high")
         .order("created_at", { ascending: false })
 
       log("getHighAlertNotesByEmployee:query", { employeeId })
-      log("getHighAlertNotesByEmployee:rows", data?.length ?? 0)
+      log("getHighAlertNotesByEmployee:rows", notes?.length ?? 0)
       if (error) throw error
-      return (data ?? []).map(mapRecord)
+
+      // Fetch creator roles for each note
+      const notesWithRoles = await Promise.all(
+        (notes ?? []).map(async (note) => {
+          const { data: employee } = await supabaseAdmin
+            .from("employees")
+            .select("role:roles(role_name)")
+            .eq("auth_user_id", note.employee_id)
+            .single()
+
+          return {
+            ...note,
+            creator: employee ? { role: employee.role } : null,
+          }
+        })
+      )
+
+      return notesWithRoles.map(mapRecord)
     } catch (error) {
       console.error("Notes2Service.getHighAlertNotesByEmployee error:", error)
       throw new Error("Unable to load high alert notes.")
+    }
+  }
+
+  /**
+   * Return high alert notes sent to a specific employee (for dashboard)
+   */
+  async getHighAlertNotesForEmployee(employeeId: string): Promise<Notes2Record[]> {
+    try {
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // notes2.employee_id references auth.users.id, so we fetch employees by auth_user_id
+      const { data: notes, error } = await supabaseAdmin
+        .from(TABLE_NAME)
+        .select("*")
+        .eq("target_employee_id", employeeId)
+        .eq("alert_level", "high")
+        .order("created_at", { ascending: false })
+
+      log("getHighAlertNotesForEmployee:query", { employeeId })
+      log("getHighAlertNotesForEmployee:rows", notes?.length ?? 0)
+      if (error) throw error
+
+      // Fetch creator roles for each note
+      const notesWithRoles = await Promise.all(
+        (notes ?? []).map(async (note) => {
+          const { data: employee } = await supabaseAdmin
+            .from("employees")
+            .select("role:roles(role_name)")
+            .eq("auth_user_id", note.employee_id)
+            .single()
+
+          return {
+            ...note,
+            creator: employee ? { role: employee.role } : null,
+          }
+        })
+      )
+
+      return notesWithRoles.map(mapRecord)
+    } catch (error) {
+      console.error("Notes2Service.getHighAlertNotesForEmployee error:", error)
+      throw new Error("Unable to load high alert notes for employee.")
+    }
+  }
+
+  /**
+   * Return all public notes (newest first)
+   */
+  async getPublicNotes(): Promise<Notes2Record[]> {
+    try {
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // notes2.employee_id references auth.users.id, so we fetch employees by auth_user_id
+      const { data: notes, error } = await supabaseAdmin
+        .from(TABLE_NAME)
+        .select("*")
+        .eq("visibility", "public")
+        .order("created_at", { ascending: false })
+
+      log("getPublicNotes:rows", notes?.length ?? 0)
+      if (error) throw error
+
+      // Fetch creator roles for each note
+      const notesWithRoles = await Promise.all(
+        (notes ?? []).map(async (note) => {
+          const { data: employee } = await supabaseAdmin
+            .from("employees")
+            .select("role:roles(role_name)")
+            .eq("auth_user_id", note.employee_id)
+            .single()
+
+          return {
+            ...note,
+            creator: employee ? { role: employee.role } : null,
+          }
+        })
+      )
+
+      return notesWithRoles.map(mapRecord)
+    } catch (error) {
+      console.error("Notes2Service.getPublicNotes error:", error)
+      throw new Error("Unable to load public notes.")
+    }
+  }
+
+  async getHighAlertPublicNotes(): Promise<Notes2Record[]> {
+    try {
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // First get notes, then fetch creator roles separately since notes2.employee_id references auth.users.id
+      const { data: notes, error } = await supabaseAdmin
+        .from(TABLE_NAME)
+        .select("*")
+        .eq("visibility", "public")
+        .eq("alert_level", "high")
+        .order("created_at", { ascending: false })
+
+      log("getHighAlertPublicNotes:rows", notes?.length ?? 0)
+      if (error) throw error
+
+      // Fetch creator roles for each note
+      const notesWithRoles = await Promise.all(
+        (notes ?? []).map(async (note) => {
+          const { data: employee } = await supabaseAdmin
+            .from("employees")
+            .select("role:roles(role_name)")
+            .eq("auth_user_id", note.employee_id)
+            .single()
+
+          return {
+            ...note,
+            creator: employee ? { role: employee.role } : null,
+          }
+        })
+      )
+
+      return notesWithRoles.map(mapRecord)
+    } catch (error) {
+      console.error("Notes2Service.getHighAlertPublicNotes error:", error)
+      throw new Error("Unable to load shared high alert notes.")
     }
   }
 
@@ -104,14 +370,18 @@ class Notes2Service {
       console.log("[Notes2Service] 2. Preparing insert payload")
       const insertPayload = {
         employee_id: payload.employee_id,
+        target_employee_id: payload.target_employee_id ?? null,
         title: payload.title ?? null,
         content: payload.content ?? "",
         alert_level: payload.alert_level,
+        visibility: payload.visibility ?? "private",
       }
 
       console.log("[Notes2Service] 3. Insert payload:", insertPayload)
       console.log("[Notes2Service] 4. Executing Supabase insert")
-      const { data, error } = await supabase
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // that already verify user permissions. The API route ensures only authorized users can create notes.
+      const { data, error } = await supabaseAdmin
         .from(TABLE_NAME)
         .insert([insertPayload])
         .select("*")
@@ -152,13 +422,16 @@ class Notes2Service {
     if (payload.title !== undefined) updatePayload.title = payload.title
     if (payload.content !== undefined) updatePayload.content = payload.content
     if (payload.alert_level !== undefined) updatePayload.alert_level = payload.alert_level
+    if (payload.visibility !== undefined) updatePayload.visibility = payload.visibility
 
     if (!Object.keys(updatePayload).length) {
       throw new Error("No fields provided to update")
     }
 
     try {
-      let query = supabase.from(TABLE_NAME).update(updatePayload).eq("id", noteId)
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // that already verify user permissions. The API route ensures only authorized users can update notes.
+      let query = supabaseAdmin.from(TABLE_NAME).update(updatePayload).eq("id", noteId)
       if (employeeId) {
         query = query.eq("employee_id", employeeId)
       }
@@ -182,7 +455,9 @@ class Notes2Service {
    */
   async deleteNote(noteId: string, employeeId?: string): Promise<void> {
     try {
-      let query = supabase.from(TABLE_NAME).delete().eq("id", noteId)
+      // Use supabaseAdmin to bypass RLS since this is called from authenticated API routes
+      // that already verify user permissions. The API route ensures only authorized users can delete notes.
+      let query = supabaseAdmin.from(TABLE_NAME).delete().eq("id", noteId)
       if (employeeId) {
         query = query.eq("employee_id", employeeId)
       }
@@ -210,6 +485,10 @@ class Notes2Service {
 
   async createEmployeeNote(payload: CreateNotes2Input) {
     return this.createNote(payload)
+  }
+
+  async listPublicNotes() {
+    return this.getPublicNotes()
   }
 }
 

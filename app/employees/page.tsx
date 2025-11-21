@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -17,8 +17,9 @@ import { CalendarIcon, Plus, Search, Filter, Edit, Trash2, Eye, MoreHorizontal }
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { EmployeeProfile, EmployeeFilters } from "@/lib/types/employee"
-import { getCurrentUser, hasPermission } from "@/lib/auth"
+import { getCurrentUser, hasPermission, type User } from "@/lib/auth"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useToast } from "@/hooks/use-toast"
 
 export default function EmployeeManagementPage() {
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
@@ -37,7 +38,120 @@ export default function EmployeeManagementPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 10
   const user = getCurrentUser()
+  const { toast } = useToast()
+  const hasFetchedRef = useRef(false)
 
+  // Build headers for API requests (same pattern as notes page)
+  const buildHeaders = (user: User | null) => {
+    const headers: Record<string, string> = {}
+    if (user?.id) headers["x-user-id"] = user.id
+    if (user?.role) headers["x-user-role"] = user.role
+    if (user?.employeeId) headers["x-employee-id"] = user.employeeId
+    else if (user?.id) headers["x-employee-id"] = user.id // Fallback to user.id if employeeId not available
+    return headers
+  }
+
+  // Fetch employees from API
+  const fetchEmployees = useCallback(async () => {
+    if (!user?.id || !hasPermission(user, "view_employees")) {
+      setIsLoading(false)
+      return
+    }
+
+    try {
+      setIsLoading(true)
+      // Build headers with custom headers (for getRequestUser)
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...buildHeaders(user),
+      }
+      
+      // Also send Bearer token as fallback (like /api/auth/me)
+      try {
+        const storedSession = localStorage.getItem('xspark_session')
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+          }
+        }
+      } catch (error) {
+        console.warn('[Employees][FETCH] Failed to parse session for Bearer token:', error)
+      }
+      
+      const res = await fetch("/api/employees?limit=100&is_active=true", {
+        method: "GET",
+        headers,
+      })
+      const json = await res.json()
+      
+      if (res.ok && json.success && Array.isArray(json.data)) {
+        // Map API response to EmployeeProfile type
+        const employeeList: EmployeeProfile[] = json.data.map((emp: any) => ({
+          id: emp.id,
+          user_id: emp.auth_user_id || emp.id,
+          first_name: emp.first_name || "",
+          middle_name: emp.middle_name || "",
+          last_name: emp.last_name || "",
+          preferred_name: emp.preferred_name || "",
+          id_number: emp.id_number || "",
+          dob: emp.dob || "",
+          sex: emp.sex || 'male',
+          gender: emp.gender || 'male',
+          pronouns: emp.pronouns || "",
+          employee_ID: emp.employee_id || "",
+          job_title_id: emp.job_title_id || "",
+          date_hired: emp.date_hired || "",
+          email: emp.email || "",
+          phone: emp.phone || "",
+          alternative_phone: emp.alternative_phone || "",
+          address: emp.address || "",
+          tax_number: emp.tax_number || "",
+          nationality: emp.nationality || "South Africa",
+          passport_number: emp.passport_number || "",
+          passport_document: emp.passport_document_url || "",
+          work_permit: emp.work_permit_url || "",
+          id_verified: emp.id_verified || false,
+          work_permit_verified: emp.work_permit_verified || false,
+          bank_verified: emp.bank_verified || false,
+          documents: Array.isArray(emp.documents) ? emp.documents : [],
+          images: emp.profile_picture_url ? [emp.profile_picture_url] : [],
+          created_at: emp.created_at || new Date().toISOString(),
+          updated_at: emp.updated_at || new Date().toISOString(),
+        }))
+        setEmployees(employeeList)
+        hasFetchedRef.current = true
+      } else {
+        console.error("[Employees][FETCH] failed:", json.error || "Unknown error")
+        toast({
+          title: "Unable to load employees",
+          description: json.error || "Failed to fetch employee list.",
+          variant: "destructive",
+        })
+      }
+    } catch (error) {
+      console.error("[Employees][FETCH] error:", error)
+      toast({
+        title: "Unable to load employees",
+        description: "We couldn't retrieve the employee list right now. Please try again shortly.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }, [user?.id, user?.role, toast]) // Only depend on user.id and user.role, toast is stable
+
+  // Fetch employees on mount only (once)
+  useEffect(() => {
+    if (hasFetchedRef.current) return // Already fetched, don't fetch again
+    
+    if (user?.id && hasPermission(user, "view_employees")) {
+      fetchEmployees()
+    } else if (!user?.id || !hasPermission(user, "view_employees")) {
+      setIsLoading(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only run once on mount
 
   // Filter employees based on search and filters
   useEffect(() => {

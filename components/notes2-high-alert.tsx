@@ -20,6 +20,9 @@ type DashboardNote = {
   content: string
   alert_level: AlertLevel
   created_at: string
+  visibility: "private" | "public"
+  employee_id: string
+  creator_role?: string | null // Role name of the note creator
 }
 
 const alertStyles: Record<
@@ -83,6 +86,9 @@ export function Notes2HighAlert() {
             content: note.content,
             alert_level: note.alert_level as AlertLevel,
             created_at: note.created_at,
+            visibility: (note.visibility ?? "private") as "private" | "public",
+            employee_id: note.employee_id,
+            creator_role: note.creator_role ?? null,
           }))
         : []
       setNotes(data)
@@ -114,6 +120,25 @@ export function Notes2HighAlert() {
       }
     }
   }, [fetchNotes])
+
+  const getCreatorLabel = useCallback(
+    (note: DashboardNote) => {
+      if (note.employee_id === user?.id) {
+        return "You"
+      }
+      // Use the actual creator role if available, otherwise fall back to default
+      if (note.creator_role) {
+        // Format role name nicely (e.g., "super_admin" -> "Super Admin", "hr_manager" -> "HR Manager")
+        return note.creator_role
+          .split('_')
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(' ')
+      }
+      // Fallback for old notes without creator_role
+      return "Team member"
+    },
+    [user?.id],
+  )
 
   if (!user) {
     return null
@@ -202,9 +227,16 @@ export function Notes2HighAlert() {
                   )}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <Badge variant="outline" className={cn("text-xs", meta.badge)}>
-                      {meta.label}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className={cn("text-xs", meta.badge)}>
+                        {meta.label}
+                      </Badge>
+                      {note.visibility === "public" && (
+                        <Badge variant="outline" className="text-xs border-purple-200 text-purple-600 bg-purple-50">
+                          Public
+                        </Badge>
+                      )}
+                    </div>
                     <span className="text-xs text-muted-foreground">
                       {format(new Date(note.created_at), "MMM dd, yyyy")}
                     </span>
@@ -215,7 +247,7 @@ export function Notes2HighAlert() {
                   <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{note.content}</p>
                   <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                     <MessageSquare className="h-3.5 w-3.5" />
-                    <span>Created by {user?.name || "You"}</span>
+                    <span>Created by {getCreatorLabel(note)}</span>
                   </div>
                 </button>
               )
@@ -238,13 +270,18 @@ export function Notes2HighAlert() {
                 <Badge className={alertStyles[selected.alert_level].badge}>
                   {alertStyles[selected.alert_level].label}
                 </Badge>
+                {selected.visibility === "public" && (
+                  <Badge variant="outline" className="text-xs border-purple-200 text-purple-600 bg-purple-50">
+                    Public
+                  </Badge>
+                )}
                 <span className="text-xs text-muted-foreground">
                   {format(new Date(selected.created_at), "PPP")}
                 </span>
               </div>
               <p className="text-sm whitespace-pre-line">{selected.content}</p>
               <div className="text-xs text-muted-foreground">
-                Created by <span className="font-medium">{user?.name || "You"}</span>
+                Created by <span className="font-medium">{getCreatorLabel(selected)}</span>
               </div>
             </div>
           )}
