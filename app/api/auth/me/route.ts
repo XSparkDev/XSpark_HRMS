@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
       // UPDATED QUERY: includes next_of_kin so profile consumers receive NOK rows.
       const { data: employeeData, error: empError } = await userClient
         .from('employees')
-        .select('*, job_titles(title), next_of_kin(*)')
+        .select('*, job_titles(title), next_of_kin(*), role:roles(role_name)')
         .eq('auth_user_id', user.id)
         .single()
 
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
         // UPDATED QUERY: .select('*, job_titles(title), next_of_kin(*)')
         const { data: adminEmployee } = await supabaseAdmin
           .from('employees')
-          .select('*, job_titles(title), next_of_kin(*)')
+          .select('*, job_titles(title), next_of_kin(*), role:roles(role_name)')
           .eq('auth_user_id', user.id)
           .single()
 
@@ -70,11 +70,18 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      const roleName = employee?.role?.role_name?.toLowerCase?.() || 'employee'
+
       return NextResponse.json({
         success: true,
         data: {
           user,
-          employee: employee || null,
+          employee: employee
+            ? {
+                ...employee,
+                role_name: roleName,
+              }
+            : null,
           session: null
         }
       })
@@ -87,11 +94,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
     }
 
+    const roleName =
+      authResponse.employee?.role?.role_name?.toLowerCase?.() || 'employee'
+
     return NextResponse.json({
       success: true,
       data: {
         user: authResponse.user,
-        employee: authResponse.employee,
+        employee: authResponse.employee
+          ? {
+              ...authResponse.employee,
+              role_name: roleName,
+            }
+          : null,
         session: authResponse.session
       }
     })

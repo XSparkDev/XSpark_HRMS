@@ -48,6 +48,9 @@ export interface Employee {
   deleted_at?: string
   created_at: string
   updated_at: string
+  role?: {
+    role_name?: string | null
+  } | null
 }
 
 export interface NextOfKin {
@@ -151,12 +154,21 @@ export class EmployeeService {
 
   /**
    * Get all active employees with optional filtering
+   * Note: Uses supabaseAdmin to bypass RLS since this is called from authenticated API routes
+   * that already verify user permissions. The API route ensures only admins/HR can access this.
    */
   async getAllActive(filters?: EmployeeFilters): Promise<Employee[]> {
     try {
-      let query = supabase
-        .from('active_employees')
+      let query = supabaseAdmin
+        .from('employees')
         .select('*')
+
+      // Default to active employees only if is_active filter not provided
+      if (filters?.is_active !== undefined) {
+        query = query.eq('is_active', filters.is_active)
+      } else {
+        query = query.eq('is_active', true)
+      }
 
       // Apply filters
       if (filters?.search) {
@@ -255,7 +267,7 @@ export class EmployeeService {
       // UPDATED QUERY: .select('*, next_of_kin(*)') to keep NOK data in profile payloads.
       const { data, error } = await supabase
         .from('employees')
-        .select('*, next_of_kin(*)')
+        .select('*, next_of_kin(*), role:roles(role_name)')
         .eq('auth_user_id', authUserId)
         .single()
 
@@ -273,7 +285,7 @@ export class EmployeeService {
   async getByDepartment(department: string): Promise<Employee[]> {
     try {
       const { data, error } = await supabase
-        .from('active_employees')
+        .from('employees')
         .select('*')
         .eq('department', department)
         .eq('is_active', true)

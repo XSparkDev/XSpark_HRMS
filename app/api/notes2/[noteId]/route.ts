@@ -4,6 +4,8 @@ import { z } from "zod"
 import { getRequestUser } from "@/lib/auth/request-user"
 import { notes2Service } from "@/lib/services/notes2-service"
 
+const PUBLIC_NOTE_ROLES = new Set(["admin", "super_admin", "junior_hr", "hr_manager", "hr_admin"])
+
 const updateSchema = z.object({
   title: z
     .string()
@@ -15,6 +17,7 @@ const updateSchema = z.object({
     .max(2000, "Content is too long")
     .optional(),
   alert_level: z.enum(["high", "medium", "low"]).optional(),
+  visibility: z.enum(["private", "public"]).optional(),
 })
 
 export async function PATCH(request: NextRequest, { params }: { params: { noteId: string } }) {
@@ -37,6 +40,13 @@ export async function PATCH(request: NextRequest, { params }: { params: { noteId
       return NextResponse.json(
         { success: false, error: "Please provide at least one field to update." },
         { status: 400 },
+      )
+    }
+
+    if (payload.visibility === "public" && !PUBLIC_NOTE_ROLES.has(user.role)) {
+      return NextResponse.json(
+        { success: false, error: "You do not have permission to make a note public." },
+        { status: 403 },
       )
     }
 

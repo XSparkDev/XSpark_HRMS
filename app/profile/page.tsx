@@ -1055,18 +1055,18 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
           <Button variant="default" onClick={() => setIsModalOpen(true)}>
             {profile ? "Edit Profile" : "Create Profile"}
           </Button>
-          {profile && !isEditing && (
-            <Dialog open={updateRequestOpen} onOpenChange={setUpdateRequestOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" className="flex items-center gap-2">
-                  <Edit className="h-4 w-4" />
-                  Request to Update Profile
-                </Button>
-              </DialogTrigger>
+        {profile && !isEditing && (
+          <Dialog open={updateRequestOpen} onOpenChange={setUpdateRequestOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="flex items-center gap-2">
+                <Edit className="h-4 w-4" />
+                Request to Update Profile
+              </Button>
+            </DialogTrigger>
               <DialogContent className="max-w-lg">
-                <DialogHeader>
+              <DialogHeader>
                   <DialogTitle>Request Profile Changes</DialogTitle>
-                </DialogHeader>
+              </DialogHeader>
                 <p className="text-sm text-muted-foreground">
                   Submit your change request to HR. You can include supporting documents or extra details in the next
                   screen.
@@ -1078,10 +1078,10 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
                   <Button onClick={() => setUpdateRequestOpen(false)} className="gradient-primary text-white">
                     Got it
                   </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
         </div>
       </div>
 
@@ -1093,14 +1093,14 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
               <AvatarFallback>
                 {(profile.first_name?.[0] || "U")}
                 {(profile.last_name?.[0] || "N")}
-              </AvatarFallback>
-            </Avatar>
-            <div>
+                </AvatarFallback>
+              </Avatar>
+              <div>
               <CardTitle className="text-xl">
                 {[profile.first_name, profile.last_name].filter(Boolean).join(" ")}
               </CardTitle>
               <p className="text-sm text-muted-foreground">{profile.email}</p>
-            </div>
+              </div>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="space-y-1">
@@ -1110,7 +1110,7 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
             <div className="space-y-1">
               <Label>Department</Label>
               <Input readOnly value={profile.department || ""} />
-            </div>
+                  </div>
             <div className="space-y-1">
               <Label>Full Name</Label>
               <Input readOnly value={[profile.first_name, profile.last_name].filter(Boolean).join(" ")} />
