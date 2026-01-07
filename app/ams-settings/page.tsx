@@ -5,7 +5,7 @@ import { useEffect, useState } from "react"
 import { AMSDashboardLayout } from "@/components/ams-dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { MessageSquare, LifeBuoy, AlertTriangle, EllipsisVertical } from "lucide-react"
+import { MessageSquare, LifeBuoy, AlertTriangle, EllipsisVertical, Activity } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { getCurrentUser } from "@/lib/auth"
@@ -71,8 +71,8 @@ export default function SupportSettingsPage() {
                     Open Contact Portal
                   </Button>
                 </Link>
-                <Button variant="outline" onClick={() => window.open("mailto:support@xspark.co.za", "_blank")}>
-                  Email Support
+                <Button variant="outline" asChild>
+                  <a href="mailto:Witness@xspark.co.za">Email Support</a>
                 </Button>
               </div>
             </CardContent>
@@ -123,6 +123,28 @@ export default function SupportSettingsPage() {
               <Button variant="outline" onClick={() => window.open("/status", "_blank")}>
                 View System Status
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-[#808285]/20 bg-gradient-to-br from-white via-[#92278F]/6 to-[#BE1E2D]/10">
+          <CardHeader className="space-y-2">
+            <CardTitle className="flex items-center gap-2 text-[#25294B]">
+              <Activity className="h-5 w-5 text-[#92278F]" />
+              Activity / Audit Log
+            </CardTitle>
+            <CardDescription>View system activity history and audit logs</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-[#58595B]">
+              Track all system activities including device actions, borrows, returns, updates, and more. View detailed audit logs with timestamps and user information.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Link href="/ams-activity-log">
+                <Button className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white">
+                  View Activity Log
+                </Button>
+              </Link>
             </div>
           </CardContent>
         </Card>

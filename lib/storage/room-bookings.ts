@@ -110,7 +110,7 @@ export const resolveBookingRuntimeStatus = (
   return booking.checkedInAt ? 'Attended' : 'Missed'
 }
 
-export const loadRoomBookings = (): RoomBookingRecord[] => {
+export function loadRoomBookings(): RoomBookingRecord[] {
   if (!isBrowser()) return []
   try {
     const stored = window.localStorage.getItem(ROOM_BOOKINGS_STORAGE_KEY)

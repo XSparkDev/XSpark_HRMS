@@ -25,6 +25,8 @@ type Device = {
   assigned_to?: string | null
   location?: string | null
   notes?: string | null
+  updated_at?: string | null
+  created_at?: string | null
 }
 
 const typeIcon: Record<string, { icon: any; size: string }> = {
@@ -47,12 +49,12 @@ const toTitleCase = (value?: string | null) => {
 }
 
 const statusColor: Record<string, string> = {
-  active: "bg-green-100 text-green-800 border-green-200",
-  borrowed: "bg-amber-100 text-amber-800 border-amber-200",
-  assigned: "bg-blue-100 text-blue-800 border-blue-200",
-  returned: "bg-gray-100 text-gray-800 border-gray-200",
-  available: "bg-green-100 text-green-800 border-green-200",
-  maintenance: "bg-red-100 text-red-800 border-red-200",
+  active: "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/30",
+  borrowed: "bg-[#92278F]/10 text-[#92278F] border-[#92278F]/30",
+  assigned: "bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/30",
+  returned: "bg-[#808285]/10 text-[#808285] border-[#808285]/30",
+  available: "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/30",
+  maintenance: "bg-[#BE1E2D]/10 text-[#BE1E2D] border-[#BE1E2D]/30",
 }
 
 export default function AllDevicesPage() {
@@ -291,9 +293,14 @@ export default function AllDevicesPage() {
                     <span className="font-medium text-[#25294B]">{new Date(selectedDevice.warranty_expiry).toLocaleDateString()}</span>
                   </div>
                 )}
+                {/* Last Updated -- gracefully handle if updated_at/created_at are not in the Device type */}
                 <div className="flex justify-between">
                   <span className="text-[#58595B]">Last Updated:</span>
-                  <span className="font-medium text-[#25294B]">{(selectedDevice.updated_at || selectedDevice.created_at) ? new Date(selectedDevice.updated_at || selectedDevice.created_at as string).toLocaleString() : '—'}</span>
+                  <span className="font-medium text-[#25294B]">
+                    {(selectedDevice.updated_at || selectedDevice.created_at)
+                      ? new Date((selectedDevice.updated_at || selectedDevice.created_at) as string).toLocaleString()
+                      : '—'}
+                  </span>
                 </div>
                 {selectedDevice.notes && (
                   <div>

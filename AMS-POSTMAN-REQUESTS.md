@@ -92,7 +92,7 @@ Prefer: return=representation
   "end_time": "2025-01-25T11:00:00Z",
   "status": "Pending",
   "is_recurring": false,
-  "location_type": "Offline"
+  "meeting_category": "Internal"
 }
 ```
 
@@ -109,7 +109,7 @@ Prefer: return=representation
   "is_recurring": false,
   "recurrence_pattern": null,
   "recurrence_end_date": null,
-  "location_type": "Offline",
+  "meeting_category": "Internal",
   "approved_by": null,
   "approved_at": null,
   "rejection_reason": null,

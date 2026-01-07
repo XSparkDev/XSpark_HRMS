@@ -10,9 +10,23 @@ import { ArrowLeft, Download, Calendar, Package, Clock, CheckCircle2, AlertTrian
 import Link from "next/link"
 import { useState, useEffect } from "react"
 
+type DeviceHistoryItem = {
+  id: string
+  borrowDate: string
+  returnDate: string | null
+  deviceType: string
+  deviceName: string
+  serialNumber: string | null
+  notes: string
+  status: string
+  isOverdue: boolean
+  isPending: boolean
+  expectedReturnDate: string
+}
+
 export default function DeviceHistoryPage() {
   const user = getCurrentUser()
-  const [deviceHistory, setDeviceHistory] = useState([])
+  const [deviceHistory, setDeviceHistory] = useState<DeviceHistoryItem[]>([])
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage] = useState(10)
 
@@ -32,22 +46,22 @@ export default function DeviceHistoryPage() {
 
   // Load device history from localStorage (in real app, this would come from API)
   useEffect(() => {
-    const borrowRequests = JSON.parse(localStorage.getItem('borrowRequests') || '[]')
-    const returnRequests = JSON.parse(localStorage.getItem('returnRequests') || '[]')
+    const borrowRequests: any[] = JSON.parse(localStorage.getItem("borrowRequests") || "[]")
+    const returnRequests: any[] = JSON.parse(localStorage.getItem("returnRequests") || "[]")
     
     // Filter to only show history for the current user
-    const userBorrowRequests = borrowRequests.filter(req => req.employeeId === employeeDetails.employeeId)
-    const userReturnRequests = returnRequests.filter(req => req.employeeId === employeeDetails.employeeId)
+    const userBorrowRequests = borrowRequests.filter((req) => req.employeeId === employeeDetails.employeeId)
+    const userReturnRequests = returnRequests.filter((req) => req.employeeId === employeeDetails.employeeId)
     
     // Create a map of return requests by borrow request ID for quick lookup
-    const returnMap = new Map()
-    userReturnRequests.forEach(returnReq => {
+    const returnMap = new Map<string, any>()
+    userReturnRequests.forEach((returnReq) => {
       returnMap.set(returnReq.borrowRequestId, returnReq)
     })
     
     // Combine borrow and return data
-    const allHistory = userBorrowRequests.map(borrowReq => {
-      const returnReq = returnMap.get(borrowReq.id)
+    const allHistory: DeviceHistoryItem[] = userBorrowRequests.map((borrowReq: any) => {
+      const returnReq = returnMap.get(borrowReq.id) as any | undefined
       const today = new Date()
       const returnDate = returnReq ? new Date(returnReq.returnDate) : null
       const expectedReturnDate = new Date(borrowReq.returnDate)
@@ -75,9 +89,12 @@ export default function DeviceHistoryPage() {
         status: borrowReq.status,
         isOverdue,
         isPending,
-        expectedReturnDate: borrowReq.returnDate
-      }
-    }).sort((a, b) => new Date(b.borrowDate) - new Date(a.borrowDate)) // Sort by borrow date, newest first
+        expectedReturnDate: borrowReq.returnDate,
+      } as DeviceHistoryItem
+    }).sort((a: DeviceHistoryItem, b: DeviceHistoryItem) => {
+      // Sort by borrow date, newest first
+      return new Date(b.borrowDate).getTime() - new Date(a.borrowDate).getTime()
+    })
 
     setDeviceHistory(allHistory)
   }, [])
@@ -87,7 +104,7 @@ export default function DeviceHistoryPage() {
   const exportToCSV = () => {
     const csvContent = [
       ["Borrow Date", "Return Date", "Device Type", "Device Name", "Serial Number", "Notes"],
-      ...deviceHistory.map(item => [
+      ...deviceHistory.map((item: DeviceHistoryItem) => [
         new Date(item.borrowDate).toLocaleDateString(),
         item.returnDate ? new Date(item.returnDate).toLocaleDateString() : "Not returned",
         item.deviceType,
@@ -106,23 +123,23 @@ export default function DeviceHistoryPage() {
     window.URL.revokeObjectURL(url)
   }
 
-  const getStatusBadge = (item) => {
+  const getStatusBadge = (item: DeviceHistoryItem) => {
     if (item.returnDate) {
-      return <Badge variant="default" className="bg-green-100 text-green-800">Returned</Badge>
+      return <Badge variant="default" style={{ backgroundColor: "#16A34A", color: "white", borderColor: "#16A34A" }}>Returned</Badge>
     } else if (item.isOverdue) {
-      return <Badge variant="destructive">Overdue</Badge>
+      return <Badge variant="destructive" style={{ backgroundColor: "#BE1E2D", color: "white", borderColor: "#BE1E2D" }}>Awaiting Return</Badge>
     } else if (item.isPending) {
-      return <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">Pending Return</Badge>
+      return <Badge variant="secondary" style={{ backgroundColor: "#2563EB", color: "white", borderColor: "#2563EB" }}>Pending Borrow</Badge>
     } else {
-      return <Badge variant="outline">Active</Badge>
+      return <Badge variant="outline" style={{ backgroundColor: "#92278F", color: "white", borderColor: "#92278F" }}>Borrowed</Badge>
     }
   }
 
-  const getRowClassName = (item) => {
+  const getRowClassName = (item: DeviceHistoryItem) => {
     if (item.isOverdue) {
       return "bg-red-50 border-l-4 border-l-red-500"
     } else if (item.isPending) {
-      return "bg-yellow-50 border-l-4 border-l-yellow-500"
+      return "bg-[#808285]/10 border-l-4 border-l-[#808285]"
     }
     return ""
   }
@@ -131,7 +148,7 @@ export default function DeviceHistoryPage() {
   const totalPages = Math.ceil(deviceHistory.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const currentHistory = deviceHistory.slice(startIndex, endIndex)
+  const currentHistory: DeviceHistoryItem[] = deviceHistory.slice(startIndex, endIndex)
 
   return (
     <AMSDashboardLayout>
@@ -156,15 +173,15 @@ export default function DeviceHistoryPage() {
 
 
         {/* Device History Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-2xl font-semibold text-navy flex items-center gap-2">
               <Calendar className="h-5 w-5 text-primary" />
               Borrowing History
-            </CardTitle>
-            <CardDescription>Your personal device borrowing history</CardDescription>
-          </CardHeader>
-          <CardContent>
+            </h2>
+            <p className="text-muted-foreground mt-1">Your personal device borrowing history</p>
+          </div>
+          <div>
             {currentHistory.length > 0 ? (
               <>
                 <div className="overflow-x-auto">
@@ -249,10 +266,10 @@ export default function DeviceHistoryPage() {
                     Your borrowing history will appear here when you borrow devices from the company.
                   </p>
                 )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                </div>
+              )}
+          </div>
+        </div>
       </div>
     </AMSDashboardLayout>
   )

@@ -2,25 +2,56 @@
 
 import React from "react"
 import { useRouter } from "next/navigation"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { XSparkLogo } from "@/components/xspark-logo"
-import { getCurrentUser } from "@/lib/auth"
-import { Users, Building2 } from "lucide-react"
+import { getCurrentUser, type User } from "@/lib/auth"
+import { Users, Building2, LogOut } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogTrigger,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog"
 
 export default function SystemSelectorPage() {
   const router = useRouter()
-  const user = getCurrentUser()
+  const [user, setUser] = useState<User | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
 
   useEffect(() => {
+    // Only access localStorage on the client side after hydration
+    const currentUser = getCurrentUser()
+    setUser(currentUser)
+    setIsLoading(false)
+
     // Redirect to login if not authenticated
-    if (!user) {
+    if (!currentUser) {
       router.push("/login")
       return
     }
-  }, [user, router])
+  }, [router])
 
+  // Show loading state during initial hydration
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4 md:p-6">
+        <div className="text-center">
+          <XSparkLogo className="h-12 md:h-16 w-auto mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // If no user after loading, return null (redirect will happen in useEffect)
   if (!user) return null
 
   const handleSystemSelection = (systemPath: string) => {
@@ -29,9 +60,89 @@ export default function SystemSelectorPage() {
     router.push(systemPath)
   }
 
+  const handleConfirmLogout = async () => {
+    if (isLoggingOut) return
+
+    setIsLoggingOut(true)
+
+    try {
+      // Attempt to invalidate Supabase session on the server
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+      }).catch(() => undefined)
+    } finally {
+      // Clear local session data regardless of API result
+      try {
+        localStorage.removeItem("xspark_session")
+        localStorage.removeItem("xspark_user")
+        localStorage.removeItem("xspark_employee")
+        localStorage.removeItem("lastSelectedSystem")
+      } catch {
+        // ignore storage errors
+      }
+
+      // Clear in-memory user and redirect to login
+      setUser(null)
+      setIsLoggingOut(false)
+
+      // Use replace to avoid back navigation returning to a protected page
+      router.replace("/login")
+
+      // Hard fallback navigation to ensure full reload if router fails
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          window.location.href = "/login"
+        }, 50)
+      }
+    }
+  }
+
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 md:p-6">
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4 md:p-6">
       <div className="w-full max-w-4xl mx-auto">
+        {/* Top bar with logout */}
+        <div className="mb-4 flex items-center justify-end">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex items-center gap-2 rounded-full border-[#E4E4E7] px-3 py-1.5 text-xs font-medium text-[#4B4F68] hover:bg-[#F4F4F5]"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Log out</span>
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent className="sm:max-w-md">
+              <AlertDialogHeader>
+                <AlertDialogTitle className="text-xl font-bold text-[#1D1F2C]">
+                  Logout Confirmation
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-base text-[#5F647A] pt-2">
+                  Are you sure you want to do logout?
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter className="flex-row gap-3 sm:justify-start pt-4">
+                <AlertDialogAction
+                  onClick={handleConfirmLogout}
+                  disabled={isLoggingOut}
+                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] hover:opacity-90 text-white flex-1 sm:flex-initial"
+                >
+                  {isLoggingOut ? "Logging out..." : "Confirm"}
+                </AlertDialogAction>
+                <AlertDialogCancel
+                  disabled={isLoggingOut}
+                  className="border-[#92278F] text-[#92278F] hover:bg-[#92278F]/10 flex-1 sm:flex-initial"
+                >
+                  Cancel
+                </AlertDialogCancel>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+
         {/* Logo Section */}
         <div className="flex justify-center mb-8 md:mb-12">
           <XSparkLogo className="h-12 md:h-16 w-auto" />

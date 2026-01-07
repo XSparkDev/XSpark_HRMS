@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { AMSDashboardLayout } from "@/components/ams-dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -72,6 +73,26 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
+        <Card className="border border-[#808285]/20 bg-gradient-to-br from-white via-[#dfeaff] to-[#f5ecff]">
+          <CardHeader>
+            <CardTitle className="text-[#25294B]">Activity & Audit Log</CardTitle>
+            <CardDescription className="text-[#58595B]">
+              Review a detailed history of changes, approvals, and device activity recorded in the audit log.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-4 flex-wrap">
+            <p className="text-sm text-muted-foreground">
+              Use this view when you need to trace who did what and when across the system.
+            </p>
+            <Button
+              asChild
+              className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+            >
+              <Link href="/activity-log">Open Activity Log</Link>
+            </Button>
+          </CardContent>
+        </Card>
+
         <Card className="border border-[#808285]/20 bg-gradient-to-br from-white via-[#92278F]/6 to-[#BE1E2D]/10">
           <CardHeader>
             <CardTitle className="text-[#25294B]">Change Password</CardTitle>
@@ -132,6 +153,18 @@ export default function SettingsPage() {
     </AMSDashboardLayout>
   )
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -18,6 +18,7 @@ import type {
   DeviceResourceModel,
   GenericResourceModel,
 } from '@/lib/models/resource-models'
+import { devicesService, type DeviceRecord } from './devices-service'
 
 type ResourceFilters = {
   search?: string
@@ -32,21 +33,6 @@ type ListOptions = ResourceFilters & {
   hydrate?: boolean
 }
 
-type DeviceRecord = {
-  id: string
-  asset_tag?: string | null
-  serial_number?: string | null
-  device_type?: string | null
-  brand?: string | null
-  model?: string | null
-  status?: string | null
-  condition?: string | null
-  assigned_to?: string | null
-  location?: string | null
-  notes?: string | null
-  created_at?: string | null
-  updated_at?: string | null
-}
 
 export class ResourcesService extends BaseService {
   private readonly table = 'resources'
@@ -61,7 +47,18 @@ export class ResourcesService extends BaseService {
           query = query.is('deleted_at', null)
         }
 
+        // IMPORTANT: Exclude devices from resources queries
+        // Devices are now stored in the separate devices table
+        // This prevents double-counting in dashboard cards
+        query = query.or('resource_type.is.null,resource_type.neq.Device')
+
         if (options.resource_type) {
+          // Prevent filtering by 'Device' type - devices are in devices table now
+          if (options.resource_type === 'Device') {
+            console.warn('[ResourcesService] Cannot filter by Device type. Use DevicesService instead.')
+            // Return empty array instead of throwing error for backward compatibility
+            return { data: [], error: null }
+          }
           query = query.eq('resource_type', options.resource_type)
         }
 
@@ -113,6 +110,12 @@ export class ResourcesService extends BaseService {
   }
 
   async createResource(payload: ResourceRecord): Promise<ResourceModel> {
+    // IMPORTANT: Prevent creating devices in resources table
+    // Devices should be created via DevicesService
+    if (payload.resource_type === 'Device') {
+      throw new Error('Devices cannot be created as resources. Use DevicesService.createDevice() instead.')
+    }
+
     const sanitized = this.sanitizeInput({
       ...payload,
       created_at: payload.created_at ?? new Date().toISOString(),
@@ -135,6 +138,12 @@ export class ResourcesService extends BaseService {
   }
 
   async updateResource(id: string, updates: Partial<ResourceRecord>): Promise<ResourceModel | null> {
+    // IMPORTANT: Prevent updating resource_type to 'Device'
+    // Devices should be managed via DevicesService
+    if (updates.resource_type === 'Device') {
+      throw new Error('Cannot set resource_type to "Device". Devices are managed separately via DevicesService.')
+    }
+
     const sanitized = this.sanitizeInput({ ...updates, updated_at: new Date().toISOString() })
 
     const row = await this.executeUpdate<ResourceRecord | null>(
@@ -277,9 +286,7 @@ export class ResourcesService extends BaseService {
 
   private async fetchDevice(id: string): Promise<DeviceRecord | null> {
     try {
-      const { data, error } = await supabase.from('devices').select('*').eq('id', id).maybeSingle()
-      if (error) throw error
-      return (data as DeviceRecord | null) ?? null
+      return await devicesService.getDeviceById(id)
     } catch (error) {
       console.warn(`Unable to hydrate device resource ${id}:`, error)
       return null

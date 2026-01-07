@@ -38,10 +38,15 @@ export const supabase: any = hasSupabaseConfig
           limit: () => builder,
           range: () => builder,
           eq: () => builder,
+          neq: () => builder,
           in: () => builder,
           is: () => builder,
           gte: () => builder,
           lte: () => builder,
+          gt: () => builder,
+          lt: () => builder,
+          like: () => builder,
+          ilike: () => builder,
           single: async () => ({ data: null, error: null }),
           then: resolved.then.bind(resolved),
           catch: resolved.catch.bind(resolved),
@@ -54,6 +59,20 @@ export const supabase: any = hasSupabaseConfig
         from() {
           return createQueryStub()
       },
+        channel() {
+          // Return a no-op channel stub for real-time subscriptions
+          return {
+            on: () => ({
+              subscribe: () => ({
+                unsubscribe: () => {}
+              })
+            }),
+            subscribe: () => ({
+              unsubscribe: () => {}
+            }),
+            unsubscribe: () => {}
+          }
+        },
       storage: {
         from() {
           return {

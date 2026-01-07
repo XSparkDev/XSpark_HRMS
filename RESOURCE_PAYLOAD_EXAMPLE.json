@@ -1,0 +1,15 @@
+{
+  "resource_id": "Res011",
+  "resource_name": "Conference Room A",
+  "resource_type": "Room",
+  "description": "Large conference room with video conferencing equipment",
+  "location": "HQ Building 1 · Floor 3 · Room 301",
+  "capacity": 25,
+  "condition": "good",
+  "is_available": true,
+  "notes": "Includes smart board and projector"
+}
+
+
+
+

@@ -251,11 +251,11 @@ export default function DeviceConditionReportPage() {
       case 'Good':
         return <Badge variant="default" className="bg-green-100 text-green-800">Good</Badge>
       case 'Minor Damage':
-        return <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">Minor Damage</Badge>
+        return <Badge variant="secondary" className="bg-[#808285]/10 text-[#808285] border border-[#808285]/30">Minor Damage</Badge>
       case 'Major Damage':
         return <Badge variant="destructive">Major Damage</Badge>
       case 'Needs Repair':
-        return <Badge variant="outline" className="bg-orange-100 text-orange-800">Needs Repair</Badge>
+        return <Badge variant="outline" className="bg-[#BE1E2D]/10 text-[#BE1E2D] border border-[#BE1E2D]/30">Needs Repair</Badge>
       default:
         return <Badge variant="outline">Unknown</Badge>
     }
@@ -268,7 +268,7 @@ export default function DeviceConditionReportPage() {
       case 'Reviewed':
         return <Badge variant="secondary" className="bg-blue-100 text-blue-800">Reviewed</Badge>
       case 'Pending':
-        return <Badge variant="outline" className="bg-yellow-100 text-yellow-800">Pending</Badge>
+        return <Badge variant="outline" className="bg-[#25294B]/10 text-[#25294B] border border-[#25294B]/30">Pending</Badge>
       default:
         return <Badge variant="outline">Unknown</Badge>
     }
@@ -372,9 +372,9 @@ export default function DeviceConditionReportPage() {
             </Card>
 
             {/* Device Condition Details Section */}
-            <Card className="border-l-4 border-l-orange-500">
+            <Card className="border-l-4 border-l-[#BE1E2D]">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-orange-600">
+                <CardTitle className="flex items-center gap-2 text-[#BE1E2D]">
                   <AlertTriangle className="h-5 w-5" />
                   Device Condition Details
                 </CardTitle>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { roomsService } from '@/lib/services'
+import { roomsService, bookingsService } from '@/lib/services'
 import type { RoomFilters, CreateRoomInput, UpdateRoomInput } from '@/lib/services/rooms-service'
 
 const searchSchema = z.object({
@@ -12,6 +12,16 @@ const searchSchema = z.object({
   maxCapacity: z.coerce.number().min(0).optional(),
   isAvailable: z.union([z.string(), z.boolean()]).optional(),
   includeDeleted: z.union([z.string(), z.boolean()]).optional(),
+  bookingDate: z.string().optional(),
+  startTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, 'startTime must be in HH:MM format')
+    .optional(),
+  endTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, 'endTime must be in HH:MM format')
+    .optional(),
+  excludeBookingId: z.string().optional(),
   limit: z.coerce.number().min(1).max(200).optional(),
   offset: z.coerce.number().min(0).optional(),
 })
@@ -72,6 +82,10 @@ export async function GET(request: NextRequest) {
       maxCapacity: searchParams.get('maxCapacity') ?? undefined,
       isAvailable: searchParams.get('isAvailable') ?? undefined,
       includeDeleted: searchParams.get('includeDeleted') ?? undefined,
+      bookingDate: searchParams.get('bookingDate') ?? undefined,
+      startTime: searchParams.get('startTime') ?? undefined,
+      endTime: searchParams.get('endTime') ?? undefined,
+      excludeBookingId: searchParams.get('excludeBookingId') ?? undefined,
       limit: searchParams.get('limit') ?? undefined,
       offset: searchParams.get('offset') ?? undefined,
     })
@@ -83,12 +97,23 @@ export async function GET(request: NextRequest) {
       minCapacity: parsed.minCapacity,
       maxCapacity: parsed.maxCapacity,
       isAvailable: normalizeBoolean(parsed.isAvailable),
-      // includeDeleted: normalizeBoolean(parsed.includeDeleted),
       limit: parsed.limit,
       offset: parsed.offset,
     }
 
-    const rooms = await roomsService.listRooms(filters)
+    let rooms = await roomsService.listRooms(filters)
+
+    if (parsed.bookingDate && parsed.startTime && parsed.endTime) {
+      const conflicts = await bookingsService.getConflictingRoomIds({
+        bookingDate: parsed.bookingDate,
+        startTime: parsed.startTime,
+        endTime: parsed.endTime,
+        excludeBookingId: parsed.excludeBookingId ?? undefined,
+      })
+      if (conflicts.size > 0) {
+        rooms = rooms.filter((room) => !conflicts.has(room.id))
+      }
+    }
 
     return NextResponse.json({
       success: true,

@@ -48,7 +48,7 @@ CREATE TYPE device_condition_enum AS ENUM (
 -- ============================================================================
 -- Purpose: Tracks all device assignments to employees
 -- Relationships:
---   - device_id -> devices(id)
+--   - device_id -> devices(device_id)
 --   - employee_id -> employees(id)
 --   - assigned_by -> employees(id) (supervisor/admin who made assignment)
 --   - approved_by -> employees(id) (supervisor/admin who approved)
@@ -59,7 +59,7 @@ CREATE TABLE assigned_devices (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     
     -- Foreign Keys
-    device_id UUID NOT NULL,                    -- References devices(id)
+    device_id UUID NOT NULL,                    -- References devices(device_id)
     employee_id UUID NOT NULL,                  -- References employees(id) - who the device is assigned to
     assigned_by UUID,                           -- References employees(id) - who created the assignment
     approved_by UUID,                           -- References employees(id) - who approved the assignment
@@ -109,7 +109,7 @@ CREATE TABLE assigned_devices (
     -- Constraints
     CONSTRAINT fk_assigned_devices_device 
         FOREIGN KEY (device_id) 
-        REFERENCES devices(id) 
+        REFERENCES devices(device_id) 
         ON DELETE RESTRICT,
     
     CONSTRAINT fk_assigned_devices_employee 
@@ -227,7 +227,7 @@ BEGIN
         SET status = 'assigned', 
             assigned_to = NEW.employee_id,
             updated_at = NOW()
-        WHERE id = NEW.device_id;
+        WHERE device_id = NEW.device_id;
     END IF;
     
     -- When assignment is returned, update device status to 'available'
@@ -240,7 +240,7 @@ BEGIN
         assigned_to = NULL,
         condition = NEW.returned_condition::text,
         updated_at = NOW()
-        WHERE id = NEW.device_id;
+        WHERE device_id = NEW.device_id;
     END IF;
     
     -- When assignment is cancelled/rejected, free up the device
@@ -248,7 +248,7 @@ BEGIN
         UPDATE devices 
         SET status = 'available',
             updated_at = NOW()
-        WHERE id = NEW.device_id;
+        WHERE device_id = NEW.device_id;
     END IF;
     
     RETURN NEW;
@@ -330,7 +330,7 @@ SELECT
         ELSE FALSE
     END AS is_overdue
 FROM assigned_devices ad
-INNER JOIN devices d ON ad.device_id = d.id
+INNER JOIN devices d ON ad.device_id = d.device_id
 INNER JOIN employees e ON ad.employee_id = e.id
 LEFT JOIN employees assigned_by_emp ON ad.assigned_by = assigned_by_emp.id
 WHERE ad.status IN ('approved', 'active')
@@ -367,7 +367,7 @@ SELECT
     ad.created_at,
     ad.updated_at
 FROM assigned_devices ad
-INNER JOIN devices d ON ad.device_id = d.id
+INNER JOIN devices d ON ad.device_id = d.device_id
 INNER JOIN employees e ON ad.employee_id = e.id
 WHERE ad.deleted_at IS NULL
 ORDER BY ad.assigned_date DESC;
@@ -400,7 +400,7 @@ SELECT
     ad.issue_description
 FROM assigned_devices ad
 INNER JOIN employees e ON ad.employee_id = e.id
-INNER JOIN devices d ON ad.device_id = d.id
+INNER JOIN devices d ON ad.device_id = d.device_id
 WHERE ad.deleted_at IS NULL
 ORDER BY 
     CASE 
@@ -433,7 +433,7 @@ SELECT
     ad.approval_requested_at,
     ad.created_at
 FROM assigned_devices ad
-INNER JOIN devices d ON ad.device_id = d.id
+INNER JOIN devices d ON ad.device_id = d.device_id
 INNER JOIN employees e ON ad.employee_id = e.id
 LEFT JOIN employees assigned_by_emp ON ad.assigned_by = assigned_by_emp.id
 WHERE ad.status = 'pending'
@@ -463,7 +463,7 @@ SELECT
     ad.purpose,
     ad.assignment_notes
 FROM assigned_devices ad
-INNER JOIN devices d ON ad.device_id = d.id
+INNER JOIN devices d ON ad.device_id = d.device_id
 INNER JOIN employees e ON ad.employee_id = e.id
 WHERE ad.status IN ('approved', 'active')
 AND ad.expected_return_date IS NOT NULL
@@ -494,7 +494,7 @@ RETURNS TABLE (
 BEGIN
     RETURN QUERY
     SELECT 
-        d.id,
+        d.device_id,
         d.asset_tag,
         d.serial_number,
         d.device_type,
@@ -509,7 +509,7 @@ BEGIN
     AND NOT EXISTS (
         SELECT 1 
         FROM assigned_devices ad 
-        WHERE ad.device_id = d.id 
+        WHERE ad.device_id = d.device_id 
         AND ad.status IN ('approved', 'active')
         AND ad.deleted_at IS NULL
     )
@@ -547,7 +547,7 @@ BEGIN
         ad.assigned_date,
         ad.expected_return_date
     FROM assigned_devices ad
-    INNER JOIN devices d ON ad.device_id = d.id
+    INNER JOIN devices d ON ad.device_id = d.device_id
     WHERE ad.employee_id = p_employee_id
     AND ad.status IN ('approved', 'active')
     AND ad.deleted_at IS NULL
@@ -574,7 +574,7 @@ BEGIN
     -- Check if device exists and is available
     SELECT status INTO v_device_status
     FROM devices
-    WHERE id = p_device_id
+    WHERE device_id = p_device_id
     AND deleted_at IS NULL;
     
     IF NOT FOUND THEN
@@ -746,6 +746,10 @@ COMMIT;
 -- 3. Test the functions and triggers
 -- 4. Create API endpoints to use these functions
 -- ============================================================================
+
+
+
+
 
 
 

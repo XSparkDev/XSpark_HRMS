@@ -23,6 +23,8 @@ export default function BorrowDevicePage() {
   const [loadingDevices, setLoadingDevices] = useState(true)
   const [devicesError, setDevicesError] = useState<string | null>(null)
   const [borrowTimeError, setBorrowTimeError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   const [formData, setFormData] = useState({
     device: "",
@@ -108,7 +110,7 @@ export default function BorrowDevicePage() {
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.confirmation) {
       alert("Please confirm that you will handle this device responsibly.")
@@ -127,11 +129,54 @@ export default function BorrowDevicePage() {
       return
     }
     setBorrowTimeError(null)
-    // In a real app, this would send data to an API
-    console.log("Borrow request submitted:", formData)
-    alert("Device borrow request submitted successfully!")
-    // Reset form
-    router.back()
+    setSubmitError(null)
+
+    const selectedDevice = availableDevices.find((d) => d.id === formData.device)
+    if (!selectedDevice) {
+      setSubmitError("Please select a device.")
+      return
+    }
+
+    // Combine borrow date and time into ISO string
+    const borrowDateTime = formData.borrowDate && formData.borrowTime
+      ? new Date(`${formData.borrowDate}T${formData.borrowTime}`).toISOString()
+      : new Date().toISOString()
+
+    // Convert return date to ISO string if provided
+    const returnDateISO = formData.returnDate
+      ? new Date(`${formData.returnDate}T23:59:59`).toISOString()
+      : null
+
+    // Get device_id from the selected device (use device_id from raw data, or asset_tag, or id)
+    const deviceId = selectedDevice.raw?.device_id || selectedDevice.raw?.asset_tag || selectedDevice.assetTag || selectedDevice.id
+
+    setSubmitting(true)
+    try {
+      const response = await fetch("/api/borrows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          device_id: deviceId,
+          borrowed_by: formData.employeeId,
+          borrow_date: borrowDateTime,
+          return_date: returnDateISO,
+          notes: formData.purpose || undefined,
+        }),
+      })
+
+      const json = await response.json().catch(() => ({}))
+      if (!response.ok || json.success === false) {
+        throw new Error(json?.error || "Failed to submit borrow request.")
+      }
+
+      alert("Device borrow request submitted successfully!")
+      router.back()
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Unable to submit borrow request.")
+      console.error("Borrow request submission error:", error)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const handleCancel = () => {
@@ -231,6 +276,9 @@ export default function BorrowDevicePage() {
                   {devicesError && (
                     <p className="text-xs text-destructive">{devicesError}</p>
                   )}
+                  {submitError && (
+                    <p className="text-xs text-destructive">{submitError}</p>
+                  )}
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4">
@@ -273,6 +321,7 @@ export default function BorrowDevicePage() {
                         type="date"
                         value={formData.borrowDate}
                         onChange={(e) => handleInputChange("borrowDate", e.target.value)}
+                        min={new Date().toISOString().split('T')[0]}
                         className="flex-1"
                         required
                       />
@@ -359,10 +408,10 @@ export default function BorrowDevicePage() {
                   <Button
                     type="button"
                     className="gradient-primary text-white w-full"
-                    disabled={!isFormValid}
+                    disabled={!isFormValid || submitting}
                     onClick={handleSubmit}
                   >
-                    Borrow Device
+                    {submitting ? "Submitting..." : "Book a Device"}
                   </Button>
                   <Button
                     type="button"

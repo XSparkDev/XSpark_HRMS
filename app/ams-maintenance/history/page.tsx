@@ -79,11 +79,11 @@ export default function MaintenanceHistoryPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Completed Tasks</CardTitle>
-          </CardHeader>
-          <CardContent>
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-2xl font-semibold text-navy">Completed Tasks</h2>
+          </div>
+          <div>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -124,8 +124,8 @@ export default function MaintenanceHistoryPage() {
                 </TableBody>
               </Table>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     </AMSDashboardLayout>
   )

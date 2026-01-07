@@ -56,3 +56,15 @@ export type ResourceModel = RoomResourceModel | DeviceResourceModel | GenericRes
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+

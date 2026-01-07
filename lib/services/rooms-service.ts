@@ -1,11 +1,3 @@
-// =============================================================================
-// ROOMS SERVICE - Repository Layer
-// =============================================================================
-// Provides CRUD operations and helper utilities for the `rooms` table. This
-// service acts as the single integration point between the UI/API layers and
-// the database schema that stores room metadata for bookings.
-// =============================================================================
-
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BaseService } from './base-service'
 
@@ -30,7 +22,6 @@ export interface RoomFilters {
   minCapacity?: number
   maxCapacity?: number
   isAvailable?: boolean
- // includeDeleted?: boolean
   limit?: number
   offset?: number
 }
@@ -52,44 +43,36 @@ export class RoomsService extends BaseService {
   private readonly table = 'rooms'
   private readonly admin = supabaseAdmin
 
-  // ===========================================================================
-  // READ OPERATIONS
-  // ===========================================================================
-
   async listRooms(filters: RoomFilters = {}): Promise<Room[]> {
-    return this.executeQueryArray(
+    return this.executeQueryArray<Room>(
       () => {
         let query = this.supabase.from(this.table).select('*')
 
-          // if (!filters.includeDeleted) {
-          //   query = query.is('deleted_at', null)
-          // }
-
-        if (filters.isAvailable !== undefined) {
-          query = query.eq('is_available', filters.isAvailable)
+        if (filters.search) {
+          const term = `%${filters.search}%`
+          query = query.or(
+            `room_name.ilike.${term},room_code.ilike.${term},location.ilike.${term},floor.ilike.${term}`,
+          )
         }
 
         if (filters.location) {
-          query = query.ilike('location', `%${filters.location}%`)
+          query = query.eq('location', filters.location)
         }
 
         if (filters.floor) {
           query = query.eq('floor', filters.floor)
         }
 
-        if (filters.minCapacity !== undefined) {
+        if (typeof filters.minCapacity === 'number') {
           query = query.gte('capacity', filters.minCapacity)
         }
 
-        if (filters.maxCapacity !== undefined) {
+        if (typeof filters.maxCapacity === 'number') {
           query = query.lte('capacity', filters.maxCapacity)
         }
 
-        if (filters.search) {
-          const term = `%${filters.search}%`
-          query = query.or(
-            `room_name.ilike.${term},room_code.ilike.${term},location.ilike.${term},description.ilike.${term}`
-          )
+        if (typeof filters.isAvailable === 'boolean') {
+          query = query.eq('is_available', filters.isAvailable)
         }
 
         if (typeof filters.limit === 'number' && typeof filters.offset === 'number') {
@@ -100,7 +83,7 @@ export class RoomsService extends BaseService {
 
         return query.order('room_name', { ascending: true })
       },
-      'list rooms'
+      'list rooms',
     )
   }
 
@@ -112,17 +95,9 @@ export class RoomsService extends BaseService {
           .select('*')
           .eq('id', id)
           .maybeSingle(),
-      'get room by id'
+      'get room by id',
     )
   }
-
-  async getAvailableRooms(filters: Omit<RoomFilters, 'isAvailable'> = {}): Promise<Room[]> {
-    return this.listRooms({ ...filters, isAvailable: true })
-  }
-
-  // ===========================================================================
-  // CREATE
-  // ===========================================================================
 
   async createRoom(payload: CreateRoomInput): Promise<Room> {
     const data = this.sanitizeInput({
@@ -132,46 +107,34 @@ export class RoomsService extends BaseService {
     })
 
     return this.executeInsert(
-      async () => {
-        const result = await this.admin
+      async () =>
+        await this.admin
           .from(this.table)
           .insert(data)
           .select('*')
-          .single()
-        return result
-      },
-      'create room'
+          .single(),
+      'create room',
     )
   }
-
-  // ===========================================================================
-  // UPDATE
-  // ===========================================================================
 
   async updateRoom(id: string, updates: UpdateRoomInput): Promise<Room | null> {
     const sanitized = this.sanitizeInput(updates)
 
     return this.executeUpdate(
-      async () => {
-        const result = await this.admin
+      async () =>
+        await this.admin
           .from(this.table)
           .update({ ...sanitized, updated_at: new Date().toISOString() })
           .eq('id', id)
           .select('*')
-          .maybeSingle()
-        return result
-      },
-      'update room'
+          .maybeSingle(),
+      'update room',
     )
   }
 
   async setRoomAvailability(id: string, isAvailable: boolean): Promise<Room | null> {
     return this.updateRoom(id, { is_available: isAvailable })
   }
-
-  // ===========================================================================
-  // DELETE OPERATIONS
-  // ===========================================================================
 
   async deleteRoom(id: string, options: { hardDelete?: boolean } = {}): Promise<boolean> {
     const { hardDelete = false } = options
@@ -182,7 +145,7 @@ export class RoomsService extends BaseService {
           const { error } = await this.admin.from(this.table).delete().eq('id', id)
           return { error }
         },
-        'hard delete room'
+        'hard delete room',
       )
     }
 
@@ -194,26 +157,25 @@ export class RoomsService extends BaseService {
           .eq('id', id)
         return { error }
       },
-      'soft delete room'
+      'soft delete room',
     )
   }
 
   async restoreRoom(id: string): Promise<Room | null> {
     return this.executeUpdate(
-      async () => {
-        const result = await this.admin
+      async () =>
+        await this.admin
           .from(this.table)
-          .update({updated_at: new Date().toISOString() })
+          .update({ updated_at: new Date().toISOString() })
           .eq('id', id)
           .select('*')
-          .maybeSingle()
-        return result
-      },
-      'restore room'
+          .maybeSingle(),
+      'restore room',
     )
   }
 }
 
 export const roomsService = new RoomsService()
+
 
 

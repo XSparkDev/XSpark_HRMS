@@ -137,6 +137,15 @@ export default function ReturnDevicePage() {
   }
 
   const handleSubmit = async () => {
+    // Check if today is a weekend
+    const today = new Date()
+    const dayOfWeek = today.getDay()
+    
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      alert('Device returns are not allowed on weekends. Please return the device on a weekday.')
+      return
+    }
+
     setIsSubmitting(true)
     
     // Create return request

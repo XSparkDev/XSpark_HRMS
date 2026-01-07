@@ -86,14 +86,7 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
     { name: "Settings", href: "/ams-settings", icon: Settings },
   ]
 
-  const navigationTabs =
-    user?.role === "supervisor"
-      ? [
-          baseNavigation[0],
-          { name: "Supervisor", href: "/ams-supervisor", icon: CheckCircle2 },
-          ...baseNavigation.slice(1),
-        ]
-      : baseNavigation
+  const navigationTabs = baseNavigation
 
   const extractSurname = (value?: string | null) => {
     if (!value) return ""
@@ -166,6 +159,10 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
       .map((part) => part[0])
       .join("") || "U"
 
+  const toggleSidebar = () => setSidebarOpen((prev) => !prev)
+  const closeSidebar = () => setSidebarOpen(false)
+  const sidebarId = "ams-dashboard-sidebar"
+
   return (
     <div className="min-h-screen bg-background">
       {/* Top Navigation */}
@@ -176,15 +173,19 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
             <button
               type="button"
               aria-label="Toggle navigation"
-              onClick={() => setSidebarOpen((prev) => !prev)}
-              className="rounded-md border border-transparent p-2 transition hover:border-[#92278F]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#92278F]/40"
+              onClick={toggleSidebar}
+              aria-expanded={sidebarOpen}
+              aria-controls={sidebarId}
+              className="rounded-md border border-transparent p-2 transition hover:border-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-muted"
             >
-              <Menu className="h-5 w-5 text-[#25294B]" />
+              <Menu className="h-5 w-5 text-foreground" />
             </button>
             <button
               type="button"
-              aria-label="Toggle navigation"
-              onClick={() => setSidebarOpen((prev) => !prev)}
+              aria-label="Collapse navigation"
+              onClick={closeSidebar}
+              aria-expanded={sidebarOpen}
+              aria-controls={sidebarId}
               className="flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#92278F]/50 focus-visible:ring-offset-2"
             >
               <XSparkLogo className="h-12 w-auto" />
@@ -273,17 +274,10 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
               <span className="font-medium text-[#25294B]">{position}</span>
             </div>
           </div>
-          <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-between">
-            <Link href="/dashboard" className="flex-1">
-              <Button className="w-full gradient-primary text-white">Switch System</Button>
-            </Link>
-            <div className="flex flex-1 justify-end gap-2">
-              <Button variant="outline" onClick={() => setProfileDialogOpen(false)}>Close</Button>
-              <Button className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white" onClick={handleLogout}>
-                <LogOut className="mr-2 h-4 w-4" />
-                Logout
+          <div className="mt-6 flex justify-end">
+            <Button variant="outline" onClick={() => setProfileDialogOpen(false)}>
+              Close
               </Button>
-            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -291,13 +285,14 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
       <div className="relative min-h-screen">
         {/* Sidebar */}
         <aside
+          id={sidebarId}
           className={cn(
             "fixed inset-y-0 left-0 z-30 w-72 border-r border-[#E4E4E7] bg-background/98 shadow-lg transition-transform duration-300",
             sidebarOpen ? "translate-x-0" : "-translate-x-full",
             "md:translate-x-0",
           )}
         >
-          <nav className="flex flex-col gap-3 px-6 pt-20 pb-6 md:pt-6 max-h-[calc(100vh-80px)] overflow-y-auto">
+          <nav className="flex h-full flex-col gap-3 px-6 pt-24 pb-6 overflow-y-auto">
             {navigationTabs.map((item) => {
               const isActive = pathname === item.href
               return (
@@ -317,11 +312,34 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
                 </Link>
               )
             })}
+            <div className="mt-auto border-t border-[#E4E4E7] pt-4 space-y-2">
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-[#25294B] hover:bg-muted/60"
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className="inline-flex h-5 w-5 items-center justify-center text-[#92278F]">⇄</span>
+                <span>Switch System</span>
+              </Link>
+              <button
+                type="button"
+                className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-[#BE1E2D] hover:bg-red-50"
+                onClick={() => {
+                  setSidebarOpen(false)
+                  handleLogout()
+                }}
+              >
+                <LogOut className="h-4 w-4" />
+                Logout
+              </button>
+            </div>
           </nav>
         </aside>
 
         {/* Main Content */}
-        <main className="min-h-screen p-6 transition-[padding] duration-300 md:pl-[21rem]">{children}</main>
+        <main className="min-h-screen p-6 pt-[5.5rem] transition-[padding] duration-300 md:pl-[21rem] md:pt-12">
+          {children}
+        </main>
       </div>
 
       {/* AI Chat Widget */}
