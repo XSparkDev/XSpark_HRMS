@@ -8,7 +8,7 @@ Implement a unified admin endpoint that creates both Supabase Auth user and empl
 ## Implementation Phases
 
 ### Phase 1: Service Layer Foundation
-**Goal:** Create the core service method with all validation and business logic
+**Goal:** Create the core service method with all and business logic
 
 #### 1.1 Early Email Uniqueness Check
 - [x] Create `checkEmailUniqueness(email: string)` method
@@ -29,7 +29,7 @@ Implement a unified admin endpoint that creates both Supabase Auth user and empl
 
 #### 1.3 Create Employee with Auth Service Method
 - [x] Extend/enhance `authService.createEmployeeWithAuth()` with:
-  - Input validation (required fields, SA vs foreign rules, password strength)
+  - Input (required fields, SA vs foreign rules, password strength)
   - Early email uniqueness check
   - Create Supabase Auth user (service role)
     - Set `email_confirm = !options.sendEmail`
@@ -41,7 +41,7 @@ Implement a unified admin endpoint that creates both Supabase Auth user and empl
   - Return `{ employee, authUser }`
 
 #### 1.4 Foreign National Validation
-- [x] Add validation logic:
+- [x] Add logic:
   - If `nationality !== 'South Africa'`:
     - Require `passport_number`
     - Optional: require `work_permit_url`
@@ -82,8 +82,8 @@ Implement a unified admin endpoint that creates both Supabase Auth user and empl
 - [ ] Test email uniqueness check (Auth conflict)
 - [ ] Test email uniqueness check (Employee conflict)
 - [ ] Test rollback scenario (auth created, employee fails)
-- [ ] Test validation errors (missing required fields)
-- [ ] Test SA vs foreign nationality validation rules
+- [ ] Test errors (missing required fields)
+- [ ] Test SA vs foreign nationality rules
 
 #### 3.2 Postman Collection
 - [x] Add example request to Postman collection:
@@ -166,7 +166,7 @@ Implement a unified admin endpoint that creates both Supabase Auth user and empl
 
 ## Error Handling Strategy
 
-### Validation Errors (400)
+### Errors (400)
 - Missing required fields
 - Invalid email format
 - Invalid date format
@@ -228,14 +228,14 @@ Implement a unified admin endpoint that creates both Supabase Auth user and empl
 ### Phase 1: Service Layer ✅
 - ✅ Early email uniqueness check (Auth + employees table)
 - ✅ Encryption migration (backend service using `lib/crypto.ts`)
-- ✅ Enhanced `createEmployeeWithAuth()` with validation and rollback
-- ✅ Foreign national validation (passport requirement)
+- ✅ Enhanced `createEmployeeWithAuth()` with and rollback
+- ✅ Foreign national (passport requirement)
 - ✅ Metadata sync (employee_id to auth user)
 - ✅ SQL script to disable DB encryption trigger
 
 ### Phase 2: API Endpoint ✅
 - ✅ Created `/api/admin/employees` POST endpoint
-- ✅ Zod validation for request body
+- ✅ Zod for request body
 - ✅ Error handling (400, 409, 500)
 - ✅ No admin guard (deferred)
 

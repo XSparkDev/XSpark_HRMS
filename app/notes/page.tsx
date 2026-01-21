@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState, useEffect } from "react"
 import { format } from "date-fns"
-import { AlertTriangle, Loader2, MessageSquare, Notebook, Plus, StickyNote, PenSquare, Trash2 } from "lucide-react"
+import { AlertTriangle, Loader2, MessageSquare, Notebook, Plus, StickyNote, PenSquare, Trash2, Clock, Calendar, Search, X } from "lucide-react"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Calendar as DatePicker } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useToast } from "@/hooks/use-toast"
 import { getCurrentUser, type User } from "@/lib/auth"
 import { cn } from "@/lib/utils"
@@ -29,7 +31,12 @@ type Notes2Item = {
   employee_id: string
   target_employee_id: string | null
   visibility: "private" | "public"
+  reminder_at: string | null
+  reminder_enabled: boolean
   creator_role?: string | null // Role name of the note creator
+  recipient_names?: string[] // Names of employees this note was sent to (for grouped notes)
+  recipient_count?: number // Number of recipients (for grouped notes)
+  note_ids?: string[] // All note IDs in this group (for deletion/updates)
 }
 
 const ALERT_META: Record<
@@ -81,6 +88,7 @@ export default function NotesPage() {
   const [employeeUuid, setEmployeeUuid] = useState<string | null>(null) // Store actual employee UUID
 
   // Fetch employee UUID from /api/auth/me using Bearer token
+  // This is optional - if it fails, the API routes will fetch it when needed
   const fetchEmployeeUuid = useCallback(async () => {
     if (!user?.id) return
 
@@ -109,10 +117,17 @@ export default function NotesPage() {
         // Use the actual UUID from employees table (not employee_id string like "XSP25/11/005")
         setEmployeeUuid(json.data.employee.id)
       } else {
-        console.error("[Notes2] Failed to fetch employee UUID:", json.error)
+        // Silently fail - the API routes will handle fetching employee UUID when needed
+        // This is not critical for the notes page to function
+        if (res.status !== 401) {
+          console.warn("[Notes2] Failed to fetch employee UUID (non-critical):", json.error)
+        }
+        // Don't set employeeUuid - API routes will fetch it when needed
       }
     } catch (error) {
-      console.error("[Notes2] Error fetching employee UUID:", error)
+      // Silently fail - this is not critical
+      console.warn("[Notes2] Error fetching employee UUID (non-critical):", error)
+      // Don't set employeeUuid - API routes will fetch it when needed
     }
   }, [user?.id])
 
@@ -124,12 +139,16 @@ export default function NotesPage() {
   const [personalNotes, setPersonalNotes] = useState<Notes2Item[]>([])
   const [publicNotes, setPublicNotes] = useState<Notes2Item[]>([])
   const [forYouNotes, setForYouNotes] = useState<Notes2Item[]>([])
+  const [scheduledNotes, setScheduledNotes] = useState<Notes2Item[]>([])
   const [personalLoading, setPersonalLoading] = useState(true)
   const [publicLoading, setPublicLoading] = useState(true)
   const [forYouLoading, setForYouLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<"personal" | "public" | "for_you">("personal")
+  const [scheduledLoading, setScheduledLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<"personal" | "public" | "for_you" | "scheduled">("personal")
   const [employees, setEmployees] = useState<Array<{ id: string; first_name: string; last_name: string; email: string }>>([])
   const [employeesLoading, setEmployeesLoading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [filterAlertLevel, setFilterAlertLevel] = useState<AlertLevel | "all">("all")
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selected, setSelected] = useState<Notes2Item | null>(null)
@@ -146,6 +165,9 @@ export default function NotesPage() {
     content: "",
     alert_level: "low" as AlertLevel,
     target_employee_id: "" as string | "",
+    reminder_date: undefined as Date | undefined,
+    reminder_time: "",
+    reminder_enabled: false,
   })
   const [editForm, setEditForm] = useState({
     title: "",
@@ -189,6 +211,8 @@ export default function NotesPage() {
             employee_id: note.employee_id,
             target_employee_id: note.target_employee_id ?? null,
             visibility: (note.visibility ?? "private") as "private" | "public",
+            reminder_at: note.reminder_at ?? null,
+            reminder_enabled: note.reminder_enabled ?? false,
             creator_role: note.creator_role ?? null,
           }))
         : []
@@ -231,7 +255,12 @@ export default function NotesPage() {
             employee_id: note.employee_id,
             target_employee_id: note.target_employee_id ?? null,
             visibility: (note.visibility ?? "private") as "private" | "public",
+            reminder_at: note.reminder_at ?? null,
+            reminder_enabled: note.reminder_enabled ?? false,
             creator_role: note.creator_role ?? null,
+            recipient_names: note.recipient_names ?? undefined,
+            recipient_count: note.recipient_count ?? undefined,
+            note_ids: note.note_ids ?? undefined,
           }))
         : []
       setForYouNotes(sortNotes(data))
@@ -273,6 +302,8 @@ export default function NotesPage() {
             employee_id: note.employee_id,
             target_employee_id: note.target_employee_id ?? null,
             visibility: (note.visibility ?? "public") as "private" | "public",
+            reminder_at: note.reminder_at ?? null,
+            reminder_enabled: note.reminder_enabled ?? false,
             creator_role: note.creator_role ?? null,
           }))
         : []
@@ -287,7 +318,51 @@ export default function NotesPage() {
     } finally {
       setPublicLoading(false)
     }
-  }, [toast, user])
+  }, [toast, user, employeeUuid])
+
+  const fetchScheduledNotes = useCallback(async () => {
+    if (!user?.id) {
+      setScheduledLoading(false)
+      return
+    }
+
+    try {
+      setScheduledLoading(true)
+      const res = await fetch("/api/notes2?scope=scheduled", {
+        headers: buildHeaders(user, employeeUuid),
+      })
+      const json = await res.json()
+      console.log("[Notes2][FETCH scheduled] response", { status: res.status, body: json })
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || "Unable to load scheduled notes")
+      }
+      const data: Notes2Item[] = Array.isArray(json.data)
+        ? json.data.map((note: any) => ({
+            id: note.id,
+            title: note.title,
+            content: note.content,
+            alert_level: note.alert_level as AlertLevel,
+            created_at: note.created_at,
+            employee_id: note.employee_id,
+            target_employee_id: note.target_employee_id ?? null,
+            visibility: (note.visibility ?? "private") as "private" | "public",
+            reminder_at: note.reminder_at ?? null,
+            reminder_enabled: note.reminder_enabled ?? false,
+            creator_role: note.creator_role ?? null,
+          }))
+        : []
+      setScheduledNotes(sortNotes(data))
+    } catch (error) {
+      console.error(error)
+      toast({
+        title: "Unable to load scheduled notes",
+        description: "We couldn't retrieve your scheduled notes right now. Please try again shortly.",
+        variant: "destructive",
+      })
+    } finally {
+      setScheduledLoading(false)
+    }
+  }, [toast, user, employeeUuid])
 
 
   const fetchEmployees = useCallback(async () => {
@@ -357,15 +432,17 @@ export default function NotesPage() {
     fetchPersonalNotes()
     fetchPublicNotes()
     fetchForYouNotes()
+    fetchScheduledNotes()
     if (canCreateForEmployee) {
       fetchEmployees()
     }
-  }, [fetchPersonalNotes, fetchPublicNotes, fetchForYouNotes, fetchEmployees, canCreateForEmployee])
+  }, [fetchPersonalNotes, fetchPublicNotes, fetchForYouNotes, fetchScheduledNotes, fetchEmployees, canCreateForEmployee])
 
   useEffect(() => {
     const handler = () => {
       fetchPersonalNotes()
       fetchPublicNotes()
+      fetchScheduledNotes()
     }
     if (typeof window !== "undefined") {
       window.addEventListener("notes2-updated", handler)
@@ -375,7 +452,7 @@ export default function NotesPage() {
         window.removeEventListener("notes2-updated", handler)
       }
     }
-  }, [fetchPersonalNotes, fetchPublicNotes])
+  }, [fetchPersonalNotes, fetchPublicNotes, fetchScheduledNotes])
 
   const resetForm = () => {
     setForm({
@@ -383,6 +460,9 @@ export default function NotesPage() {
       content: "",
       alert_level: "low",
       target_employee_id: "",
+      reminder_date: undefined,
+      reminder_time: "",
+      reminder_enabled: false,
     })
     setCreateNoteTab("personal")
     setCreateNoteType("public")
@@ -447,12 +527,23 @@ export default function NotesPage() {
       if (targetEmployees.length > 0) {
         // Create notes for each selected employee
         const promises = targetEmployees.map(async (employeeId) => {
+          // Build reminder_at if reminder is enabled
+          let reminderAt: string | null = null
+          if (form.reminder_enabled && form.reminder_date && form.reminder_time) {
+            const [hours, minutes] = form.reminder_time.split(":")
+            const reminderDateTime = new Date(form.reminder_date)
+            reminderDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0)
+            reminderAt = reminderDateTime.toISOString()
+          }
+
           const requestPayload = {
             title: form.title.trim() || undefined,
             content: form.content.trim(),
             alert_level: form.alert_level,
             visibility: "private" as const,
             target_employee_id: employeeId,
+            reminder_at: reminderAt,
+            reminder_enabled: form.reminder_enabled && !!reminderAt,
           }
           console.log("[Notes2][CREATE] payload", requestPayload)
           const res = await fetch("/api/notes2", {
@@ -494,12 +585,23 @@ export default function NotesPage() {
         })
       } else {
         // Create single note (personal or public)
+        // Build reminder_at if reminder is enabled
+        let reminderAt: string | null = null
+        if (form.reminder_enabled && form.reminder_date && form.reminder_time) {
+          const [hours, minutes] = form.reminder_time.split(":")
+          const reminderDateTime = new Date(form.reminder_date)
+          reminderDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0)
+          reminderAt = reminderDateTime.toISOString()
+        }
+
         const requestPayload = {
           title: form.title.trim() || undefined,
           content: form.content.trim(),
           alert_level: form.alert_level,
           visibility: isPublic ? "public" : "private",
           target_employee_id: undefined,
+          reminder_at: reminderAt,
+          reminder_enabled: form.reminder_enabled && !!reminderAt,
         }
         console.log("[Notes2][CREATE] payload", requestPayload)
         const res = await fetch("/api/notes2", {
@@ -514,7 +616,10 @@ export default function NotesPage() {
         const json = await res.json()
         console.log("[Notes2][CREATE] response", { status: res.status, body: json })
         if (!res.ok || !json?.success) {
-          throw new Error(json?.error || "Failed to create note")
+          const errorMsg = json?.error || json?.message || "Failed to create note"
+          const errorDetails = json?.details ? ` Details: ${JSON.stringify(json.details)}` : ""
+          console.error("[Notes2][CREATE] Error details:", { status: res.status, error: errorMsg, details: json?.details })
+          throw new Error(`${errorMsg}${errorDetails}`)
         }
 
         const created: Notes2Item = {
@@ -526,11 +631,15 @@ export default function NotesPage() {
           visibility: json.data.visibility ?? (isPublic ? "public" : "private"),
           employee_id: json.data.employee_id ?? user.id,
           target_employee_id: json.data.target_employee_id ?? null,
+          reminder_at: json.data.reminder_at ?? null,
+          reminder_enabled: json.data.reminder_enabled ?? false,
           creator_role: json.data.creator_role ?? user.role ?? null,
         }
 
         if (created.visibility === "public") {
           setPublicNotes((prev) => sortNotes([created, ...prev]))
+        } else if (created.reminder_enabled) {
+          setScheduledNotes((prev) => sortNotes([created, ...prev]))
         } else {
           setPersonalNotes((prev) => sortNotes([created, ...prev]))
         }
@@ -618,7 +727,7 @@ export default function NotesPage() {
     }
   }
 
-  const handleDeleteNote = async (noteId: string) => {
+  const handleDeleteNote = async (noteId: string, note?: Notes2Item) => {
     if (!user?.id) {
       toast({
         title: "You're not signed in",
@@ -627,27 +736,49 @@ export default function NotesPage() {
       })
       return
     }
-    if (!confirm("Are you sure you want to delete this note? This cannot be undone.")) {
+    
+    // If this is a grouped note (sent to multiple employees), delete all notes in the group
+    const noteIdsToDelete = note?.note_ids && note.note_ids.length > 0 ? note.note_ids : [noteId]
+    const confirmMessage = noteIdsToDelete.length > 1
+      ? `Are you sure you want to delete this note sent to ${noteIdsToDelete.length} employee(s)? This cannot be undone.`
+      : "Are you sure you want to delete this note? This cannot be undone."
+    
+    if (!confirm(confirmMessage)) {
       return
     }
 
     try {
       setIsDeletePending(noteId)
-      console.log("[Notes2][DELETE] request", { noteId })
-      const res = await fetch(`/api/notes2/${noteId}`, {
-        method: "DELETE",
-        headers: buildHeaders(user, employeeUuid),
-      })
-      const json = await res.json().catch(() => ({}))
-      console.log("[Notes2][DELETE] response", { status: res.status, body: json })
-      if (!res.ok || !json?.success) {
-        throw new Error(json?.error || "Failed to delete note")
+      console.log("[Notes2][DELETE] request", { noteId, noteIdsToDelete })
+      
+      // Delete all notes in the group
+      const deletePromises = noteIdsToDelete.map((id) =>
+        fetch(`/api/notes2/${id}`, {
+          method: "DELETE",
+          headers: buildHeaders(user, employeeUuid),
+        })
+      )
+      
+      const results = await Promise.all(deletePromises)
+      const jsonResults = await Promise.all(results.map((res) => res.json().catch(() => ({}))))
+      
+      // Check if all deletions succeeded
+      const allSucceeded = results.every((res, index) => res.ok && jsonResults[index]?.success)
+      
+      if (!allSucceeded) {
+        throw new Error("Failed to delete note(s)")
       }
 
-      toast({ title: "Note deleted" })
-      setPersonalNotes((prev) => prev.filter((note) => note.id !== noteId))
-      setPublicNotes((prev) => prev.filter((note) => note.id !== noteId))
-      setForYouNotes((prev) => prev.filter((note) => note.id !== noteId))
+      toast({ 
+        title: "Note deleted",
+        description: noteIdsToDelete.length > 1 ? `Deleted note sent to ${noteIdsToDelete.length} employee(s).` : undefined
+      })
+      
+      // Remove from all note lists
+      setPersonalNotes((prev) => prev.filter((n) => !noteIdsToDelete.includes(n.id)))
+      setPublicNotes((prev) => prev.filter((n) => !noteIdsToDelete.includes(n.id)))
+      setForYouNotes((prev) => prev.filter((n) => !noteIdsToDelete.includes(n.id)))
+      
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("notes2-updated"))
       }
@@ -728,9 +859,22 @@ export default function NotesPage() {
             <p className="text-sm text-muted-foreground line-clamp-2 mt-1">{note.content}</p>
           </div>
           <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <MessageSquare className="h-3.5 w-3.5" />
-              <span>Created by {getCreatorLabel(note)}</span>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-3.5 w-3.5" />
+                <span>Created by {getCreatorLabel(note)}</span>
+              </div>
+              {note.reminder_enabled && note.reminder_at && (
+                <div className="flex items-center gap-2 ml-5">
+                  <Clock className="h-3.5 w-3.5" />
+                  <span>Reminder: {format(new Date(note.reminder_at), "PPP 'at' p")}</span>
+                </div>
+              )}
+              {note.recipient_names && note.recipient_names.length > 0 && (
+                <span className="text-xs text-muted-foreground ml-5">
+                  Sent to: {note.recipient_names.join(", ")}
+                </span>
+              )}
             </div>
             {canModify && (
               <div className="flex items-center gap-3">
@@ -756,7 +900,7 @@ export default function NotesPage() {
                   data-note-action
                   type="button"
                   className="text-red-500 hover:text-red-600 disabled:opacity-50 transition-colors"
-                  onClick={() => handleDeleteNote(note.id)}
+                  onClick={() => handleDeleteNote(note.id, note)}
                   disabled={isDeletePending === note.id}
                   aria-label="Delete note"
                 >
@@ -777,11 +921,33 @@ export default function NotesPage() {
     )
   }
 
+  // Filter notes based on search query and alert level
+  const filterNotes = (notes: Notes2Item[]): Notes2Item[] => {
+    let filtered = [...notes]
+
+    // Filter by search query (title and content)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim()
+      filtered = filtered.filter((note) => {
+        const titleMatch = note.title?.toLowerCase().includes(query) ?? false
+        const contentMatch = note.content.toLowerCase().includes(query)
+        return titleMatch || contentMatch
+      })
+    }
+
+    // Filter by alert level
+    if (filterAlertLevel !== "all") {
+      filtered = filtered.filter((note) => note.alert_level === filterAlertLevel)
+    }
+
+    return filtered
+  }
+
   const renderNotesPane = (
     notesArr: Notes2Item[],
     loading: boolean,
     emptyMessage: string,
-    scope: "personal" | "public",
+    scope: "personal" | "public" | "for_you" | "scheduled",
   ) => {
     if (loading) {
       return (
@@ -793,7 +959,33 @@ export default function NotesPage() {
       )
     }
 
-    if (!notesArr.length) {
+    // Apply filters to the notes
+    const filteredNotes = filterNotes(notesArr)
+
+    // Show message if filters are active but no notes match
+    if (!filteredNotes.length && notesArr.length > 0) {
+      return (
+        <Card className="border-dashed">
+          <CardContent className="py-12 text-center space-y-3 text-muted-foreground">
+            <Notebook className="h-8 w-8 mx-auto opacity-70" />
+            <p className="text-sm">No notes match your filters.</p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setSearchQuery("")
+                setFilterAlertLevel("all")
+              }}
+            >
+              Clear filters
+            </Button>
+          </CardContent>
+        </Card>
+      )
+    }
+
+    // Show empty state if no notes at all
+    if (!filteredNotes.length) {
       return (
         <Card className="border-dashed">
           <CardContent className="py-12 text-center space-y-3 text-muted-foreground">
@@ -809,7 +1001,7 @@ export default function NotesPage() {
       )
     }
 
-    return <div className="grid gap-4">{notesArr.map((note) => renderNoteCard(note))}</div>
+    return <div className="grid gap-4">{filteredNotes.map((note) => renderNoteCard(note))}</div>
   }
 
   if (!user) {
@@ -840,14 +1032,91 @@ export default function NotesPage() {
         </Button>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "personal" | "public" | "for_you")} className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "personal" | "public" | "for_you" | "scheduled")} className="space-y-4">
         <TabsList>
           <TabsTrigger value="personal">Personal</TabsTrigger>
           <TabsTrigger value="public">Public</TabsTrigger>
           <TabsTrigger value="for_you">
             {isEmployee ? "For You" : "Sent to Employees"}
           </TabsTrigger>
+          <TabsTrigger value="scheduled">Schedule Notes</TabsTrigger>
         </TabsList>
+        
+        {/* Filter Section */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col md:flex-row gap-4">
+              {/* Search Input */}
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search notes by title or content..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-10"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              
+              {/* Alert Level Filter */}
+              <div className="w-full md:w-48">
+                <Select
+                  value={filterAlertLevel}
+                  onValueChange={(value) => setFilterAlertLevel(value as AlertLevel | "all")}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Filter by alert level" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Alert Levels</SelectItem>
+                    <SelectItem value="high">
+                      <span className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-red-500" />
+                        High Alert
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="medium">
+                      <span className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-amber-500" />
+                        Medium Alert
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="low">
+                      <span className="flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-blue-500" />
+                        Low Alert
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {/* Clear Filters Button */}
+              {(searchQuery || filterAlertLevel !== "all") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSearchQuery("")
+                    setFilterAlertLevel("all")
+                  }}
+                  className="whitespace-nowrap"
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Clear
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
         <TabsContent value="personal">
           {renderNotesPane(
             personalNotes,
@@ -867,6 +1136,14 @@ export default function NotesPage() {
               ? "No notes have been sent to you yet." 
               : "You have not sent any notes to specific employees yet.",
             "for_you",
+          )}
+        </TabsContent>
+        <TabsContent value="scheduled">
+          {renderNotesPane(
+            scheduledNotes,
+            scheduledLoading,
+            "You have no scheduled notes with reminders.",
+            "scheduled",
           )}
         </TabsContent>
       </Tabs>
@@ -943,6 +1220,58 @@ export default function NotesPage() {
                     </SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="reminder-enabled"
+                    checked={form.reminder_enabled}
+                    onCheckedChange={(checked) =>
+                      setForm((prev) => ({ ...prev, reminder_enabled: checked === true }))
+                    }
+                  />
+                  <Label htmlFor="reminder-enabled" className="cursor-pointer">
+                    Set reminder
+                  </Label>
+                </div>
+                {form.reminder_enabled && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="reminder-date">Reminder Date</Label>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "w-full justify-start text-left font-normal",
+                              !form.reminder_date && "text-muted-foreground"
+                            )}
+                          >
+                            <Calendar className="mr-2 h-4 w-4" />
+                            {form.reminder_date ? format(form.reminder_date, "PPP") : "Pick a date"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0">
+                          <DatePicker
+                            mode="single"
+                            selected={form.reminder_date}
+                            onSelect={(date) => setForm((prev) => ({ ...prev, reminder_date: date }))}
+                            disabled={(date) => date < new Date()}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="reminder-time">Reminder Time</Label>
+                      <Input
+                        id="reminder-time"
+                        type="time"
+                        value={form.reminder_time}
+                        onChange={(e) => setForm((prev) => ({ ...prev, reminder_time: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </TabsContent>
             <TabsContent value="public" className="space-y-4">
@@ -1024,6 +1353,58 @@ export default function NotesPage() {
                         </SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="reminder-enabled-public"
+                        checked={form.reminder_enabled}
+                        onCheckedChange={(checked) =>
+                          setForm((prev) => ({ ...prev, reminder_enabled: checked === true }))
+                        }
+                      />
+                      <Label htmlFor="reminder-enabled-public" className="cursor-pointer">
+                        Set reminder
+                      </Label>
+                    </div>
+                    {form.reminder_enabled && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="reminder-date-public">Reminder Date</Label>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                className={cn(
+                                  "w-full justify-start text-left font-normal",
+                                  !form.reminder_date && "text-muted-foreground"
+                                )}
+                              >
+                                <Calendar className="mr-2 h-4 w-4" />
+                                {form.reminder_date ? format(form.reminder_date, "PPP") : "Pick a date"}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0">
+                              <DatePicker
+                                mode="single"
+                                selected={form.reminder_date}
+                                onSelect={(date) => setForm((prev) => ({ ...prev, reminder_date: date }))}
+                                disabled={(date) => date < new Date()}
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="reminder-time-public">Reminder Time</Label>
+                          <Input
+                            id="reminder-time-public"
+                            type="time"
+                            value={form.reminder_time}
+                            onChange={(e) => setForm((prev) => ({ ...prev, reminder_time: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   {createNoteType === "specific_employee" && (
                     <div className="space-y-2">

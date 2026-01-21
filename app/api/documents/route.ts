@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { documentSchema, documentUploadRequestSchema } from "@/lib/validation/documents"
 import { documentsService } from "@/lib/services/documents-service"
 import { getCurrentUser } from "@/lib/auth"
+import { getRequestUser } from "@/lib/auth/request-user"
 import { z } from "zod"
 
 // Rate limiter for uploads
@@ -24,9 +25,37 @@ const checkRateLimit = (ip: string, maxRequests: number = 10, windowMs: number =
   return true
 }
 
+type ApiUserContext = {
+  id: string
+  employeeId: string
+  role: string
+  name: string
+}
+
+const resolveUserContext = (req: NextRequest): ApiUserContext | null => {
+  const headerUser = getRequestUser(req)
+  const currentUser = getCurrentUser(req)
+
+  const id = headerUser?.id ?? currentUser?.id
+  const employeeId = headerUser?.employeeId ?? currentUser?.employeeId ?? id ?? null
+  const role = headerUser?.role ?? currentUser?.role ?? "employee"
+  const name = currentUser?.name ?? currentUser?.email ?? "User"
+
+  if (!id || !employeeId) {
+    return null
+  }
+
+  return {
+    id,
+    employeeId,
+    role,
+    name,
+  }
+}
+
 // POST /api/documents - Upload new document
-export async function POST(req: Request) {
-  const user = getCurrentUser()
+export async function POST(req: NextRequest) {
+  const user = resolveUserContext(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }
@@ -39,8 +68,23 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const validatedData = documentUploadRequestSchema.parse(body)
 
+    // When the client sends a complete document payload, validate and persist it directly.
+    if (body?.document) {
+      const documentInput = body.document
+      const normalizedDocument = {
+        ...documentInput,
+        deleted_at: documentInput.deleted_at ? new Date(documentInput.deleted_at) : null,
+        created_at: documentInput.created_at ? new Date(documentInput.created_at) : new Date(),
+        updated_at: documentInput.updated_at ? new Date(documentInput.updated_at) : new Date(),
+      }
+
+      const validatedDocument = documentSchema.parse(normalizedDocument)
+      const document = await documentsService.uploadDocument(validatedDocument)
+      return NextResponse.json(document, { status: 201 })
+    }
+
+    const validatedData = documentUploadRequestSchema.parse(body)
     const { fileName, fileType, fileSize, documentType, isSensitive } = validatedData
 
     // Generate signed upload URL
@@ -52,7 +96,7 @@ export async function POST(req: Request) {
       type: documentType,
       description: "",
       tags: "",
-      employee_id: user.id,
+      employee_id: user.employeeId,
       uploaded_by: user.id,
       uploaded_by_name: user.name,
       employee_name: user.name, // In real app, get from employee data
@@ -93,8 +137,8 @@ export async function POST(req: Request) {
 }
 
 // GET /api/documents - Get all documents
-export async function GET(req: Request) {
-  const user = getCurrentUser()
+export async function GET(req: NextRequest) {
+  const user = resolveUserContext(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }
@@ -130,8 +174,8 @@ export async function GET(req: Request) {
 }
 
 // PUT /api/documents/[id] - Update document
-export async function PUT(req: Request) {
-  const user = getCurrentUser()
+export async function PUT(req: NextRequest) {
+  const user = resolveUserContext(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }
@@ -188,7 +232,7 @@ export async function PUT(req: Request) {
 
 // DELETE /api/documents/[id] - Delete document
 export async function DELETE(req: Request) {
-  const user = getCurrentUser()
+  const user = getCurrentUser(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }

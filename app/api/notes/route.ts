@@ -8,6 +8,7 @@ import {
   updateEmployeeNote,
   type EmployeeNote,
 } from "@/lib/services"
+import { getCurrentUser } from "@/lib/auth"
 import { getRequestUser } from "@/lib/auth/request-user"
 
 const visibilityEnum = z.enum(["public", "personal"]) as unknown as z.ZodEnum<["public", "personal"]>
@@ -91,7 +92,7 @@ export async function PATCH(
   { params }: { params: { noteId: string } }
 ) {
   try {
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
@@ -155,7 +156,7 @@ export async function DELETE(
   { params }: { params: { noteId: string } }
 ) {
   try {
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
@@ -198,7 +199,7 @@ export async function DELETE(
 // GET /api/notes/dashboard - Get high alert notes for dashboard
 export async function GET_DASHBOARD(request: NextRequest) {
   try {
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

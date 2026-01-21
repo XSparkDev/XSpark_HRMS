@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get current user
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user || !user.id) {
       return NextResponse.json(
         { message: "Unauthorized" },
@@ -198,7 +198,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get current user
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user || !user.id) {
       return NextResponse.json(
         { message: "Unauthorized" },
@@ -276,7 +276,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // Get current user
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user || !user.id) {
       return NextResponse.json(
         { message: "Unauthorized" },
@@ -452,7 +452,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Get current user
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user || !user.id) {
       return NextResponse.json(
         { message: "Unauthorized" },

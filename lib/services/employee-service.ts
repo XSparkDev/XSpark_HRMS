@@ -161,7 +161,7 @@ export class EmployeeService {
     try {
       let query = supabaseAdmin
         .from('employees')
-        .select('*')
+        .select('*, job_titles(title, department)')
 
       // Default to active employees only if is_active filter not provided
       if (filters?.is_active !== undefined) {
@@ -504,10 +504,22 @@ export class EmployeeService {
    */
   async archive(id: string, reason?: string): Promise<boolean> {
     try {
-      const { error } = await supabase.rpc('archive_employee', {
-        emp_id: id,
-        reason: reason || null
-      })
+      const updateData: any = {
+        is_active: false,
+        deleted_at: new Date().toISOString(),
+        employment_status: 'archived'
+      }
+      
+      // Add termination reason if provided
+      if (reason) {
+        updateData.termination_reason = reason
+        updateData.date_terminated = new Date().toISOString().split('T')[0] // Date only
+      }
+
+      const { error } = await supabaseAdmin
+        .from('employees')
+        .update(updateData)
+        .eq('id', id)
 
       if (error) throw error
       return true
@@ -522,7 +534,7 @@ export class EmployeeService {
    */
   async restore(id: string): Promise<Employee | null> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('employees')
         .update({
           is_active: true,

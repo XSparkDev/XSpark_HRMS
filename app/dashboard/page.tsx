@@ -32,10 +32,21 @@ import {
   Upload,
   MessageSquare,
 } from "lucide-react"
+import { SuperAdminDashboard } from "@/components/dashboard/super-admin-dashboard"
+import { AdminDashboard } from "@/components/dashboard/admin-dashboard"
+import { JuniorHRDashboard } from "@/components/dashboard/junior-hr-dashboard"
 
 // Lazy load heavy components
 const Notes2HighAlert = dynamic(
   () => import("@/components/notes2-high-alert").then((mod) => ({ default: mod.Notes2HighAlert })),
+  {
+  loading: () => <div className="h-32" />,
+    ssr: false,
+  },
+)
+
+const Notes2Scheduled = dynamic(
+  () => import("@/components/notes2-scheduled").then((mod) => ({ default: mod.Notes2Scheduled })),
   {
   loading: () => <div className="h-32" />,
     ssr: false,
@@ -48,6 +59,7 @@ export default function DashboardPage() {
   const [showContactHrModal, setShowContactHrModal] = useState(false)
   const [showLeaveModal, setShowLeaveModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
+  const [preferredName, setPreferredName] = useState<string | null>(null)
 
   // Leave modal local state
   const [leaveType, setLeaveType] = useState("annual")
@@ -76,8 +88,51 @@ export default function DashboardPage() {
 
   const isEmployee = user.role === "employee"
   const isJuniorHR = user.role === "junior_hr"
-  const isHRManager = user.role === "hr_manager" || user.role === "super_admin"
+  const isHRManager = user.role === "hr_manager" || user.role === "admin" || user.role === "hr_admin"
   const isSuperAdmin = user.role === "super_admin"
+
+  // Load preferred name from profile (same as dashboard layout header)
+  useEffect(() => {
+    const loadPreferredName = async () => {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        try {
+          const storedSession = localStorage.getItem("xspark_session")
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (error) {
+          console.warn("Failed to parse session for preferred name fetch:", error)
+        }
+
+        const res = await fetch("/api/auth/me", { headers })
+        const json = await res.json().catch(() => ({}))
+        const profile = json?.data?.employee || null
+        if (profile?.preferred_name) {
+          setPreferredName(profile.preferred_name as string)
+        }
+      } catch (error) {
+        console.warn("Failed to load preferred name for dashboard banner:", error)
+      }
+    }
+
+    if (typeof window !== "undefined") {
+      loadPreferredName()
+    }
+  }, [])
+
+  // Helper: progress bar color based on remaining percentage
+  const getRemainingColorClass = (used: number, total: number) => {
+    const remaining = total - used
+    const remainingPct = (remaining / total) * 100
+
+    if (remainingPct >= 67) return "[&>div]:bg-green-500"
+    if (remainingPct >= 34) return "[&>div]:bg-orange-500"
+    return "[&>div]:bg-red-500"
+  }
 
   return (
     <DashboardLayout>
@@ -87,7 +142,12 @@ export default function DashboardPage() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-3xl font-bold mb-2">Welcome back, {user.name}!</h1>
+                <h1 className="text-3xl font-bold mb-1">Welcome back, {user.name}!</h1>
+                {preferredName && preferredName !== user.name && (
+                  <p className="text-sm text-white/80 mb-1">
+                    AKA <span className="font-semibold">{preferredName}</span>
+                  </p>
+                )}
                 <p className="text-white/90">
                   {isEmployee && "Manage your profile, leave requests, and documents"}
                   {isJuniorHR && "Review pending requests and manage employee records"}
@@ -117,7 +177,10 @@ export default function DashboardPage() {
                       <span className="text-3xl font-bold text-navy">12</span>
                       <span className="text-muted-foreground">/ 15 days</span>
                     </div>
-                    <Progress value={80} className="h-2" />
+                    <Progress
+                      value={80}
+                      className={cn("h-2", getRemainingColorClass(12, 15))}
+                    />
                   </div>
                 </CardContent>
               </Card>
@@ -132,7 +195,10 @@ export default function DashboardPage() {
                       <span className="text-3xl font-bold text-navy">8</span>
                       <span className="text-muted-foreground">/ 10 days</span>
                     </div>
-                    <Progress value={80} className="h-2" />
+                    <Progress
+                      value={80}
+                      className={cn("h-2", getRemainingColorClass(8, 10))}
+                    />
                   </div>
                 </CardContent>
               </Card>
@@ -147,17 +213,23 @@ export default function DashboardPage() {
                       <span className="text-3xl font-bold text-navy">3</span>
                       <span className="text-muted-foreground">/ 3 days</span>
                     </div>
-                    <Progress value={100} className="h-2" />
+                    <Progress
+                      value={100}
+                      className={cn("h-2", getRemainingColorClass(3, 3))}
+                    />
                   </div>
                 </CardContent>
               </Card>
             </div>
 
-            {/* High Alert Notes */}
-            <Notes2HighAlert />
-
             {/* My HR Cases */}
             <MyHrCases />
+
+            {/* Scheduled Notes */}
+            <Notes2Scheduled />
+
+            {/* High Alert Notes */}
+            <Notes2HighAlert />
 
             {/* Recent Notifications */}
             <Card>
@@ -203,283 +275,13 @@ export default function DashboardPage() {
         )}
 
         {/* Junior HR View */}
-        {isJuniorHR && (
-          <>
-            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">Pending Leave Requests</CardTitle>
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-navy">8</div>
-                  <p className="text-xs text-muted-foreground mt-1">Awaiting your review</p>
-                </CardContent>
-              </Card>
+        {isJuniorHR && <JuniorHRDashboard />}
 
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">Documents to Verify</CardTitle>
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-navy">5</div>
-                  <p className="text-xs text-muted-foreground mt-1">Uploaded by employees</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">Active Employees</CardTitle>
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-navy">42</div>
-                  <p className="text-xs text-muted-foreground mt-1">In your department</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">Approved Today</CardTitle>
-                  <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-navy">12</div>
-                  <p className="text-xs text-muted-foreground mt-1">Requests processed</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Pending Tasks</CardTitle>
-                <CardDescription>Items requiring your attention</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {[
-                    {
-                      name: "Sarah Johnson",
-                      type: "Leave Request",
-                      details: "Annual Leave: Dec 15-20",
-                      priority: "high",
-                    },
-                    {
-                      name: "Michael Chen",
-                      type: "Document Upload",
-                      details: "Medical Certificate",
-                      priority: "medium",
-                    },
-                    { name: "Emma Davis", type: "Leave Request", details: "Sick Leave: Dec 10", priority: "high" },
-                  ].map((task, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 rounded-lg border">
-                      <div className="flex-1">
-                        <p className="font-medium text-sm">{task.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {task.type} • {task.details}
-                        </p>
-                      </div>
-                      <Badge variant={task.priority === "high" ? "destructive" : "secondary"}>{task.priority}</Badge>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
-
-        {/* Admin View */}
-        {isHRManager && (
-          <>
-            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">Total Employees</CardTitle>
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-navy">156</div>
-                  <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                    <TrendingUp className="h-3 w-3" />
-                    +8 this month
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">Pending Verifications</CardTitle>
-                  <AlertCircle className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-navy">23</div>
-                  <p className="text-xs text-muted-foreground mt-1">Across all departments</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">Active Leave Requests</CardTitle>
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-navy">15</div>
-                  <p className="text-xs text-muted-foreground mt-1">Awaiting approval</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium">Documents Pending</CardTitle>
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-navy">31</div>
-                  <p className="text-xs text-muted-foreground mt-1">Need review</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Department Breakdown</CardTitle>
-                  <CardDescription>Employee distribution</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {[
-                      { dept: "Engineering", count: 45, color: "bg-blue-500" },
-                      { dept: "Sales", count: 32, color: "bg-green-500" },
-                      { dept: "Marketing", count: 28, color: "bg-purple-500" },
-                      { dept: "Operations", count: 25, color: "bg-amber-500" },
-                      { dept: "HR", count: 12, color: "bg-red-500" },
-                      { dept: "Finance", count: 14, color: "bg-cyan-500" },
-                    ].map((dept, i) => (
-                      <div key={i} className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="font-medium">{dept.dept}</span>
-                          <span className="text-muted-foreground">{dept.count} employees</span>
-                        </div>
-                        <div className="h-2 bg-muted rounded-full overflow-hidden">
-                          <div className={`h-full ${dept.color}`} style={{ width: `${(dept.count / 156) * 100}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Approval Queue</CardTitle>
-                  <CardDescription>Quick access to pending approvals</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {[
-                      { name: "John Smith", type: "Leave Request", date: "Dec 20-25", status: "pending" },
-                      { name: "Alice Brown", type: "Document", date: "Contract Update", status: "pending" },
-                      { name: "Robert Lee", type: "Leave Request", date: "Jan 5-10", status: "pending" },
-                      { name: "Maria Garcia", type: "Profile Update", date: "Banking Details", status: "pending" },
-                    ].map((item, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                      >
-                        <div className="flex-1">
-                          <p className="font-medium text-sm">{item.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {item.type} • {item.date}
-                          </p>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" className="h-8 text-xs bg-transparent">
-                            View
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </>
-        )}
+        {/* Admin/HR Manager View */}
+        {isHRManager && !isSuperAdmin && <AdminDashboard />}
 
         {/* Super Admin View */}
-        {isSuperAdmin && (
-          <>
-            <Card>
-              <CardHeader>
-                <CardTitle>System Health Dashboard</CardTitle>
-                <CardDescription>Real-time system metrics and activity</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid md:grid-cols-4 gap-6">
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Active Users Today</p>
-                    <p className="text-3xl font-bold text-navy">142</p>
-                    <p className="text-xs text-green-600">+12% from yesterday</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Audit Log Entries</p>
-                    <p className="text-3xl font-bold text-navy">1,247</p>
-                    <p className="text-xs text-muted-foreground">Last 24 hours</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Storage Usage</p>
-                    <p className="text-3xl font-bold text-navy">68%</p>
-                    <Progress value={68} className="h-2 mt-2" />
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Failed Logins</p>
-                    <p className="text-3xl font-bold text-navy">3</p>
-                    <p className="text-xs text-amber-600">Requires attention</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Audit Activity</CardTitle>
-                <CardDescription>Last 10 system actions</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {[
-                    {
-                      user: "Sarah Smith (Admin)",
-                      action: "Approved leave request",
-                      target: "John Doe",
-                      time: "2 min ago",
-                    },
-                    { user: "Admin User", action: "Updated user role", target: "Jane Smith", time: "15 min ago" },
-                    {
-                      user: "Michael Johnson",
-                      action: "Uploaded document",
-                      target: "Contract.pdf",
-                      time: "1 hour ago",
-                    },
-                    { user: "System", action: "Automated backup", target: "Database", time: "2 hours ago" },
-                  ].map((log, i) => (
-                    <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-muted/30 text-sm">
-                      <div className="flex-1">
-                        <p className="font-medium">{log.user}</p>
-                        <p className="text-muted-foreground text-xs">
-                          {log.action} • {log.target}
-                        </p>
-                      </div>
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">{log.time}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
+        {isSuperAdmin && <SuperAdminDashboard />}
       </div>
 
       {/* Contact HR Modal */}

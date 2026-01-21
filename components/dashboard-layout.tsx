@@ -78,7 +78,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         const json = await res.json().catch(() => ({}))
         const profile = json?.data?.employee || null
         if (profile) {
-          const dn = profile.preferred_name || `${profile.first_name} ${profile.last_name}`
+          // Use legal name (first + last) in the header; fall back to preferred_name or auth name
+          const legalName = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim()
+          const dn = legalName || profile.preferred_name || currentUser?.name || ''
           setDisplayName(dn)
         } else if (currentUser?.name) {
           setDisplayName(currentUser.name)

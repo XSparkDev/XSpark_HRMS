@@ -13,3 +13,7 @@ CREATE INDEX IF NOT EXISTS idx_notes2_visibility ON notes2(visibility);
 CREATE INDEX IF NOT EXISTS idx_notes2_visibility_alert ON notes2(visibility, alert_level, created_at DESC);
 
 
+
+
+
+

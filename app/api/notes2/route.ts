@@ -16,6 +16,8 @@ const createNoteSchema = z.object({
   alert_level: z.enum(["high", "medium", "low"]).default("low"),
   visibility: z.enum(["private", "public"]).optional().default("private"),
   target_employee_id: z.string().uuid().optional().nullable(),
+  reminder_at: z.string().datetime().optional().nullable(),
+  reminder_enabled: z.boolean().optional().default(false),
 })
 
 export async function GET(request: NextRequest) {
@@ -65,6 +67,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, data: notes })
     }
     
+    if (scope === "scheduled") {
+      const notes = await notes2Service.getScheduledNotesByEmployee(employeeId)
+      return NextResponse.json({ success: true, data: notes })
+    }
+    
     if (scope === "for_you") {
       // For employees: show notes sent to them (target_employee_id = their employee UUID)
       // For non-employees: show notes they sent to specific employees (employee_id = their auth_user_id AND target_employee_id IS NOT NULL)
@@ -75,10 +82,11 @@ export async function GET(request: NextRequest) {
         // Employees see notes sent to them
         notes = await notes2Service.getNotesForEmployee(employeeId)
       } else {
-        // Non-employees see notes they sent to specific employees
+        // Non-employees see notes they sent to specific employees (grouped)
         notes = await notes2Service.getNotesSentToEmployees(user.id)
       }
       
+      // Include recipient info in response (for grouped notes)
       return NextResponse.json({ success: true, data: notes })
     }
 
@@ -206,6 +214,8 @@ export async function POST(request: NextRequest) {
       content: payload.content,
       alert_level: payload.alert_level,
       visibility: finalVisibility,
+      reminder_at: payload.reminder_at ?? null,
+      reminder_enabled: payload.reminder_enabled ?? false,
     }
     console.log("[Notes2 API][POST] create payload", noteInput)
     const note = await notes2Service.createNote(noteInput)
@@ -220,7 +230,12 @@ export async function POST(request: NextRequest) {
       )
     }
     console.error("Notes2 POST error:", error)
-    return NextResponse.json({ success: false, error: "Failed to create note" }, { status: 500 })
+    const errorMessage = error instanceof Error ? error.message : "Failed to create note"
+    return NextResponse.json({ 
+      success: false, 
+      error: errorMessage,
+      details: error instanceof Error ? error.stack : undefined
+    }, { status: 500 })
   }
 }
 

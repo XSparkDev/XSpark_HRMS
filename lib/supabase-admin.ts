@@ -1,37 +1,76 @@
 // ============================================================================
 // SUPABASE ADMIN CLIENT - Server-side service role client (bypasses RLS)
 // ============================================================================
+// WARNING: This client should ONLY be used on the server side.
+// It uses the service role key which must never be exposed to the client.
+// ============================================================================
 
 import { createClient } from '@supabase/supabase-js'
-import { supabase as anonSupabase } from './supabase'
 
-const supabaseUrl = process.env.SUPABASE_URL || ''
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+// Check if we're in a browser environment
+const isBrowser = typeof window !== 'undefined'
 
-const supabaseAdminClient =
-  supabaseUrl && supabaseServiceRoleKey
-    ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+// Only access environment variables on the server
+const supabaseUrl = isBrowser ? '' : (process.env.SUPABASE_URL || '')
+const supabaseServiceRoleKey = isBrowser ? '' : (process.env.SUPABASE_SERVICE_ROLE_KEY || '')
+
+// Create a stub for browser environments
+const createBrowserStub = () => {
+  const error = new Error('supabaseAdmin cannot be used in browser. Use API routes instead.')
+  const stub = {
+    from: () => {
+      throw error
+    },
+    storage: {
+      from: () => {
+        throw error
+      }
+    },
     auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-      detectSessionInUrl: false,
-    },
-    db: {
-      schema: 'public',
-    },
-    global: {
-      headers: {
-        'X-Client-Info': 'xspark-hrms-admin',
+      getUser: async () => {
+        throw error
       },
-    },
-  })
-    : (() => {
-  console.warn(
-          'SUPABASE_SERVICE_ROLE_KEY is missing. Falling back to anon Supabase client; some admin-only operations may be limited.',
-  )
-        return anonSupabase
-      })()
+      getSession: async () => {
+        throw error
+      }
+    }
+  }
+  return stub as any
+}
 
-export const supabaseAdmin = supabaseAdminClient
-export default supabaseAdminClient
+// Create the actual client only on the server
+let supabaseAdmin: any
+
+if (isBrowser) {
+  // In browser, return a stub that throws helpful errors
+  supabaseAdmin = createBrowserStub()
+} else {
+  // On server, validate and create the client
+if (!supabaseUrl) {
+  throw new Error('Missing SUPABASE_URL environment variable')
+}
+
+if (!supabaseServiceRoleKey) {
+  throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY environment variable')
+}
+
+  supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+    detectSessionInUrl: false
+  },
+  db: {
+    schema: 'public'
+  },
+  global: {
+    headers: {
+      'X-Client-Info': 'xspark-hrms-admin'
+    }
+  }
+})
+}
+
+export { supabaseAdmin }
+export default supabaseAdmin
 

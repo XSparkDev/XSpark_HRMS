@@ -8,7 +8,15 @@ export const documentTypeEnum = z.enum([
   "work_permits",
   "doctors_notes",
   "performance_reviews",
-  "policies"
+  "policies",
+  "qualifications",
+  "proof_of_address",
+  "other_personal_documents",
+  "offer_letters",
+  "company_policies",
+  "reports",
+  "resignation_letters",
+  "official_hr_documents",
 ])
 
 // Document status enum
@@ -44,7 +52,7 @@ export const documentSchema = z.object({
 })
 
 // Document form data type (for upload forms)
-export type DocumentFormData = Pick<documentSchema, "name" | "type" | "description" | "tags">
+export type DocumentFormData = Pick<z.infer<typeof documentSchema>, "name" | "type" | "description" | "tags">
 
 // Full document type
 export type Document = z.infer<typeof documentSchema> & {
@@ -124,13 +132,29 @@ export const getDocumentTypeDisplayName = (type: string): string => {
       return "Performance Review"
     case "policies":
       return "Policy"
+    case "qualifications":
+      return "Qualification"
+    case "proof_of_address":
+      return "Proof of Address"
+    case "other_personal_documents":
+      return "Other Personal"
+    case "offer_letters":
+      return "Offer Letter"
+    case "company_policies":
+      return "Company Policy"
+    case "reports":
+      return "Report"
+    case "resignation_letters":
+      return "Resignation Letter"
+    case "official_hr_documents":
+      return "Official HR Document"
     default:
       return type
   }
 }
 
 export const isSensitiveDocumentType = (type: string): boolean => {
-  return ["id_copies", "work_permits", "doctors_notes"].includes(type)
+  return ["id_copies", "work_permits", "doctors_notes", "proof_of_address", "other_personal_documents"].includes(type)
 }
 
 export const getDocumentTypeIcon = (type: string): string => {
@@ -149,6 +173,22 @@ export const getDocumentTypeIcon = (type: string): string => {
       return "📊"
     case "policies":
       return "📜"
+    case "qualifications":
+      return "🎓"
+    case "proof_of_address":
+      return "🏠"
+    case "other_personal_documents":
+      return "🗂️"
+    case "offer_letters":
+      return "✉️"
+    case "company_policies":
+      return "🏛️"
+    case "reports":
+      return "📑"
+    case "resignation_letters":
+      return "📝"
+    case "official_hr_documents":
+      return "📁"
     default:
       return "📄"
   }
