@@ -72,7 +72,6 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
 
   const [inputValue, setInputValue] = useState("")
   const [isMobile, setIsMobile] = useState(false)
-  const [activeTab, setActiveTab] = useState<"hr" | "compliance">("hr")
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -129,52 +128,82 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
     hooks?.onRestore?.()
   }, [hooks])
 
-  const handleSend = useCallback(() => {
-    if (!inputValue.trim()) return
+  const handleSend = useCallback(async () => {
+    if (!inputValue.trim() || state.isTyping) return
 
-    const newMessage: ChatMessage = {
+    const userMessage = inputValue.trim()
+    setInputValue("")
+
+    // Add user message
+    const userChatMessage: ChatMessage = {
       id: `msg-${Date.now()}`,
       sender: "user",
-      text: inputValue.trim(),
+      text: userMessage,
       created_at: new Date().toISOString(),
     }
 
     setState(prev => ({
       ...prev,
-      messages: [...prev.messages, newMessage],
+      messages: [...prev.messages, userChatMessage],
       isTyping: true,
     }))
 
-    // Simulate AI response (UI only) - South African HR Assistant
-    setTimeout(() => {
-      const userMessage = inputValue.trim()
-      const lowerMessage = userMessage.toLowerCase()
-      
-      // Search the knowledge base for relevant information
-      const knowledgeEntries = searchKnowledgeBase(userMessage)
-      
-      let response = ""
-      
-      if (knowledgeEntries.length > 0) {
-        // Use the most relevant knowledge entry
-        const knowledge = knowledgeEntries[0]
-        response = `👩‍💼 HR Assistant speaking...\n\n${formatKnowledgeResponse(knowledge)}\n\n${knowledgeEntries.length > 1 ? `\n*Additional relevant information may be available. Please ask if you need more details.*` : ''}`
-      } else if (lowerMessage.includes('greeting') || lowerMessage.includes('hello') || lowerMessage.includes('hi')) {
-        response = "👩‍💼 HR Assistant speaking...\n\nHello there! 👋 I'm here to assist you with South African labour law compliance and workplace rights. You can ask me about leave entitlements, disciplinary procedures, health & safety, employee rights, or any HR-related questions. How can I help you today?"
-      } else if (lowerMessage.includes('help') || lowerMessage.includes('what can')) {
-        response = "👩‍💼 HR Assistant speaking...\n\nI can help you with:\n\n• **Leave Entitlements** - Annual, sick, maternity, family responsibility leave (BCEA)\n• **Working Hours & Overtime** - Standard hours, overtime rates, rest periods (BCEA)\n• **Disciplinary Procedures** - Fair disciplinary process, rights, CCMA (LRA)\n• **Health & Safety** - Workplace safety, rights, employer duties (OHSA)\n• **Employee Rights** - Protection against discrimination, equal pay (EEA)\n• **Workplace Policies** - Conduct, attendance, confidentiality\n\nSimply ask your question or use the quick action buttons for specific topics. All information is based on South African labour legislation."
-      } else if (lowerMessage.includes('thank')) {
-        response = "👩‍💼 HR Assistant speaking...\n\nPleasure to assist! Remember, I'm here 24/7 to help you understand your rights under South African labour law. If you have any other questions, feel free to ask. Stay informed and protected! 🇿🇦"
+    try {
+      // Convert messages to API format (role/content)
+      const conversationHistory = state.messages
+        .filter(msg => msg.sender !== "system")
+        .map(msg => ({
+          role: msg.sender === "user" ? "user" : "assistant",
+          content: msg.text
+        }))
+
+      // Call your new API endpoint
+      const response = await fetch('/api/chatbot/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMessage,
+          conversationHistory: conversationHistory
+        })
+      })
+
+      if (!response.ok) {
+        let errorData
+        try {
+          errorData = await response.json()
+        } catch (jsonError) {
+          // If JSON parsing fails, use status text
+          throw new Error(`Failed to get response: ${response.status} ${response.statusText}`)
+        }
+        
+        // Extract error message - handle nested error objects
+        let errorMessage: string
+        
+        if (typeof errorData.error?.message === 'string') {
+          errorMessage = errorData.error.message
+        } else if (typeof errorData.error === 'string') {
+          errorMessage = errorData.error
+        } else if (typeof errorData.message === 'string') {
+          errorMessage = errorData.message
       } else {
-        // General help response
-        response = "👩‍💼 HR Assistant speaking...\n\nI understand you're looking for information. To provide you with the most accurate guidance, please ask about a specific topic such as:\n\n• Leave entitlements and procedures\n• Disciplinary processes and rights\n• Health & safety obligations\n• Working hours and overtime\n• Employee rights under South African law\n• Workplace policies and conduct\n\nOr use the quick action buttons below for instant access to specific legislation. All information is based on official South African labour laws."
+          errorMessage = `Failed to get response: ${response.status} ${response.statusText}`
+        }
+        
+        // Ensure it's a clean string (no regex-like patterns)
+        errorMessage = String(errorMessage).trim().substring(0, 500)
+        
+        throw new Error(errorMessage)
       }
-      
+
+      const data = await response.json()
+
+      // Add AI response
       const aiResponse: ChatMessage = {
         id: `msg-${Date.now() + 1}`,
         sender: "assistant",
-        text: response,
+        text: data.reply,
         created_at: new Date().toISOString(),
+        metadata: data.sources ? { sources: data.sources } : undefined
       }
 
       setState(prev => ({
@@ -182,11 +211,26 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
         messages: [...prev.messages, aiResponse],
         isTyping: false,
       }))
-    }, 1500)
 
-    hooks?.onSend?.(inputValue.trim())
-    setInputValue("")
-  }, [inputValue, hooks])
+      hooks?.onSend?.(userMessage)
+    } catch (error) {
+      console.error('Chat error:', error)
+      
+      // Add error message
+      const errorResponse: ChatMessage = {
+        id: `msg-${Date.now() + 1}`,
+        sender: "assistant",
+        text: 'Sorry, I encountered an error. Please try again.',
+        created_at: new Date().toISOString(),
+      }
+
+      setState(prev => ({
+        ...prev,
+        messages: [...prev.messages, errorResponse],
+        isTyping: false,
+      }))
+    }
+  }, [inputValue, state.messages, state.isTyping, hooks])
 
   const handleQuickReply = useCallback((text: string, action?: string) => {
     // Don't set input value, instead directly add a response
@@ -239,7 +283,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
       } else {
         // Fallback responses
         switch(action) {
-          // HR Questions tab responses
+          // HR Questions responses
           case "view_payslip":
             response = "👩‍💼 HR Assistant speaking...\n\nTo view your payslip, you can:\n\n• **Navigate to Documents** section in the sidebar\n• **Select 'Payslips'** from the document filter\n• **Click on the payslip** you wish to view\n• **Download** for your records\n\nYour payslips are securely stored and accessible anytime. All payslips include breakdowns of: basic salary, allowances, deductions, tax (PAYE), UIF, and net pay.\n\nNeed help accessing a specific payslip?"
             break
@@ -252,7 +296,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
           case "update_personal_info":
             response = "👩‍💼 HR Assistant speaking...\n\nTo update your personal information:\n\n1. **Go to My Profile** in the sidebar\n2. **Click 'Edit'** on the section you wish to update\n3. **Update** your information (contact details, emergency contacts, banking info, etc.)\n4. **Save** your changes\n\nFor certain changes (like banking details), your changes may require verification. You'll be notified once approved.\n\nNeed help updating a specific section?"
             break
-          // Employee Compliance tab responses
+          // Compliance and legal information responses
           case "leave_rights":
             response = "👩‍💼 HR Assistant speaking...\n\nAccording to **Section 20 of the Basic Conditions of Employment Act (Act 75 of 1997)**, employees are entitled to at least 21 consecutive days of annual leave per year. Leave accrues at 1.25 days per month. You also have rights to sick leave (30 days per 36-month cycle), family responsibility leave (3 days per year), and maternity leave (4 consecutive months).\n\nWould you like specific details on any particular leave type?"
             break
@@ -293,31 +337,19 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
-  // Tab-specific quick replies
-  const hrQuickReplies = [
+  // Quick replies for HR questions
+  const quickReplies = [
     { text: "View Payslip", action: "view_payslip" },
     { text: "Apply for Leave", action: "apply_leave" },
     { text: "Check Leave Balance", action: "check_leave_balance" },
     { text: "Update Personal Info", action: "update_personal_info" },
   ]
 
-  const complianceQuickReplies = [
-    { text: "Understand My Leave Rights", action: "leave_rights" },
-    { text: "Workplace Conduct Policy", action: "workplace_conduct" },
-    { text: "Employee Act Guidance", action: "employee_act" },
-    { text: "Disciplinary Process Info", action: "disciplinary_process" },
-    { text: "Health & Safety Rules", action: "health_safety" },
-  ]
-
-  const currentQuickReplies = activeTab === "hr" ? hrQuickReplies : complianceQuickReplies
-
   // Welcome message for empty state
   const welcomeMessage: ChatMessage = {
     id: "welcome",
     sender: "system",
-    text: activeTab === "hr" 
-      ? "Hello there 👋 I'm your HR Assistant — how can I help you today?\n\nI can assist with viewing your payslips, managing leave requests, checking your leave balance, or updating your personal information."
-      : "Hi there! 👋 I'm your HR Compliance Assistant.\n\nI'm here to help you understand your rights under South African labour law including the BCEA, LRA, OHSA, and other relevant legislation.\n\nHow can I assist you today?",
+    text: "Hello there 👋 I'm your HR Assistant — how can I help you today?\n\nI can assist with viewing your payslips, managing leave requests, checking your leave balance, updating your personal information, or answering questions about South African labour law and workplace policies.",
     created_at: new Date().toISOString(),
   }
 
@@ -374,7 +406,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-2">
                   <Bot className="h-5 w-5 text-primary" />
-                  <h3 className="font-semibold text-sm">HR Compliance Assistant</h3>
+                    <h3 className="font-semibold text-sm">HR Assistant</h3>
                 </div>
                 <Badge variant="secondary" className="text-xs bg-primary/10 text-primary">
                   SA HR
@@ -431,32 +463,6 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
                 </Button>
               </div>
             </CardHeader>
-
-            {/* Tabs */}
-            <div className="border-b px-4 flex items-center gap-1">
-              <button
-                onClick={() => setActiveTab("hr")}
-                className={cn(
-                  "px-4 py-2 text-sm font-medium transition-all duration-200 border-b-2",
-                  activeTab === "hr"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                )}
-              >
-                HR Questions
-              </button>
-              <button
-                onClick={() => setActiveTab("compliance")}
-                className={cn(
-                  "px-4 py-2 text-sm font-medium transition-all duration-200 border-b-2",
-                  activeTab === "compliance"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                )}
-              >
-                Employee Compliance
-              </button>
-            </div>
 
             {/* Messages Area */}
             <CardContent className="flex-1 p-0 overflow-hidden">
@@ -548,7 +554,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
                     <div className="space-y-2 mt-4">
                       <p className="text-xs text-muted-foreground">Select a topic to learn more:</p>
                       <div className="flex flex-wrap gap-2">
-                        {currentQuickReplies.map((reply, index) => (
+                        {quickReplies.map((reply, index) => (
                           <Button
                             key={index}
                             variant="outline"

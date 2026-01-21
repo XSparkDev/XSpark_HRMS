@@ -1,13 +1,42 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { documentsService } from "@/lib/services/documents-service"
 import { getCurrentUser } from "@/lib/auth"
+import { getRequestUser } from "@/lib/auth/request-user"
+
+type ApiUserContext = {
+  id: string
+  employeeId: string
+  role: string
+  name: string
+}
+
+const resolveUserContext = (req: NextRequest): ApiUserContext | null => {
+  const headerUser = getRequestUser(req)
+  const currentUser = getCurrentUser(req)
+
+  const id = headerUser?.id ?? currentUser?.id
+  const employeeId = headerUser?.employeeId ?? currentUser?.employeeId ?? id ?? null
+  const role = headerUser?.role ?? currentUser?.role ?? "employee"
+  const name = currentUser?.name ?? currentUser?.email ?? "User"
+
+  if (!id || !employeeId) {
+    return null
+  }
+
+  return {
+    id,
+    employeeId,
+    role,
+    name,
+  }
+}
 
 // GET /api/documents/[id]/download - Download document
 export async function GET(
-  req: Request,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const user = getCurrentUser()
+  const user = resolveUserContext(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }

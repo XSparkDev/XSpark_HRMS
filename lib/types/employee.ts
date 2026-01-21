@@ -17,6 +17,7 @@ export interface EmployeeProfile {
   employee_ID: string // Format: XSP<YEAR/MONTH>/<NNN>
   job_title_id: string
   date_hired: string
+  date_terminated?: string
   
   // Contact Details
   email: string

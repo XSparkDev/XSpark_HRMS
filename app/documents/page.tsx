@@ -1,717 +1,1071 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { format } from "date-fns"
-import { 
-  Upload, 
-  FileText, 
-  Image, 
-  Download, 
-  Eye, 
-  Trash2, 
-  Search, 
-  Filter, 
-  Plus,
-  File,
-  Calendar,
-  User,
-  Clock,
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { format, subDays } from "date-fns"
+import {
   AlertCircle,
-  CheckCircle2
+  Calendar,
+  CheckCircle2,
+  Download,
+  Eye,
+  FileText,
+  Filter,
+  History,
+  Loader2,
+  Plus,
+  Search,
+  Send,
+  Shield,
+  Upload,
 } from "lucide-react"
-import { AnimatePresence, motion } from "framer-motion"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
+import { getCurrentUser, type User } from "@/lib/auth"
+import { documentsService, setDocumentsRequestHeaders } from "@/lib/services/documents-service"
 import { cn } from "@/lib/utils"
+import {
+  formatFileSize,
+  getDocumentTypeDisplayName,
+  isSensitiveDocumentType,
+  type Document,
+  type DocumentAccessLog,
+  type DocumentFormData,
+} from "@/lib/validation/documents"
 
-import { getCurrentUser } from "@/lib/auth"
-import { documentSchema, type DocumentFormData, type Document } from "@/lib/validation/documents"
-import { documentsService } from "@/lib/services/documents-service"
+const EMPLOYEE_UPLOAD_OPTIONS = [
+  { value: "id_copies", label: "ID Copy" },
+  { value: "qualifications", label: "Qualifications" },
+  { value: "work_permits", label: "Work Permit" },
+  { value: "proof_of_address", label: "Proof of Address" },
+  { value: "doctors_notes", label: "Doctor's Note" },
+  { value: "other_personal_documents", label: "Other Personal" },
+] as const
+
+const ADMIN_UPLOAD_OPTIONS = [
+  ...EMPLOYEE_UPLOAD_OPTIONS,
+  { value: "contracts", label: "Contract" },
+  { value: "offer_letters", label: "Offer Letter" },
+  { value: "payslips", label: "Payslip" },
+  { value: "performance_reviews", label: "Performance Review" },
+  { value: "reports", label: "Report" },
+  { value: "resignation_letters", label: "Resignation Letter" },
+  { value: "company_policies", label: "Company Policy" },
+  { value: "official_hr_documents", label: "Official HR Document" },
+] as const
+
+type DocumentTypeOption = (typeof ADMIN_UPLOAD_OPTIONS)[number]
+type DocumentTypeValue = DocumentTypeOption["value"]
+
+const ADMIN_TABS = ["all", "recent", "by_employee", "sensitive", "audit"] as const
+type AdminTab = (typeof ADMIN_TABS)[number]
+
+type EmployeeOption = {
+  id: string
+  name: string
+  number?: string
+}
+
+type UploadFormPayload = DocumentFormData & {
+  file: File
+  employeeId: string
+  employeeName: string
+  employeeNumber?: string
+}
+
+type DateRangeFilter = {
+  from: string
+  to: string
+}
+
+type SendDocumentRequest = {
+  employeeIds: string[]
+  documentType: DocumentTypeValue
+  existingDocumentId?: string
+  file?: File | null
+}
 
 export default function DocumentsPage() {
+  const user = getCurrentUser()
   const { toast } = useToast()
-  const [documents, setDocuments] = useState<Document[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
-  const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
-  const [deleteConfirmDoc, setDeleteConfirmDoc] = useState<string | null>(null)
-  const [filter, setFilter] = useState<"all" | "contracts" | "payslips" | "id_copies" | "work_permits" | "doctors_notes" | "performance_reviews" | "policies">("all")
-  const [searchTerm, setSearchTerm] = useState("")
-  const [sortBy, setSortBy] = useState<"date" | "name" | "type">("date")
+  const normalizedRole = user?.role?.toLowerCase() ?? "employee"
+  const isAdminView = normalizedRole === "admin" || normalizedRole === "super_admin"
 
-  const currentUser = getCurrentUser()
-  const isHRAdmin = currentUser?.role === "hr_admin" || currentUser?.role === "admin" || currentUser?.role === "super_admin"
-  const isSuperAdmin = currentUser?.role === "super_admin"
+  const buildApiHeaders = useCallback(() => {
+    const headers: Record<string, string> = {}
+    if (user?.id) headers["x-user-id"] = user.id
+    if (user?.employeeId) headers["x-employee-id"] = user.employeeId
+    else if (user?.id) headers["x-employee-id"] = user.id
+    if (user?.role) headers["x-user-role"] = user.role
+    if (user?.name) headers["x-user-name"] = user.name
+    if (user?.email) headers["x-user-email"] = user.email
 
-  useEffect(() => {
-    const fetchDocuments = async () => {
+    if (typeof window !== "undefined") {
       try {
-        const docs = await documentsService.getAllDocuments()
-        setDocuments(docs)
+        const storedSession = localStorage.getItem("xspark_session")
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+          }
+        }
       } catch (error) {
-        console.error("Error fetching documents:", error)
-        toast({
-          title: "Error",
-          description: "Failed to load documents",
-          variant: "destructive",
-        })
-      } finally {
-        setIsLoading(false)
+        console.warn("[Documents] Failed to parse session token", error)
       }
     }
 
-    fetchDocuments()
+    return headers
+  }, [user?.id, user?.employeeId, user?.role, user?.name, user?.email])
 
-    // Subscribe to real-time updates
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    setDocumentsRequestHeaders(buildApiHeaders())
+  }, [buildApiHeaders])
+  const [documents, setDocuments] = useState<Document[]>([])
+  const [auditLogs, setAuditLogs] = useState<DocumentAccessLog[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [previewDocument, setPreviewDocument] = useState<Document | null>(null)
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
+  const [uploadContext, setUploadContext] = useState<"employee" | "admin">("employee")
+  const [isSendModalOpen, setIsSendModalOpen] = useState(false)
+  const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>("all")
+  const [employeeSearch, setEmployeeSearch] = useState("")
+  const [employeeTypeFilter, setEmployeeTypeFilter] = useState<DocumentTypeValue | "all">("all")
+  const [employeeDateRange, setEmployeeDateRange] = useState<DateRangeFilter>({ from: "", to: "" })
+  const [adminFilters, setAdminFilters] = useState({ search: "", type: "all", dateFrom: "", dateTo: "" })
+  const [employeeFilterForTab, setEmployeeFilterForTab] = useState("all")
+  const [isSendingDocument, setIsSendingDocument] = useState(false)
+
+  useEffect(() => {
+    let isMounted = true
+
+    const loadDocuments = async () => {
+      setIsLoading(true)
+      try {
+        const docs = await documentsService.getAllDocuments(user?.id, user?.role)
+        if (!isMounted) return
+        setDocuments(docs)
+        if (isAdminView) {
+          const logs = await documentsService.getAllAccessLogs()
+          if (isMounted) {
+            setAuditLogs(logs)
+          }
+        }
+      } catch (error) {
+        console.error("[Documents] Failed to load", error)
+        toast({ title: "Unable to load documents", description: "Please try again shortly.", variant: "destructive" })
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    loadDocuments()
     const unsubscribe = documentsService.subscribe((updatedDocs) => {
       setDocuments(updatedDocs)
+      if (isAdminView) {
+        documentsService.getAllAccessLogs().then(setAuditLogs).catch(console.error)
+      }
     })
 
-    return unsubscribe
-  }, [toast])
-
-  const getDocumentTypeIcon = (type: string) => {
-    switch (type) {
-      case "contracts":
-        return <FileText className="h-4 w-4 text-blue-600" />
-      case "payslips":
-        return <FileText className="h-4 w-4 text-green-600" />
-      case "id_copies":
-        return <FileText className="h-4 w-4 text-purple-600" />
-      case "work_permits":
-        return <FileText className="h-4 w-4 text-orange-600" />
-      case "doctors_notes":
-        return <FileText className="h-4 w-4 text-red-600" />
-      case "performance_reviews":
-        return <FileText className="h-4 w-4 text-indigo-600" />
-      case "policies":
-        return <FileText className="h-4 w-4 text-gray-600" />
-      default:
-        return <File className="h-4 w-4 text-gray-600" />
+    return () => {
+      isMounted = false
+      if (typeof unsubscribe === "function") {
+        unsubscribe()
+      }
     }
-  }
+  }, [user?.id, user?.role, toast, isAdminView])
 
-  const getDocumentTypeColor = (type: string) => {
-    switch (type) {
-      case "contracts":
-        return "bg-blue-100 text-blue-800 border-blue-200"
-      case "payslips":
-        return "bg-green-100 text-green-800 border-green-200"
-      case "id_copies":
-        return "bg-purple-100 text-purple-800 border-purple-200"
-      case "work_permits":
-        return "bg-orange-100 text-orange-800 border-orange-200"
-      case "doctors_notes":
-        return "bg-red-100 text-red-800 border-red-200"
-      case "performance_reviews":
-        return "bg-indigo-100 text-indigo-800 border-indigo-200"
-      case "policies":
-        return "bg-gray-100 text-gray-800 border-gray-200"
-      default:
-        return "bg-gray-100 text-gray-800 border-gray-200"
+  const uniqueEmployees: EmployeeOption[] = useMemo(() => {
+    const directory = new Map<string, EmployeeOption>()
+    documents.forEach((doc) => {
+      if (!directory.has(doc.employee_id)) {
+        directory.set(doc.employee_id, {
+          id: doc.employee_id,
+          name: doc.employee_name,
+          number: doc.employee_number,
+        })
+      }
+    })
+    return Array.from(directory.values()).sort((a, b) => a.name.localeCompare(b.name))
+  }, [documents])
+
+  const employeeDocuments = useMemo(() => {
+    if (!user?.id) return []
+    return documents.filter((doc) => doc.employee_id === user.id)
+  }, [documents, user?.id])
+
+  const filteredEmployeeDocuments = useMemo(() => {
+    return employeeDocuments.filter((doc) => {
+      const matchesSearch = employeeSearch
+        ? doc.name.toLowerCase().includes(employeeSearch.toLowerCase())
+        : true
+      const matchesType = employeeTypeFilter === "all" ? true : doc.type === employeeTypeFilter
+      const docDate = new Date(doc.created_at)
+      const matchesFrom = employeeDateRange.from ? docDate >= new Date(employeeDateRange.from) : true
+      const matchesTo = employeeDateRange.to ? docDate <= new Date(employeeDateRange.to) : true
+      return matchesSearch && matchesType && matchesFrom && matchesTo
+    })
+  }, [employeeDocuments, employeeSearch, employeeTypeFilter, employeeDateRange])
+
+  const adminFilteredDocuments = useMemo(() => {
+    let base = documents
+    if (adminFilters.search) {
+      const lookup = adminFilters.search.toLowerCase()
+      base = base.filter((doc) =>
+        doc.name.toLowerCase().includes(lookup) ||
+        doc.employee_name.toLowerCase().includes(lookup) ||
+        (doc.tags ?? "").toLowerCase().includes(lookup)
+      )
     }
-  }
-
-  const getDocumentTypeDisplayName = (type: string) => {
-    switch (type) {
-      case "contracts":
-        return "Contract"
-      case "payslips":
-        return "Payslip"
-      case "id_copies":
-        return "ID Copy"
-      case "work_permits":
-        return "Work Permit"
-      case "doctors_notes":
-        return "Doctor's Note"
-      case "performance_reviews":
-        return "Performance Review"
-      case "policies":
-        return "Policy"
-      default:
-        return type
+    if (adminFilters.type !== "all") {
+      base = base.filter((doc) => doc.type === adminFilters.type)
     }
-  }
-
-  const filteredDocuments = documents.filter(doc => {
-    if (filter !== "all" && doc.type !== filter) return false
-    if (searchTerm && !doc.name.toLowerCase().includes(searchTerm.toLowerCase()) && 
-        !doc.employee_name.toLowerCase().includes(searchTerm.toLowerCase())) return false
-    return true
-  }).sort((a, b) => {
-    switch (sortBy) {
-      case "name":
-        return a.name.localeCompare(b.name)
-      case "type":
-        return a.type.localeCompare(b.type)
-      case "date":
-      default:
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    if (adminFilters.dateFrom) {
+      const from = new Date(adminFilters.dateFrom)
+      base = base.filter((doc) => new Date(doc.created_at) >= from)
     }
-  })
+    if (adminFilters.dateTo) {
+      const to = new Date(adminFilters.dateTo)
+      base = base.filter((doc) => new Date(doc.created_at) <= to)
+    }
+    return base
+  }, [documents, adminFilters])
 
-  const canViewDocument = (doc: Document) => {
-    if (isHRAdmin) return true
-    return doc.employee_id === currentUser?.id
-  }
+  const groupedDocuments = useMemo(() => {
+    const groups = new Map<string, { employee: EmployeeOption; items: Document[] }>()
+    adminFilteredDocuments.forEach((doc) => {
+      if (!groups.has(doc.employee_id)) {
+        groups.set(doc.employee_id, {
+          employee: { id: doc.employee_id, name: doc.employee_name, number: doc.employee_number },
+          items: [],
+        })
+      }
+      groups.get(doc.employee_id)!.items.push(doc)
+    })
+    return Array.from(groups.values()).sort((a, b) => a.employee.name.localeCompare(b.employee.name))
+  }, [adminFilteredDocuments])
 
-  const canDeleteDocument = (doc: Document) => {
-    if (isSuperAdmin) return true
-    if (isHRAdmin && doc.uploaded_by === currentUser?.id) return true
-    return false
-  }
+  const stats = useMemo(() => {
+    const total = documents.length
+    const sensitive = documents.filter((doc) => doc.is_sensitive).length
+    const active = documents.filter((doc) => doc.is_active).length
+    const thisMonth = documents.filter((doc) => {
+      const date = new Date(doc.created_at)
+      const now = new Date()
+      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear()
+    }).length
+    return { total, sensitive, active, thisMonth }
+  }, [documents])
 
-  const handleUploadDocument = async (data: DocumentFormData) => {
+  const recentDocuments = useMemo(() => {
+    const windowStart = subDays(new Date(), 30)
+    return adminFilteredDocuments.filter((doc) => new Date(doc.created_at) >= windowStart)
+  }, [adminFilteredDocuments])
+
+  const sensitiveDocuments = useMemo(() => adminFilteredDocuments.filter((doc) => doc.is_sensitive), [adminFilteredDocuments])
+
+  const auditTimeline = useMemo(() => {
+    return auditLogs.map((log) => {
+      const documentMeta = documents.find((doc) => doc.id === log.document_id)
+      return {
+        ...log,
+        documentName: documentMeta?.name ?? "Document",
+        employeeName: documentMeta?.employee_name ?? "Unknown",
+      }
+    })
+  }, [auditLogs, documents])
+
+  const defaultEmployeeOption: EmployeeOption | undefined =
+    user && user.id
+      ? { id: user.id, name: user.name ?? "You", number: user.employeeId ?? "N/A" }
+    : undefined
+
+  const handleUploadDocument = async (payload: UploadFormPayload) => {
+    if (!user?.id) {
+      toast({ title: "You're not signed in", description: "Please sign in to upload documents.", variant: "destructive" })
+      return
+    }
+
     try {
+      // Step 1: Upload the file first to get a permanent URL
+      const formData = new FormData()
+      formData.append("file", payload.file)
+
+      // Build headers for file upload
+      const headers: Record<string, string> = {}
+      if (user?.id) headers["x-user-id"] = user.id
+      if (user?.employeeId) headers["x-employee-id"] = user.employeeId
+      else if (user?.id) headers["x-employee-id"] = user.id
+      if (user?.role) headers["x-user-role"] = user.role
+
+      if (typeof window !== "undefined") {
+        try {
+          const storedSession = localStorage.getItem("xspark_session")
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (error) {
+          console.warn("[Documents] Failed to parse session token", error)
+        }
+      }
+
+      const uploadResponse = await fetch("/api/documents/upload-file", {
+        method: "POST",
+        headers,
+        body: formData,
+      })
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json().catch(() => ({ message: "Upload failed" }))
+        throw new Error(errorData.message || "Failed to upload file")
+      }
+
+      const uploadResult = await uploadResponse.json()
+      const fileUrl = uploadResult.fileUrl
+
+      if (!fileUrl) {
+        throw new Error("No file URL returned from upload")
+      }
+
+      // Step 2: Save the document record with the permanent file URL
       await documentsService.uploadDocument({
-        ...data,
-        employee_id: currentUser?.id || "",
-        uploaded_by: currentUser?.id || "",
-        uploaded_by_name: currentUser?.name || "",
-        employee_name: "Current Employee", // In real app, get from employee data
-        employee_number: "XSP2501/001", // In real app, get from employee data
-        file_size: 0, // Will be set by service
-        file_type: "", // Will be set by service
-        file_url: "", // Will be set by service
-        is_sensitive: data.type === "id_copies" || data.type === "work_permits" || data.type === "doctors_notes",
+        name: payload.name,
+        type: payload.type,
+        description: payload.description ?? "",
+        tags: payload.tags ?? "",
+        employee_id: payload.employeeId,
+        uploaded_by: user.id,
+        uploaded_by_name: user.name ?? "Unknown",
+        employee_name: payload.employeeName,
+        employee_number: payload.employeeNumber ?? "N/A",
+        file_size: payload.file.size,
+        file_type: payload.file.type,
+        file_url: fileUrl,
+        is_sensitive: isSensitiveDocumentType(payload.type),
         version: 1,
         is_active: true,
         deleted_at: null,
         created_at: new Date(),
         updated_at: new Date(),
       })
-      
-      setIsUploadModalOpen(false)
-      
-      toast({
-        title: "Document Uploaded",
-        description: "Your document has been successfully uploaded.",
-      })
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to upload document. Please try again.",
-        variant: "destructive",
-      })
-    }
-  }
 
-  const handleDeleteDocument = async (docId: string) => {
-    try {
-      await documentsService.deleteDocument(docId)
-      
-      toast({
-        title: "Document Deleted",
-        description: "The document has been successfully deleted.",
-      })
+      toast({ title: "Document uploaded", description: "Your document is now available." })
+      setIsUploadModalOpen(false)
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to delete document. Please try again.",
-        variant: "destructive",
+      console.error("[Documents] Upload failed", error)
+      toast({ 
+        title: "Upload failed", 
+        description: error instanceof Error ? error.message : "Please try again.", 
+        variant: "destructive" 
       })
     }
   }
 
   const handleDownloadDocument = async (doc: Document) => {
+    if (!user?.id) return
+    
     try {
-      await documentsService.downloadDocument(doc.id)
+      let downloadUrl = doc.file_url
       
-      toast({
-        title: "Download Started",
-        description: "Your document download has started.",
-      })
+      // If no file_url, try to get it from the API
+      if (!downloadUrl || downloadUrl.startsWith('blob:')) {
+        try {
+          downloadUrl = await documentsService.downloadDocument(doc.id, user.id, user.name ?? "User")
+        } catch (error) {
+          console.error("[Documents] Failed to get download URL from API", error)
+        }
+      }
+      
+      if (!downloadUrl) {
+        toast({ title: "Download failed", description: "No download URL available.", variant: "destructive" })
+        return
+      }
+      
+      // Create a temporary anchor element to trigger download
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = doc.name
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
+      
+      // For blob URLs or same-origin URLs, try direct download
+      // For external URLs (like Supabase storage), open in new tab
+      if (downloadUrl.startsWith('blob:') || downloadUrl.startsWith(window.location.origin)) {
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+      } else {
+        // External URL - open in new tab (will trigger download if headers are set correctly)
+        window.open(downloadUrl, '_blank', 'noopener,noreferrer')
+      }
+      
+      toast({ title: "Download started", description: doc.name })
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to download document. Please try again.",
-        variant: "destructive",
-      })
+      console.error("[Documents] Download failed", error)
+      toast({ title: "Unable to download", description: "Please try again.", variant: "destructive" })
     }
+  }
+
+  const handleSendDocument = async (request: SendDocumentRequest) => {
+    setIsSendingDocument(true)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      toast({
+        title: "Document sent",
+        description: request.file
+          ? `Uploaded a new ${getDocumentTypeDisplayName(request.documentType)} to ${request.employeeIds.length} employee(s).`
+          : `Shared ${getDocumentTypeDisplayName(request.documentType)} with ${request.employeeIds.length} employee(s).`,
+      })
+      setIsSendModalOpen(false)
+    } finally {
+      setIsSendingDocument(false)
+    }
+  }
+
+  const openUploadModal = (context: "employee" | "admin") => {
+    setUploadContext(context)
+    setIsUploadModalOpen(true)
   }
 
   if (isLoading) {
     return (
-      <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center min-h-96">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary"></div>
-        </div>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-navy">Documents</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage and organize employee documents securely.
-          </p>
-        </div>
-        <Dialog open={isUploadModalOpen} onOpenChange={setIsUploadModalOpen}>
-          <DialogTrigger asChild>
-            <Button className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Upload Document
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Upload New Document</DialogTitle>
-            </DialogHeader>
-            <DocumentUploadForm 
-              onSubmit={handleUploadDocument}
-              onCancel={() => setIsUploadModalOpen(false)}
-            />
-          </DialogContent>
-        </Dialog>
-      </div>
+    <div className="space-y-6">
+      {isAdminView ? (
+        <AdminDocumentsView
+          stats={stats}
+          documents={adminFilteredDocuments}
+          groupedDocuments={groupedDocuments}
+          recentDocuments={recentDocuments}
+          sensitiveDocuments={sensitiveDocuments}
+          auditTimeline={auditTimeline}
+          activeTab={activeAdminTab}
+          onTabChange={(value) => setActiveAdminTab(value as AdminTab)}
+          filters={adminFilters}
+          onFilterChange={setAdminFilters}
+          employeeFilter={employeeFilterForTab}
+          onEmployeeFilterChange={setEmployeeFilterForTab}
+          employees={uniqueEmployees}
+          onUpload={() => openUploadModal("admin")}
+          onSend={() => setIsSendModalOpen(true)}
+          onPreview={setPreviewDocument}
+          onDownload={handleDownloadDocument}
+        />
+      ) : (
+        <EmployeeDocumentsView
+          documents={filteredEmployeeDocuments}
+          totalDocuments={employeeDocuments.length}
+          searchValue={employeeSearch}
+          onSearchChange={setEmployeeSearch}
+          typeFilter={employeeTypeFilter}
+          onTypeFilterChange={(value) => setEmployeeTypeFilter(value as DocumentTypeValue | "all")}
+          dateRange={employeeDateRange}
+          onDateChange={setEmployeeDateRange}
+          onUpload={() => openUploadModal("employee")}
+          onPreview={setPreviewDocument}
+          onDownload={handleDownloadDocument}
+        />
+      )}
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-2">
-              <FileText className="h-5 w-5 text-blue-600" />
-              <span className="font-semibold">Total Documents</span>
-            </div>
-            <div className="text-2xl font-bold mt-2">
-              {documents.length}
-            </div>
-            <p className="text-sm text-muted-foreground">All documents</p>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-red-600" />
-              <span className="font-semibold">Sensitive</span>
-            </div>
-            <div className="text-2xl font-bold mt-2">
-              {documents.filter(doc => doc.is_sensitive).length}
-            </div>
-            <p className="text-sm text-muted-foreground">Encrypted files</p>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <span className="font-semibold">Active</span>
-            </div>
-            <div className="text-2xl font-bold mt-2">
-              {documents.filter(doc => doc.is_active).length}
-            </div>
-            <p className="text-sm text-muted-foreground">Available files</p>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-2">
-              <Clock className="h-5 w-5 text-orange-600" />
-              <span className="font-semibold">This Month</span>
-            </div>
-            <div className="text-2xl font-bold mt-2">
-              {documents.filter(doc => {
-                const docDate = new Date(doc.created_at)
-                const now = new Date()
-                return docDate.getMonth() === now.getMonth() && docDate.getFullYear() === now.getFullYear()
-              }).length}
-            </div>
-            <p className="text-sm text-muted-foreground">New uploads</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Filter className="h-5 w-5" />
-            Filters
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-4 flex-wrap">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4" />
-              <Input
-                placeholder="Search documents..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-64"
-              />
-            </div>
-            
-            <Select value={filter} onValueChange={(value: any) => setFilter(value)}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Document Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="contracts">Contracts</SelectItem>
-                <SelectItem value="payslips">Payslips</SelectItem>
-                <SelectItem value="id_copies">ID Copies</SelectItem>
-                <SelectItem value="work_permits">Work Permits</SelectItem>
-                <SelectItem value="doctors_notes">Doctor's Notes</SelectItem>
-                <SelectItem value="performance_reviews">Performance Reviews</SelectItem>
-                <SelectItem value="policies">Policies</SelectItem>
-              </SelectContent>
-            </Select>
-            
-            <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
-              <SelectTrigger className="w-32">
-                <SelectValue placeholder="Sort By" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="date">Date</SelectItem>
-                <SelectItem value="name">Name</SelectItem>
-                <SelectItem value="type">Type</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Documents List */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Documents ({filteredDocuments.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {filteredDocuments.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No documents found matching your filters.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <AnimatePresence>
-                {filteredDocuments.map((doc) => (
-                  <motion.div
-                    key={doc.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ duration: 0.2 }}
-                    className="border rounded-lg p-4 hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-3 flex-1">
-                        <div className="flex-shrink-0">
-                          {getDocumentTypeIcon(doc.type)}
-                        </div>
-                        
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="font-medium text-sm truncate">{doc.name}</h3>
-                            <Badge variant="outline" className={getDocumentTypeColor(doc.type)}>
-                              {getDocumentTypeDisplayName(doc.type)}
-                            </Badge>
-                            {doc.is_sensitive && (
-                              <Badge variant="destructive" className="bg-red-100 text-red-800">
-                                SENSITIVE
-                              </Badge>
-                            )}
-                            {doc.version > 1 && (
-                              <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-                                v{doc.version}
-                              </Badge>
-                            )}
-                          </div>
-                          
-                          <div className="text-sm text-muted-foreground mb-2">
-                            {doc.employee_name} ({doc.employee_number})
-                          </div>
-                          
-                          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <User className="h-3 w-3" />
-                              <span>Uploaded by {doc.uploaded_by_name}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Calendar className="h-3 w-3" />
-                              <span>{format(new Date(doc.created_at), "MMM dd, yyyy")}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <File className="h-3 w-3" />
-                              <span>{(doc.file_size / 1024 / 1024).toFixed(1)} MB</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-2">
-                        {canViewDocument(doc) && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setPreviewDocument(doc)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDownloadDocument(doc)}
-                            >
-                              <Download className="h-4 w-4" />
-                            </Button>
-                          </>
-                        )}
-                        
-                        {canDeleteDocument(doc) && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setDeleteConfirmDoc(doc.id)}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-100"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Document Preview Modal */}
-      <Dialog open={!!previewDocument} onOpenChange={() => setPreviewDocument(null)}>
-        <DialogContent className="max-w-4xl">
+      <Dialog open={isUploadModalOpen} onOpenChange={setIsUploadModalOpen}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{previewDocument?.name}</DialogTitle>
+            <DialogTitle>{uploadContext === "admin" ? "Upload Employee Document" : "Upload Personal Document"}</DialogTitle>
+            <DialogDescription>
+              {uploadContext === "admin"
+                ? "Choose the employee and document category before uploading."
+                : "Upload and manage your personal HR documents."}
+            </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            {previewDocument && (
-              <DocumentPreview document={previewDocument} />
-            )}
-          </div>
+          <DocumentUploadForm
+            allowedTypes={uploadContext === "admin" ? ADMIN_UPLOAD_OPTIONS : EMPLOYEE_UPLOAD_OPTIONS}
+            onSubmit={handleUploadDocument}
+            onCancel={() => setIsUploadModalOpen(false)}
+            employeeOptions={uploadContext === "admin" ? uniqueEmployees : undefined}
+            defaultEmployee={uploadContext === "employee" ? defaultEmployeeOption : undefined}
+          />
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={!!deleteConfirmDoc} onOpenChange={() => setDeleteConfirmDoc(null)}>
-        <DialogContent>
+      <Dialog open={isSendModalOpen} onOpenChange={setIsSendModalOpen}>
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Delete Document</DialogTitle>
+            <DialogTitle>Send Document</DialogTitle>
+            <DialogDescription>Share an existing file or upload a new one with selected employees.</DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <p className="text-sm text-muted-foreground">
-              Are you sure you want to delete this document? This action cannot be undone.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirmDoc(null)}>
-              Cancel
-            </Button>
-            <Button 
-              variant="destructive" 
-              onClick={() => {
-                if (deleteConfirmDoc) {
-                  handleDeleteDocument(deleteConfirmDoc)
-                  setDeleteConfirmDoc(null)
-                }
-              }}
-            >
-              Delete Document
-            </Button>
-          </DialogFooter>
+          <SendDocumentForm employees={uniqueEmployees} documents={documents} onSubmit={handleSendDocument} isSubmitting={isSendingDocument} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!previewDocument} onOpenChange={() => setPreviewDocument(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              {previewDocument?.name}
+            </DialogTitle>
+          </DialogHeader>
+          {previewDocument && (
+            <DocumentPreview
+              document={previewDocument}
+              isAdminView={isAdminView}
+              onDownload={() => handleDownloadDocument(previewDocument)}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>
   )
 }
 
-interface DocumentUploadFormProps {
-  onSubmit: (data: DocumentFormData) => void
-  onCancel: () => void
+interface EmployeeDocumentsViewProps {
+  documents: Document[]
+  totalDocuments: number
+  searchValue: string
+  onSearchChange: (value: string) => void
+  typeFilter: DocumentTypeValue | "all"
+  onTypeFilterChange: (value: string) => void
+  dateRange: DateRangeFilter
+  onDateChange: (range: DateRangeFilter) => void
+  onUpload: () => void
+  onPreview: (doc: Document) => void
+  onDownload: (doc: Document) => void
 }
 
-function DocumentUploadForm({ onSubmit, onCancel }: DocumentUploadFormProps) {
-  const [formData, setFormData] = useState<Partial<DocumentFormData>>({
-    name: "",
-    type: "contracts",
-    description: "",
-    tags: "",
-  })
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [isDragOver, setIsDragOver] = useState(false)
+function EmployeeDocumentsView({
+  documents,
+  totalDocuments,
+  searchValue,
+  onSearchChange,
+  typeFilter,
+  onTypeFilterChange,
+  dateRange,
+  onDateChange,
+  onUpload,
+  onPreview,
+  onDownload,
+}: EmployeeDocumentsViewProps) {
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-navy">My Documents</h1>
+          <p className="text-sm text-muted-foreground">View and manage your personal documents.</p>
+        </div>
+        <Button onClick={onUpload} className="flex items-center gap-2">
+          <Upload className="h-4 w-4" />
+          Upload Document
+        </Button>
+      </div>
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedFile || !formData.name || !formData.type) return
-    
-    onSubmit({
-      name: formData.name,
-      type: formData.type as any,
-      description: formData.description || "",
-      tags: formData.tags || "",
-    })
-  }
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Filters</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Input
+              placeholder="Search my documents..."
+              value={searchValue}
+              onChange={(event) => onSearchChange(event.target.value)}
+            />
+            <Select value={typeFilter} onValueChange={onTypeFilterChange}>
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                {EMPLOYEE_UPLOAD_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <Label className="text-xs uppercase text-muted-foreground">From</Label>
+              <Input
+                type="date"
+                value={dateRange.from}
+                onChange={(event) => onDateChange({ ...dateRange, from: event.target.value })}
+              />
+            </div>
+            <div>
+              <Label className="text-xs uppercase text-muted-foreground">To</Label>
+              <Input
+                type="date"
+                value={dateRange.to}
+                onChange={(event) => onDateChange({ ...dateRange, to: event.target.value })}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-  const handleFileSelect = (file: File) => {
-    if (file.size > 10 * 1024 * 1024) {
-      alert("File size must be less than 10MB")
-      return
-    }
-    
-    const allowedTypes = ["application/pdf", "image/jpeg", "image/png"]
-    if (!allowedTypes.includes(file.type)) {
-      alert("Only PDF, JPG, and PNG files are allowed")
-      return
-    }
-    
-    setSelectedFile(file)
-    if (!formData.name) {
-      setFormData(prev => ({ ...prev, name: file.name }))
-    }
-  }
+      <div className="space-y-4">
+        <h2 className="text-sm font-semibold text-muted-foreground">{totalDocuments} document(s)</h2>
+        {documents.length === 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+              <FileText className="h-10 w-10 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">You don't have any documents yet.</p>
+              <Button variant="outline" onClick={onUpload} size="sm">
+                Upload your first document
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {documents.map((doc) => (
+              <Card key={doc.id} className="border shadow-sm">
+                <CardContent className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-sm">{doc.name}</p>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <Badge variant="outline">{getDocumentTypeDisplayName(doc.type)}</Badge>
+                        <span>{format(new Date(doc.created_at), "dd MMM yyyy")}</span>
+                        <span>{formatFileSize(doc.file_size)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => onPreview(doc)}>
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => onDownload(doc)}>
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragOver(false)
-    
-    const files = Array.from(e.dataTransfer.files)
-    if (files.length > 0) {
-      handleFileSelect(files[0])
-    }
+interface AdminDocumentsViewProps {
+  stats: { total: number; sensitive: number; active: number; thisMonth: number }
+  documents: Document[]
+  groupedDocuments: { employee: EmployeeOption; items: Document[] }[]
+  recentDocuments: Document[]
+  sensitiveDocuments: Document[]
+  auditTimeline: Array<DocumentAccessLog & { documentName: string; employeeName: string }>
+  activeTab: AdminTab
+  onTabChange: (tab: string) => void
+  filters: { search: string; type: string; dateFrom: string; dateTo: string }
+  onFilterChange: (filters: { search: string; type: string; dateFrom: string; dateTo: string }) => void
+  employeeFilter: string
+  onEmployeeFilterChange: (value: string) => void
+  employees: EmployeeOption[]
+  onUpload: () => void
+  onSend: () => void
+  onPreview: (doc: Document) => void
+  onDownload: (doc: Document) => void
+}
+
+function AdminDocumentsView({
+  stats,
+  documents,
+  groupedDocuments,
+  recentDocuments,
+  sensitiveDocuments,
+  auditTimeline,
+  activeTab,
+  onTabChange,
+  filters,
+  onFilterChange,
+  employeeFilter,
+  onEmployeeFilterChange,
+  employees,
+  onUpload,
+  onSend,
+  onPreview,
+  onDownload,
+}: AdminDocumentsViewProps) {
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-navy">Documents</h1>
+          <p className="text-sm text-muted-foreground">Manage and organize employee documents securely.</p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Button variant="outline" className="gap-2" onClick={onSend}>
+            <Send className="h-4 w-4" />
+            Send Document
+          </Button>
+          <Button className="gap-2" onClick={onUpload}>
+            <Plus className="h-4 w-4" />
+            Upload Document
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <StatCard label="Total Documents" value={stats.total} icon={<FileText className="h-4 w-4 text-blue-600" />} />
+        <StatCard label="Sensitive" value={stats.sensitive} icon={<Shield className="h-4 w-4 text-red-600" />} />
+        <StatCard label="Active" value={stats.active} icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />} />
+        <StatCard label="This Month" value={stats.thisMonth} icon={<Calendar className="h-4 w-4 text-orange-600" />} />
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Filter className="h-4 w-4" />
+            Filters
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-4">
+          <Input
+            placeholder="Search documents..."
+            value={filters.search}
+            onChange={(event) => onFilterChange({ ...filters, search: event.target.value })}
+          />
+          <Select value={filters.type} onValueChange={(value) => onFilterChange({ ...filters, type: value })}>
+            <SelectTrigger>
+              <SelectValue placeholder="All Types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              {ADMIN_UPLOAD_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            type="date"
+            value={filters.dateFrom}
+            onChange={(event) => onFilterChange({ ...filters, dateFrom: event.target.value })}
+          />
+          <Input
+            type="date"
+            value={filters.dateTo}
+            onChange={(event) => onFilterChange({ ...filters, dateTo: event.target.value })}
+          />
+        </CardContent>
+      </Card>
+
+      <Tabs value={activeTab} onValueChange={onTabChange}>
+        <TabsList className="flex w-full flex-wrap justify-start gap-2">
+          <TabsTrigger value="all">All Documents</TabsTrigger>
+          <TabsTrigger value="recent">Recent Uploads</TabsTrigger>
+          <TabsTrigger value="by_employee">By Employee</TabsTrigger>
+          <TabsTrigger value="sensitive">Sensitive Documents</TabsTrigger>
+          <TabsTrigger value="audit">Audit History</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="all">
+          <DocumentTable documents={documents} onPreview={onPreview} onDownload={onDownload} />
+        </TabsContent>
+
+        <TabsContent value="recent">
+          <DocumentTable documents={recentDocuments} onPreview={onPreview} onDownload={onDownload} emptyMessage="No recent uploads." />
+        </TabsContent>
+
+        <TabsContent value="by_employee">
+          <div className="mb-4 flex items-center gap-3">
+            <Label className="text-xs uppercase text-muted-foreground">Employee</Label>
+            <Select value={employeeFilter} onValueChange={onEmployeeFilterChange}>
+              <SelectTrigger className="w-64">
+                <SelectValue placeholder="All employees" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Employees</SelectItem>
+                {employees.map((employee) => (
+                  <SelectItem key={employee.id} value={employee.id}>
+                    {employee.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-4">
+            {groupedDocuments
+              .filter((group) => (employeeFilter === "all" ? true : group.employee.id === employeeFilter))
+              .map((group) => (
+                <Card key={group.employee.id}>
+                  <CardHeader className="flex flex-row items-center justify-between gap-4">
+                    <div>
+                      <CardTitle>{group.employee.name}</CardTitle>
+                      <p className="text-sm text-muted-foreground">{group.employee.number}</p>
+                    </div>
+                    <Badge variant="secondary">{group.items.length} document(s)</Badge>
+                  </CardHeader>
+                  <CardContent>
+                    <DocumentTable
+                      documents={group.items}
+                      onPreview={onPreview}
+                      onDownload={onDownload}
+                      dense
+                    />
+                  </CardContent>
+                </Card>
+              ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="sensitive">
+          <DocumentTable
+            documents={sensitiveDocuments}
+            onPreview={onPreview}
+            onDownload={onDownload}
+            emptyMessage="No sensitive documents found."
+          />
+        </TabsContent>
+
+        <TabsContent value="audit">
+          <AuditTimeline logs={auditTimeline} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+interface DocumentTableProps {
+  documents: Document[]
+  onPreview: (doc: Document) => void
+  onDownload: (doc: Document) => void
+  emptyMessage?: string
+  dense?: boolean
+}
+
+function DocumentTable({ documents, onPreview, onDownload, emptyMessage = "No documents found.", dense }: DocumentTableProps) {
+  if (documents.length === 0) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="py-10 text-center text-sm text-muted-foreground">{emptyMessage}</CardContent>
+      </Card>
+    )
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="overflow-hidden rounded-lg border">
+      <div className="grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 border-b bg-muted/40 px-4 py-3 text-xs font-semibold text-muted-foreground">
+        <span>Name</span>
+        <span>Employee</span>
+        <span>Uploaded By</span>
+        <span>Date</span>
+        <span className="text-right">Actions</span>
+      </div>
+      {documents.map((doc) => (
+        <div key={doc.id} className={cn("grid grid-cols-[2fr_1fr_1fr_1fr_auto] gap-3 px-4 py-3", dense && "py-2") }>
+          <div>
+            <p className="text-sm font-medium">{doc.name}</p>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">{getDocumentTypeDisplayName(doc.type)}</Badge>
+              {doc.is_sensitive && <Badge variant="destructive">Sensitive</Badge>}
+            </div>
+          </div>
+          <div className="text-sm text-muted-foreground">{doc.employee_name}</div>
+          <div className="text-sm text-muted-foreground">{doc.uploaded_by_name}</div>
+          <div className="text-sm text-muted-foreground">{format(new Date(doc.created_at), "dd MMM yyyy")}</div>
+          <div className="flex items-center justify-end gap-1">
+            <Button variant="ghost" size="icon" onClick={() => onPreview(doc)}>
+              <Eye className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => onDownload(doc)}>
+              <Download className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function StatCard({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
+  return (
+    <Card>
+      <CardContent className="flex items-center justify-between p-4">
+        <div>
+          <p className="text-xs uppercase text-muted-foreground">{label}</p>
+          <p className="text-2xl font-bold text-navy">{value}</p>
+        </div>
+        <div className="rounded-full bg-muted p-2">{icon}</div>
+      </CardContent>
+    </Card>
+  )
+}
+
+interface DocumentUploadFormProps {
+  allowedTypes: readonly DocumentTypeOption[]
+  onSubmit: (payload: UploadFormPayload) => void
+  onCancel: () => void
+  employeeOptions?: EmployeeOption[]
+  defaultEmployee?: EmployeeOption
+}
+
+function DocumentUploadForm({ allowedTypes, onSubmit, onCancel, employeeOptions, defaultEmployee }: DocumentUploadFormProps) {
+  const [formData, setFormData] = useState<{ name: string; type: DocumentTypeValue; description: string; tags: string }>(() => ({
+    name: "",
+    type: allowedTypes[0].value,
+    description: "",
+    tags: "",
+  }))
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(() => defaultEmployee?.id ?? employeeOptions?.[0]?.id ?? "")
+
+  const handleFile = (file: File) => {
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File must be under 10MB")
+      return
+    }
+    const allowedMimes = ["application/pdf", "image/jpeg", "image/png"]
+    if (!allowedMimes.includes(file.type)) {
+      alert("Only PDF, JPG and PNG are allowed")
+      return
+    }
+    setSelectedFile(file)
+    if (!formData.name) {
+      setFormData((prev) => ({ ...prev, name: file.name }))
+    }
+  }
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!selectedFile) return
+
+    const employeeInfo = employeeOptions?.find((emp) => emp.id === selectedEmployeeId) ?? defaultEmployee
+    if (!employeeInfo) return
+
+    onSubmit({
+      ...formData,
+      file: selectedFile,
+      employeeId: employeeInfo.id,
+      employeeName: employeeInfo.name,
+      employeeNumber: employeeInfo.number,
+    })
+  }
+
+  return (
+    <form className="space-y-4" onSubmit={handleSubmit}>
+      {employeeOptions && (
+        <div>
+          <Label>Employee</Label>
+          <Select value={selectedEmployeeId} onValueChange={setSelectedEmployeeId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select employee" />
+            </SelectTrigger>
+            <SelectContent>
+              {employeeOptions.map((employee) => (
+                <SelectItem key={employee.id} value={employee.id}>
+                  {employee.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <Label>Document Name</Label>
+          <Input value={formData.name} onChange={(event) => setFormData((prev) => ({ ...prev, name: event.target.value }))} required />
+        </div>
+        <div>
+          <Label>Type</Label>
+          <Select value={formData.type} onValueChange={(value) => setFormData((prev) => ({ ...prev, type: value as DocumentTypeValue }))}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {allowedTypes.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
       <div>
-        <Label htmlFor="file">Document File *</Label>
+        <Label>Document File</Label>
         <div
           className={cn(
-            "border-2 border-dashed rounded-lg p-6 text-center transition-colors",
-            isDragOver ? "border-primary bg-primary/5" : "border-gray-300",
-            selectedFile ? "border-green-300 bg-green-50" : ""
+            "flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 text-center",
+            isDragOver && "border-primary bg-primary/5",
+            selectedFile && "border-emerald-400 bg-emerald-50"
           )}
-          onDrop={handleDrop}
-          onDragOver={(e) => {
-            e.preventDefault()
+          onDragOver={(event) => {
+            event.preventDefault()
             setIsDragOver(true)
           }}
           onDragLeave={() => setIsDragOver(false)}
+          onDrop={(event) => {
+            event.preventDefault()
+            setIsDragOver(false)
+            const file = event.dataTransfer.files?.[0]
+            if (file) handleFile(file)
+          }}
         >
           {selectedFile ? (
-            <div className="space-y-2">
-              <FileText className="h-8 w-8 mx-auto text-green-600" />
-              <p className="text-sm font-medium">{selectedFile.name}</p>
-              <p className="text-xs text-muted-foreground">
-                {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
-              </p>
+            <div>
+              <p className="font-medium">{selectedFile.name}</p>
+              <p className="text-xs text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
             </div>
           ) : (
             <div className="space-y-2">
-              <Upload className="h-8 w-8 mx-auto text-gray-400" />
-              <p className="text-sm">Drag and drop your file here, or click to select</p>
-              <p className="text-xs text-muted-foreground">
-                PDF, JPG, PNG up to 10MB
-              </p>
+              <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
+              <p className="text-sm">Drag & drop or click to select</p>
+              <p className="text-xs text-muted-foreground">PDF, JPG, PNG up to 10MB</p>
             </div>
           )}
           <input
             type="file"
             accept=".pdf,.jpg,.jpeg,.png"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) handleFileSelect(file)
-            }}
             className="hidden"
-            id="file"
+            id="document-file"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) handleFile(file)
+            }}
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-2"
-            onClick={() => document.getElementById("file")?.click()}
-          >
-            Select File
+          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => document.getElementById("document-file")?.click()}>
+            Choose File
           </Button>
         </div>
       </div>
-      
+
       <div>
-        <Label htmlFor="name">Document Name *</Label>
-        <Input
-          id="name"
-          value={formData.name}
-          onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-          placeholder="Enter document name"
-          required
-        />
+        <Label>Description</Label>
+        <Input value={formData.description} onChange={(event) => setFormData((prev) => ({ ...prev, description: event.target.value }))} />
       </div>
-      
-      <div>
-        <Label htmlFor="type">Document Type *</Label>
-        <Select 
-          value={formData.type} 
-          onValueChange={(value) => setFormData(prev => ({ ...prev, type: value as any }))}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="contracts">Contract</SelectItem>
-            <SelectItem value="payslips">Payslip</SelectItem>
-            <SelectItem value="id_copies">ID Copy</SelectItem>
-            <SelectItem value="work_permits">Work Permit</SelectItem>
-            <SelectItem value="doctors_notes">Doctor's Note</SelectItem>
-            <SelectItem value="performance_reviews">Performance Review</SelectItem>
-            <SelectItem value="policies">Policy</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      
-      <div>
-        <Label htmlFor="description">Description</Label>
-        <Input
-          id="description"
-          value={formData.description}
-          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-          placeholder="Brief description of the document"
-        />
-      </div>
-      
-      <div>
-        <Label htmlFor="tags">Tags (comma-separated)</Label>
-        <Input
-          id="tags"
-          value={formData.tags}
-          onChange={(e) => setFormData(prev => ({ ...prev, tags: e.target.value }))}
-          placeholder="e.g., contract, renewal, 2024"
-        />
-      </div>
-      
+
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" disabled={!selectedFile || !formData.name || !formData.type}>
-          Upload Document
+        <Button type="submit" disabled={!selectedFile || !formData.name.trim()}>
+          Upload
         </Button>
       </div>
     </form>
@@ -720,41 +1074,220 @@ function DocumentUploadForm({ onSubmit, onCancel }: DocumentUploadFormProps) {
 
 interface DocumentPreviewProps {
   document: Document
+  isAdminView: boolean
+  onDownload: () => void
 }
 
-function DocumentPreview({ document }: DocumentPreviewProps) {
+function DocumentPreview({ document, isAdminView, onDownload }: DocumentPreviewProps) {
+  const [previewError, setPreviewError] = useState(false)
   const isImage = document.file_type.startsWith("image/")
-  const isPDF = document.file_type === "application/pdf"
+  const isPdf = document.file_type === "application/pdf"
+  const previewUrl = document.file_url
 
-  if (isImage) {
-    return (
-      <div className="flex justify-center">
-        <img
-          src={document.file_url}
-          alt={document.name}
-          className="max-w-full max-h-96 object-contain rounded-lg"
-        />
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+        <Badge variant="outline">{getDocumentTypeDisplayName(document.type)}</Badge>
+        {document.is_sensitive && <Badge variant="destructive">Sensitive</Badge>}
+        <span>Uploaded {format(new Date(document.created_at), "dd MMM yyyy")}</span>
+        <span>{formatFileSize(document.file_size)}</span>
+        {isAdminView && <span>Employee: {document.employee_name}</span>}
       </div>
-    )
+      <div className="rounded-lg border bg-muted/20 p-4">
+        {previewUrl && !previewError ? (
+          isImage ? (
+            <img 
+              src={previewUrl} 
+              alt={document.name} 
+              className="mx-auto max-h-[420px] object-contain"
+              onError={() => setPreviewError(true)}
+            />
+          ) : isPdf ? (
+            <iframe 
+              title={document.name} 
+              src={previewUrl} 
+              className="h-[420px] w-full rounded-lg"
+              onError={() => setPreviewError(true)}
+            />
+          ) : (
+            <div className="text-center text-sm text-muted-foreground">
+              Preview not available. Please download to view the file.
+            </div>
+          )
+        ) : (
+          <div className="text-center text-sm text-muted-foreground">
+            {previewError ? "Failed to load preview. " : ""}Please download to view the file.
+          </div>
+        )}
+      </div>
+      <div className="flex justify-end">
+        <Button onClick={onDownload} className="gap-2" variant="outline">
+          <Download className="h-4 w-4" />
+          Download
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+interface SendDocumentFormProps {
+  employees: EmployeeOption[]
+  documents: Document[]
+  onSubmit: (request: SendDocumentRequest) => void
+  isSubmitting: boolean
+}
+
+function SendDocumentForm({ employees, documents, onSubmit, isSubmitting }: SendDocumentFormProps) {
+  const [selectedEmployees, setSelectedEmployees] = useState<string[]>([])
+  const [selectedDocType, setSelectedDocType] = useState<DocumentTypeValue>(ADMIN_UPLOAD_OPTIONS[0].value)
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string>("")
+  const [sendMode, setSendMode] = useState<"existing" | "new">("existing")
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+
+  const toggleEmployee = (id: string) => {
+    setSelectedEmployees((prev) => (prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]))
   }
 
-  if (isPDF) {
-    return (
-      <div className="w-full h-96">
-        <iframe
-          src={document.file_url}
-          className="w-full h-full rounded-lg border"
-          title={document.name}
-        />
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (selectedEmployees.length === 0) return
+    if (sendMode === "existing" && !selectedDocumentId) return
+    if (sendMode === "new" && !uploadFile) return
+
+    onSubmit({
+      employeeIds: selectedEmployees,
+      documentType: selectedDocType,
+      existingDocumentId: sendMode === "existing" ? selectedDocumentId : undefined,
+      file: sendMode === "new" ? uploadFile : null,
+    })
+  }
+
+  return (
+    <form className="space-y-4" onSubmit={handleSubmit}>
+      <div>
+        <Label>Select Employee(s)</Label>
+        <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-4">
+          {employees.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No employees available.</p>
+          ) : (
+            employees.map((employee) => (
+              <label key={employee.id} className="flex items-center gap-2 text-sm">
+                <Checkbox checked={selectedEmployees.includes(employee.id)} onCheckedChange={() => toggleEmployee(employee.id)} />
+                <span>
+                  {employee.name} {employee.number && <span className="text-xs text-muted-foreground">({employee.number})</span>}
+                </span>
+              </label>
+            ))
+          )}
+        </div>
       </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <Label>Document Type</Label>
+          <Select value={selectedDocType} onValueChange={(value) => setSelectedDocType(value as DocumentTypeValue)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ADMIN_UPLOAD_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Send Mode</Label>
+          <Select value={sendMode} onValueChange={(value) => setSendMode(value as "existing" | "new")}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="existing">Use Existing Document</SelectItem>
+              <SelectItem value="new">Upload New File</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {sendMode === "existing" ? (
+        <div>
+          <Label>Existing Document</Label>
+          <Select value={selectedDocumentId} onValueChange={setSelectedDocumentId}>
+            <SelectTrigger>
+              <SelectValue placeholder="Choose existing document" />
+            </SelectTrigger>
+            <SelectContent>
+              {documents.length === 0 && <SelectItem value="">No documents available</SelectItem>}
+              {documents.map((doc) => (
+                <SelectItem key={doc.id} value={doc.id}>
+                  {doc.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : (
+        <div>
+          <Label>Upload File</Label>
+          <Input
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png"
+            onChange={(event) => {
+              const file = event.target.files?.[0] ?? null
+              setUploadFile(file)
+            }}
+          />
+          <p className="mt-1 text-xs text-muted-foreground">PDF, JPG, PNG up to 10MB.</p>
+        </div>
+      )}
+
+      <DialogFooter>
+        <Button
+          type="submit"
+          className="gap-2"
+          disabled={
+            selectedEmployees.length === 0 ||
+            isSubmitting ||
+            (sendMode === "existing" && !selectedDocumentId) ||
+            (sendMode === "new" && !uploadFile)
+          }
+        >
+          {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          Send Document
+        </Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+function AuditTimeline({ logs }: { logs: Array<DocumentAccessLog & { documentName: string; employeeName: string }> }) {
+  if (logs.length === 0) {
+    return (
+      <Card className="border-dashed">
+        <CardContent className="py-10 text-center text-sm text-muted-foreground">No audit activity recorded yet.</CardContent>
+      </Card>
     )
   }
 
   return (
-    <div className="text-center py-8 text-muted-foreground">
-      <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-      <p>Preview not available for this file type.</p>
-      <p className="text-sm">Please download the file to view it.</p>
+    <div className="space-y-3">
+      {logs.map((log) => (
+        <div key={log.id} className="rounded-lg border p-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <History className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">{log.user_name}</span>
+              <span className="text-muted-foreground">{log.action}ed</span>
+              <span>{log.documentName}</span>
+            </div>
+            <span className="text-xs text-muted-foreground">{format(new Date(log.created_at), "dd MMM yyyy • HH:mm")}</span>
+          </div>
+          <p className="text-xs text-muted-foreground">Employee: {log.employeeName}</p>
+        </div>
+      ))}
     </div>
   )
 }

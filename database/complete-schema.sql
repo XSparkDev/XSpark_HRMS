@@ -270,6 +270,31 @@ CREATE INDEX idx_contracts_end_date ON contracts(end_date);
 -- PHASE 6: LEAVE MANAGEMENT TABLES
 -- ============================================================================
 
+-- Employee leave cycles table (source of truth for leave balances)
+CREATE TABLE employee_leave_cycles (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    leave_type_id UUID NOT NULL REFERENCES leave_types(id) ON DELETE CASCADE,
+    cycle_start_date DATE NOT NULL,
+    cycle_end_date DATE NOT NULL,
+    cycle_number INTEGER DEFAULT 1,
+    days_worked_count INTEGER DEFAULT 0,
+    total_entitled NUMERIC NOT NULL DEFAULT 0,
+    current_balance NUMERIC NOT NULL DEFAULT 0 CHECK (current_balance >= 0),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (employee_id, leave_type_id, cycle_start_date)
+);
+
+CREATE INDEX idx_employee_leave_cycles_employee_type
+    ON employee_leave_cycles(employee_id, leave_type_id);
+
+CREATE INDEX idx_employee_leave_cycles_dates
+    ON employee_leave_cycles(cycle_start_date, cycle_end_date);
+
+CREATE INDEX idx_employee_leave_cycles_active
+    ON employee_leave_cycles(employee_id, leave_type_id, cycle_end_date);
+
 -- Leave balances table
 CREATE TABLE leave_balances (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -534,6 +559,9 @@ CREATE TRIGGER update_banking_details_updated_at BEFORE UPDATE ON banking_detail
 CREATE TRIGGER update_payslips_updated_at BEFORE UPDATE ON payslips
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_employee_leave_cycles_updated_at BEFORE UPDATE ON employee_leave_cycles
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 CREATE TRIGGER update_leave_balances_updated_at BEFORE UPDATE ON leave_balances
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -657,6 +685,171 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER encrypt_banking_sensitive_data
 BEFORE INSERT OR UPDATE ON banking_details
 FOR EACH ROW EXECUTE FUNCTION encrypt_banking_data();
+
+-- Initialize employee leave cycles for a given employee
+CREATE OR REPLACE FUNCTION initialize_employee_leave_cycles(p_employee_id UUID)
+RETURNS VOID AS $$
+DECLARE
+    v_start_date DATE := DATE_TRUNC('year', CURRENT_DATE);
+    v_end_date   DATE := (DATE_TRUNC('year', CURRENT_DATE) + INTERVAL '1 year' - INTERVAL '1 day')::DATE;
+    v_leave_type RECORD;
+    v_entitlement NUMERIC;
+BEGIN
+    -- Loop through all configured leave types
+    FOR v_leave_type IN
+        SELECT id, key
+        FROM leave_types
+    LOOP
+        -- Default entitlements per leave type (can be adjusted to match business rules)
+        v_entitlement := CASE v_leave_type.key
+            WHEN 'annual' THEN 21
+            WHEN 'sick' THEN 30
+            WHEN 'maternity' THEN 120
+            WHEN 'paternity' THEN 10
+            WHEN 'family_responsibility' THEN 3
+            ELSE 0
+        END;
+
+        INSERT INTO employee_leave_cycles (
+            employee_id,
+            leave_type_id,
+            cycle_start_date,
+            cycle_end_date,
+            cycle_number,
+            days_worked_count,
+            total_entitled,
+            current_balance,
+            created_at,
+            updated_at
+        )
+        VALUES (
+            p_employee_id,
+            v_leave_type.id,
+            v_start_date,
+            v_end_date,
+            1,
+            0,
+            v_entitlement,
+            v_entitlement,
+            NOW(),
+            NOW()
+        )
+        ON CONFLICT (employee_id, leave_type_id, cycle_start_date) DO NOTHING;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Daily/periodic manager for rolling leave cycles forward
+CREATE OR REPLACE FUNCTION manage_leave_cycles_daily()
+RETURNS VOID AS $$
+DECLARE
+    v_cycle RECORD;
+    v_new_start DATE;
+    v_new_end   DATE;
+BEGIN
+    FOR v_cycle IN
+        SELECT *
+        FROM employee_leave_cycles
+        WHERE cycle_end_date < CURRENT_DATE
+    LOOP
+        v_new_start := (v_cycle.cycle_end_date + INTERVAL '1 day')::DATE;
+        v_new_end   := (v_new_start + INTERVAL '1 year' - INTERVAL '1 day')::DATE;
+
+        INSERT INTO employee_leave_cycles (
+            employee_id,
+            leave_type_id,
+            cycle_start_date,
+            cycle_end_date,
+            cycle_number,
+            days_worked_count,
+            total_entitled,
+            current_balance,
+            created_at,
+            updated_at
+        )
+        VALUES (
+            v_cycle.employee_id,
+            v_cycle.leave_type_id,
+            v_new_start,
+            v_new_end,
+            COALESCE(v_cycle.cycle_number, 1) + 1,
+            0,
+            v_cycle.total_entitled,
+            v_cycle.current_balance,
+            NOW(),
+            NOW()
+        )
+        ON CONFLICT (employee_id, leave_type_id, cycle_start_date) DO NOTHING;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Update employee_leave_cycles when leave_requests are approved
+CREATE OR REPLACE FUNCTION update_employee_leave_cycle_on_approval()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_cycle employee_leave_cycles%ROWTYPE;
+    v_leave_type_id UUID;
+BEGIN
+    -- Only process when status changes to approved
+    IF NEW.status = 'approved' AND (OLD.status IS NULL OR OLD.status <> 'approved') THEN
+        -- Resolve leave_type_id from leave_types based on the enum/key
+        SELECT id INTO v_leave_type_id
+        FROM leave_types
+        WHERE key = NEW.leave_type::text
+        LIMIT 1;
+
+        IF v_leave_type_id IS NULL THEN
+            -- If we cannot resolve the leave type, do not attempt a balance update
+            RETURN NEW;
+        END IF;
+
+        -- Find an existing cycle for this employee, type and date range
+        SELECT *
+        INTO v_cycle
+        FROM employee_leave_cycles
+        WHERE employee_id = NEW.employee_id
+          AND leave_type_id = v_leave_type_id
+          AND cycle_start_date <= NEW.leave_day_from
+          AND cycle_end_date >= NEW.leave_day_to
+        FOR UPDATE;
+
+        -- If no cycle exists yet, initialize cycles for this employee and try again
+        IF NOT FOUND THEN
+            PERFORM initialize_employee_leave_cycles(NEW.employee_id);
+
+            SELECT *
+            INTO v_cycle
+            FROM employee_leave_cycles
+            WHERE employee_id = NEW.employee_id
+              AND leave_type_id = v_leave_type_id
+              AND cycle_start_date <= NEW.leave_day_from
+              AND cycle_end_date >= NEW.leave_day_to
+            FOR UPDATE;
+        END IF;
+
+        IF FOUND THEN
+            -- Decrement current balance and increment days worked
+            UPDATE employee_leave_cycles
+            SET current_balance = GREATEST(0, current_balance - NEW.total_days),
+                days_worked_count = days_worked_count + CAST(NEW.total_days AS INTEGER),
+                updated_at = NOW()
+            WHERE id = v_cycle.id;
+
+            -- Reflect the new balance on the leave request record
+            NEW.leave_balance_after := (
+                SELECT current_balance FROM employee_leave_cycles WHERE id = v_cycle.id
+            );
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_employee_leave_cycles_on_approval
+AFTER UPDATE ON leave_requests
+FOR EACH ROW EXECUTE FUNCTION update_employee_leave_cycle_on_approval();
 
 -- ============================================================================
 -- PHASE 11: VIEWS CREATION

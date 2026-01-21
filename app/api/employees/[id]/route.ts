@@ -49,11 +49,12 @@ const ArchiveEmployeeSchema = z.object({
 // ============================================================================
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Validate employee ID
-    const employeeId = EmployeeIdSchema.parse(params.id)
+    // Validate employee ID (await params per Next.js guidance)
+    const { id } = await context.params
+    const employeeId = EmployeeIdSchema.parse(id)
 
     // Get employee from service
     const employee = await employeeService.getById(employeeId)
@@ -142,11 +143,12 @@ export async function PUT(
 // ============================================================================
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Validate employee ID
-    const employeeId = EmployeeIdSchema.parse(params.id)
+    // Validate employee ID (await params per Next.js guidance)
+    const { id } = await context.params
+    const employeeId = EmployeeIdSchema.parse(id)
     
     // Get archive reason from request body (optional)
     let archiveReason: string | undefined
@@ -195,11 +197,12 @@ export async function DELETE(
 // ============================================================================
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Validate employee ID
-    const employeeId = EmployeeIdSchema.parse(params.id)
+    // Validate employee ID (await params per Next.js guidance)
+    const { id } = await context.params
+    const employeeId = EmployeeIdSchema.parse(id)
 
     // Restore employee via service
     const employee = await employeeService.restore(employeeId)

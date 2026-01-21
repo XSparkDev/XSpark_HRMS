@@ -25,8 +25,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const performLogin = async (loginEmail: string, loginPassword: string) => {
     setError("")
     setLoading(true)
 
@@ -36,7 +35,7 @@ export default function LoginPage() {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email: loginEmail, password: loginPassword })
       })
 
       const json = await res.json()
@@ -79,10 +78,15 @@ export default function LoginPage() {
     }
   }
 
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await performLogin(email, password)
+  }
+
   // Quick login removed – real authentication only
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#A6206A]/10 via-background to-[#C9234A]/10 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-white flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-8 animate-fade-in-up">
         {/* Back to Home */}
         <Link
@@ -176,7 +180,38 @@ export default function LoginPage() {
           </CardContent>
         </Card>
 
-        {/* Demo Accounts removed */}
+        {/* Quick Login for Testing */}
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground text-center">Quick Login (Testing)</p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1"
+              onClick={() => {
+                setEmail("hehop16671@keevle.com")
+                setPassword("SecurePass123!")
+                performLogin("hehop16671@keevle.com", "SecurePass123!")
+              }}
+              disabled={loading}
+            >
+              Employee
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1"
+              onClick={() => {
+                setEmail("seveta4223@delaeb.com")
+                setPassword("SecurePass123!")
+                performLogin("seveta4223@delaeb.com", "SecurePass123!")
+              }}
+              disabled={loading}
+            >
+              Admin
+            </Button>
+          </div>
+        </div>
 
         {/* Security Notice */}
         <div className="text-center text-xs text-muted-foreground space-y-1">

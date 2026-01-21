@@ -18,6 +18,8 @@ const updateSchema = z.object({
     .optional(),
   alert_level: z.enum(["high", "medium", "low"]).optional(),
   visibility: z.enum(["private", "public"]).optional(),
+  reminder_at: z.string().datetime().optional().nullable(),
+  reminder_enabled: z.boolean().optional(),
 })
 
 export async function PATCH(request: NextRequest, { params }: { params: { noteId: string } }) {
