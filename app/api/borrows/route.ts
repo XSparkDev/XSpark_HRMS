@@ -1,7 +1,28 @@
+// ============================================================================
+// BORROWS API ROUTE (REBUILT)
+// ============================================================================
+// Clean implementation using only actual database schema
+// ============================================================================
+
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { borrowService } from '@/lib/services'
+import { borrowService, notificationService, devicesService } from '@/lib/services'
+import { getCurrentUser } from '@/lib/auth'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+
+// ============================================================================
+// OLD IMPLEMENTATION - COMMENTED OUT FOR REBUILD
+// ============================================================================
+/*
+export async function GET(request: NextRequest) {
+  // ... old implementation commented out ...
+}
+*/
+
+// ============================================================================
+// VALIDATION SCHEMAS
+// ============================================================================
 
 const listSchema = z.object({
   deviceId: z.string().optional(),
@@ -45,10 +66,7 @@ const createSchema = z.object({
   borrow_date: z.string().optional().nullable().or(z.literal('')),
   return_date: z.string().optional().nullable().or(z.literal('')),
   notes: z.string().optional().nullable().or(z.literal('')),
-  status: z.enum(['pending', 'approved', 'borrowed']).optional(), // Will default to pending
-  approval_status: z.enum(['pending_approval', 'approved', 'rejected']).optional(), // Will default to pending_approval
 }).transform((data) => {
-  // Convert empty strings to null/undefined for optional fields
   return {
     ...data,
     borrow_date: data.borrow_date === '' ? null : data.borrow_date,
@@ -57,11 +75,21 @@ const createSchema = z.object({
   }
 })
 
+const updateSchema = z.object({
+  action: z.enum(['approve', 'reject', 'return']),
+  supervisorId: z.string().optional(),
+  reason: z.string().optional(),
+})
+
+// ============================================================================
+// GET /api/borrows - List borrows
+// ============================================================================
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     
-    // Build filter object, handling null/empty values
+    // Build filter object
     const filters: Record<string, any> = {}
     
     const deviceId = searchParams.get('deviceId')
@@ -115,12 +143,18 @@ export async function GET(request: NextRequest) {
     }
 
     console.error('[borrows] GET failed', error)
-    return NextResponse.json({ success: false, error: 'Failed to fetch borrows' }, { status: 500 })
+    return NextResponse.json(
+      { success: false, error: 'Failed to fetch borrows' },
+      { status: 500 },
+    )
   }
 }
 
+// ============================================================================
+// POST /api/borrows - Create borrow request
+// ============================================================================
+
 export async function POST(request: NextRequest) {
-  // Add CORS headers
   const headers = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -129,24 +163,88 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Log incoming request for debugging
-    console.log('[borrows] POST request received at:', new Date().toISOString())
-    
     const body = await request.json()
-    console.log('[borrows] Request payload:', { 
-      device_id: body.device_id, 
-      borrowed_by: body.borrowed_by,
-      has_borrow_date: !!body.borrow_date,
-      has_return_date: !!body.return_date,
-    })
-
-    // Validate and parse payload using Zod schema
     const payload = createSchema.parse(body)
-    console.log('[borrows] Validated payload:', payload)
 
-    // Use borrow-service to create the borrow record
+    // Create borrow record (is_borrowed = false by default)
     const borrow = await borrowService.createBorrow(payload)
-    console.log('[borrows] Borrow created successfully:', borrow.borrow_id)
+
+    // Send notification to all supervisors
+    try {
+      // Get borrower information
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      const borrowerIdentifier = payload.borrowed_by?.trim()
+      const borrowerColumn = borrowerIdentifier && uuidRegex.test(borrowerIdentifier) ? 'id' : 'employee_id'
+      
+      const { data: borrowerEmployee } = await supabaseAdmin
+        .from('employees')
+        .select('id, employee_id, first_name, last_name, preferred_name')
+        .eq(borrowerColumn, borrowerIdentifier)
+        .maybeSingle()
+
+      // Get device information
+      const device = await devicesService.getDeviceByIdentifier(payload.device_id)
+      
+      // Find all supervisors (employees with supervisor role)
+      // First, find the supervisor role ID
+      const { data: supervisorRole } = await supabaseAdmin
+        .from('roles')
+        .select('id')
+        .ilike('role_name', '%supervisor%')
+        .limit(1)
+        .maybeSingle()
+
+      if (supervisorRole?.id) {
+        // Get all employees with supervisor role
+        const { data: supervisors } = await supabaseAdmin
+          .from('employees')
+          .select('id, employee_id, first_name, last_name, preferred_name')
+          .eq('role_id', supervisorRole.id)
+          .is('deleted_at', null) // Only active employees
+
+        if (supervisors && supervisors.length > 0) {
+          const borrowerName = borrowerEmployee?.preferred_name || 
+                               `${borrowerEmployee?.first_name || ''} ${borrowerEmployee?.last_name || ''}`.trim() ||
+                               borrowerEmployee?.employee_id ||
+                               'Unknown Employee'
+          
+          const deviceName = device?.model || device?.asset_tag || 'device'
+          const assetTag = device?.asset_tag || 'N/A'
+          const returnDate = payload.return_date 
+            ? new Date(payload.return_date).toLocaleDateString()
+            : 'Not specified'
+
+          // Send notification to each supervisor
+          const notificationPromises = supervisors.map((supervisor) =>
+            notificationService.createNotification(
+              {
+                employee_id: supervisor.id,
+                title: 'New Device Borrow Request',
+                message: `Employee ${borrowerName} (ID: ${borrowerEmployee?.employee_id || 'N/A'}) has requested to borrow ${deviceName} (Asset: ${assetTag}). Expected return date: ${returnDate}.${payload.notes ? ` Notes: ${payload.notes}` : ''}`,
+                notification_type: 'internal',
+                published_by: borrowerEmployee?.id || null,
+                is_confidential: false,
+              },
+              {
+                sendEmail: true,
+                preventDuplicates: true,
+                duplicateWindowMinutes: 5,
+              }
+            )
+          )
+
+          await Promise.allSettled(notificationPromises)
+          console.log(`[borrows] Sent notifications to ${supervisors.length} supervisor(s)`)
+        } else {
+          console.warn('[borrows] No supervisors found to notify')
+        }
+      } else {
+        console.warn('[borrows] Supervisor role not found')
+      }
+    } catch (notifError) {
+      console.error('[borrows] Failed to send notification to supervisors:', notifError)
+      // Don't fail the request if notification fails
+    }
 
     return NextResponse.json(
       {
@@ -163,12 +261,11 @@ export async function POST(request: NextRequest) {
     console.error('[borrows] POST error:', error)
     
     if (error instanceof z.ZodError) {
-      console.error('[borrows] Validation errors:', error.errors)
       return NextResponse.json(
         { 
           success: false, 
           error: 'Invalid borrow payload', 
-          details: error.errors 
+          details: error.errors,
         },
         { 
           status: 400,
@@ -177,11 +274,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Extract error message from error object
     const errorMessage = error instanceof Error ? error.message : 'Failed to create borrow record'
-    console.error('[borrows] POST failed:', errorMessage)
-    
-    // Provide user-friendly error messages
     let userMessage = errorMessage
     let statusCode = 500
     
@@ -194,9 +287,6 @@ export async function POST(request: NextRequest) {
     } else if (errorMessage.includes('Borrower not found')) {
       userMessage = 'Your employee information was not found. Please contact support.'
       statusCode = 404
-    } else if (errorMessage.includes('column') || errorMessage.includes('does not exist')) {
-      userMessage = 'There was a database configuration issue. Please contact support.'
-      statusCode = 500
     }
     
     return NextResponse.json(
@@ -205,33 +295,189 @@ export async function POST(request: NextRequest) {
         error: userMessage,
         ...(process.env.NODE_ENV === 'development' && error instanceof Error && {
           details: error.message,
-          stack: error.stack
-        })
+        }),
       }, 
       { 
         status: statusCode,
         headers,
-      }
+      },
     )
   }
 }
 
-// Handle OPTIONS request for CORS preflight
+// ============================================================================
+// PATCH /api/borrows/[id] - Update borrow (approve/reject/return)
+// ============================================================================
+
+export async function PATCH(request: NextRequest) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'PATCH, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  }
+
+  try {
+    const { searchParams } = new URL(request.url)
+    let borrowId = searchParams.get('id')
+    const actionFromQuery = searchParams.get('action')
+
+    // Clean up borrowId - remove "id=" prefix if present
+    if (borrowId) {
+      borrowId = borrowId.replace(/^id=/, '').trim()
+    }
+
+    if (!borrowId) {
+      return NextResponse.json(
+        { success: false, error: 'Borrow ID is required in query params (?id=...)' },
+        { status: 400, headers },
+      )
+    }
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuidRegex.test(borrowId)) {
+      return NextResponse.json(
+        { success: false, error: `Invalid borrow ID format: ${borrowId}. Expected UUID format.` },
+        { status: 400, headers },
+      )
+    }
+
+    // Get action from query params or body
+    let action: string | null = actionFromQuery
+    let supervisorId: string | undefined
+    let reason: string | undefined
+
+    // Try to parse body (only once)
+    let body: any = {}
+    try {
+      const bodyText = await request.text()
+      if (bodyText) {
+        body = JSON.parse(bodyText)
+      }
+    } catch {
+      // Body is optional, continue with empty object
+    }
+
+    // If action not in query params, get it from body
+    if (!action) {
+      try {
+        const parsed = updateSchema.parse(body)
+        action = parsed.action
+        supervisorId = parsed.supervisorId
+        reason = parsed.reason
+      } catch (bodyError) {
+        // If body parsing fails and no action in query, return error
+        return NextResponse.json(
+          { success: false, error: 'Action is required (in query params ?action=approve or in request body)' },
+          { status: 400, headers },
+        )
+      }
+    } else {
+      // Action from query params, get supervisorId and reason from body
+      supervisorId = body.supervisorId
+      reason = body.reason
+    }
+
+    if (!action) {
+      return NextResponse.json(
+        { success: false, error: 'Action is required (approve, reject, or return)' },
+        { status: 400, headers },
+      )
+    }
+
+    let result: any = null
+
+    // Get supervisor ID from body, query params, or current user
+    let finalSupervisorId = supervisorId
+    if (!finalSupervisorId && (action === 'approve' || action === 'reject')) {
+      const user = getCurrentUser()
+      finalSupervisorId = user?.id || user?.employeeId || searchParams.get('supervisorId') || undefined
+    }
+
+    switch (action) {
+      case 'approve':
+        if (!finalSupervisorId) {
+          return NextResponse.json(
+            { success: false, error: 'Supervisor ID is required for approval' },
+            { status: 400, headers },
+          )
+        }
+        result = await borrowService.approveBorrow(borrowId, finalSupervisorId)
+        break
+
+      case 'reject':
+        if (!finalSupervisorId) {
+          return NextResponse.json(
+            { success: false, error: 'Supervisor ID is required for rejection' },
+            { status: 400, headers },
+          )
+        }
+        result = await borrowService.rejectBorrow(borrowId, finalSupervisorId, reason)
+        break
+
+      case 'return':
+        result = await borrowService.returnDevice(borrowId)
+        break
+
+      default:
+        return NextResponse.json(
+          { success: false, error: 'Invalid action' },
+          { status: 400, headers },
+        )
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        data: result,
+        message: `Borrow ${action}d successfully`,
+      },
+      { status: 200, headers },
+    )
+  } catch (error) {
+    console.error('[borrows] PATCH error:', error)
+
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Invalid update payload',
+          details: error.errors,
+        },
+        {
+          status: 400,
+          headers,
+        },
+      )
+    }
+
+    const errorMessage = error instanceof Error ? error.message : 'Failed to update borrow'
+    return NextResponse.json(
+      {
+        success: false,
+        error: errorMessage,
+      },
+      {
+        status: 500,
+        headers,
+      },
+    )
+  }
+}
+
+// ============================================================================
+// OPTIONS - CORS preflight
+// ============================================================================
+
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, {
     status: 200,
     headers: {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'POST, GET, PATCH, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Max-Age': '86400',
     },
   })
 }
-
-
-
-
-
-
-

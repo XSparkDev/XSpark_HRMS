@@ -3,6 +3,7 @@ import { z } from 'zod'
 
 import { bookingsService } from '@/lib/services'
 import type { UpdateBookingInput, BookingRecord } from '@/lib/services/bookings-service'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 const updateSchema = z.object({
   room_id: z.string().optional(),
@@ -26,6 +27,32 @@ const updateSchema = z.object({
 })
 
 const conflictMessage = 'The room is already booked for that time window.'
+
+const getEmployeeName = async (employeeUuid: string): Promise<string | null> => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('employees')
+      .select('first_name, last_name, preferred_name')
+      .eq('id', employeeUuid)
+      .maybeSingle()
+
+    if (error || !data) {
+      return null
+    }
+
+    const firstName = data.first_name || ''
+    const lastName = data.last_name || ''
+    const preferredName = data.preferred_name
+    
+    if (preferredName) {
+      return `${preferredName} ${lastName}`.trim()
+    }
+    return `${firstName} ${lastName}`.trim() || 'Unknown'
+  } catch (error) {
+    console.warn('[room-bookings] Failed to get employee name', error)
+    return null
+  }
+}
 
 export async function GET(
   _request: NextRequest,
@@ -81,6 +108,16 @@ export async function PATCH(
     const nextEndTime = payload.end_time ?? toTimeString(existing.end_time) ?? '01:00'
 
     if (payload.room_id || payload.date || payload.start_time || payload.end_time) {
+      // First check if user already has a booking at this time (regardless of room)
+      await bookingsService.ensureUserTimeSlotIsAvailable({
+        bookedBy: existing.booked_by,
+        bookingDate: nextDate,
+        startTime: nextStartTime,
+        endTime: nextEndTime,
+        excludeBookingId: bookingId,
+      })
+
+      // Then check if the specific room is available
       await bookingsService.ensureRoomIsAvailable({
         roomId,
         bookingDate: nextDate,
@@ -151,8 +188,28 @@ export async function PATCH(
     }
 
     if (error instanceof Error && error.message.includes(conflictMessage)) {
+      // Check if we have conflict booking info
+      const conflictBooking = (error as any).conflictBooking as BookingRecord | undefined
+      let errorMessage = 'The selected room is already booked for that time window.'
+      
+      if (conflictBooking?.booked_by) {
+        const employeeName = await getEmployeeName(conflictBooking.booked_by)
+        if (employeeName) {
+          const startTime = toTimeString(conflictBooking.start_time) || ''
+          const endTime = toTimeString(conflictBooking.end_time) || ''
+          errorMessage = `The room is already booked by ${employeeName} from ${startTime} to ${endTime}. Please select a different time slot or room.`
+        }
+      }
+      
       return NextResponse.json(
-        { success: false, error: 'Room unavailable for selected time window' },
+        { success: false, error: errorMessage },
+        { status: 409 }
+      )
+    }
+
+    if (error instanceof Error && error.message.includes('already have a booking at this time')) {
+      return NextResponse.json(
+        { success: false, error: error.message },
         { status: 409 }
       )
     }

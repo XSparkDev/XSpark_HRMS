@@ -96,6 +96,15 @@ export {
 } from './incidents-service'
 
 export {
+  MaintenanceService,
+  maintenanceService,
+  type MaintenanceRequestRecord,
+  type MaintenanceRequestFilters,
+  type CreateMaintenanceRequestInput,
+  type UpdateMaintenanceRequestInput,
+} from './maintenance-service'
+
+export {
   BookingsService,
   bookingsService,
   type BookingRecord,
@@ -111,6 +120,13 @@ export {
   type CreateNotificationInput,
   type NotificationRealtimeHandlers,
 } from './notification-service'
+
+export {
+  EmailService,
+  emailService,
+  type EmailOptions,
+  type SendEmailResult,
+} from './email-service'
 
 // Legacy services (to be migrated)
 export { notesService as legacyNotesService } from './notes-service'
@@ -130,7 +146,9 @@ import { devicesService } from './devices-service'
 import { bookingsService } from './bookings-service'
 import { borrowService } from './borrow-service'
 import { incidentsService } from './incidents-service'
+import { maintenanceService } from './maintenance-service'
 import { notificationService } from './notification-service'
+import { emailService } from './email-service'
 
 // Service factory for dependency injection
 export class ServiceFactory {
@@ -172,11 +190,17 @@ export class ServiceFactory {
         case 'incidents':
           this.instances.set(serviceName, incidentsService)
           break
+        case 'maintenance':
+          this.instances.set(serviceName, maintenanceService)
+          break
         case 'bookings':
           this.instances.set(serviceName, bookingsService)
           break
         case 'notifications':
           this.instances.set(serviceName, notificationService)
+          break
+        case 'email':
+          this.instances.set(serviceName, emailService)
           break
         default:
           throw new Error(`Unknown service: ${serviceName}`)
@@ -198,7 +222,9 @@ export default {
   devicesService,
   borrowService,
   incidentsService,
+  maintenanceService,
   bookingsService,
   notificationService,
+  emailService,
   ServiceFactory
 }

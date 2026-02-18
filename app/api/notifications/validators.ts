@@ -20,7 +20,7 @@ export const notificationCreateSchema = z.object({
   title: z.string().min(1, 'title is required'),
   message: z.string().min(1, 'message is required'),
   notification_type: z.string().min(1, 'notification_type is required'),
-  published_by: z.string().uuid('published_by must be a valid UUID'),
+  published_by: z.string().uuid('published_by must be a valid UUID').nullable().optional(),
   is_confidential: z.boolean().optional(),
 })
 

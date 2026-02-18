@@ -43,18 +43,12 @@ export default function BorrowDevicePage() {
     const currentUser = getCurrentUser()
     setUser(currentUser)
     
-    // Set default borrow date and time
-    const now = new Date()
-    const dateStr = now.toISOString().split('T')[0]
-    const timeStr = now.toTimeString().slice(0, 5)
-    
+    // Set user info only, don't set dates automatically
     setFormData((prev) => ({
       ...prev,
       borrowerName: currentUser?.name || "John Doe",
       employeeId: currentUser?.employeeId || "N/A",
-      borrowDate: dateStr,
-      borrowTime: timeStr,
-      returnDate: dateStr,
+      // Don't set dates automatically - let user choose
     }))
   }, [])
 
@@ -92,6 +86,15 @@ export default function BorrowDevicePage() {
   if (!mounted || !user) return null
 
   const handleInputChange = (field: string, value: string | boolean) => {
+    if (field === "borrowDate" && typeof value === "string" && value) {
+      // Check for weekends
+      const date = new Date(value)
+      const day = date.getDay()
+      if (day === 0 || day === 6) {
+        alert("Borrow date cannot fall on a weekend.")
+        return
+      }
+    }
     setFormData((prev) => ({ ...prev, [field]: value }))
     if (field === "borrowTime" && typeof value === "string") {
       if (!value) {
@@ -325,6 +328,7 @@ export default function BorrowDevicePage() {
                         className="flex-1"
                         required
                       />
+                      <p className="text-xs text-muted-foreground mt-1">Weekdays only (no weekends)</p>
                       <Input
                         id="borrowTime"
                         type="time"

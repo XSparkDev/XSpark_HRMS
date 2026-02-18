@@ -7,7 +7,7 @@ const paramsSchema = z.object({
   identifier: z.string().min(1, 'identifier is required'),
 })
 
-export async function GET(_request: NextRequest, context: { params: { identifier: string } | Promise<{ identifier: string }> }) {
+export async function GET(_request: NextRequest, context: { params: Promise<{ identifier: string }> }) {
   try {
     const params = await context.params
     const { identifier } = paramsSchema.parse(params)

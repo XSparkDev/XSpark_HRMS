@@ -23,8 +23,9 @@ const normalizeErrorResponse = (error: unknown, fallbackMessage: string, status 
   return NextResponse.json({ success: false, error: fallbackMessage }, { status })
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: { bookingId: string } }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ bookingId: string }> }) {
   try {
+    const { bookingId } = await params
     const payload = updateSchema.parse(await request.json())
 
     const updates: UpdateBookingInput = {
@@ -41,7 +42,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { bookin
       rejection_reason: payload.rejection_reason,
     }
 
-    const { data: booking, error: updateError } = await bookingsService.updateBooking(params.bookingId, updates)
+    const { data: booking, error: updateError } = await bookingsService.updateBooking(bookingId, updates)
 
     if (updateError) {
       return NextResponse.json(
@@ -84,9 +85,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { bookin
   }
 }
 
-export async function DELETE(request: NextRequest, { params }: { params: { bookingId: string } }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ bookingId: string }> }) {
   try {
-    await bookingsService.deleteBooking(params.bookingId)
+    const { bookingId } = await params
+    await bookingsService.deleteBooking(bookingId)
     return NextResponse.json({
       success: true,
       message: 'Booking deleted successfully',

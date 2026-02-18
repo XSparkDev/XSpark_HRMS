@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { XSparkLogo } from "@/components/xspark-logo"
 import { getCurrentUser, type User } from "@/lib/auth"
-import { Users, Building2, LogOut } from "lucide-react"
+import { Users, Building2, LogOut, Loader2 } from "lucide-react"
 import {
   AlertDialog,
   AlertDialogTrigger,
@@ -25,6 +25,7 @@ export default function SystemSelectorPage() {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
+  const [navigatingToSystem, setNavigatingToSystem] = useState<string | null>(null)
 
   useEffect(() => {
     // Only access localStorage on the client side after hydration
@@ -42,10 +43,11 @@ export default function SystemSelectorPage() {
   // Show loading state during initial hydration
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4 md:p-6">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 md:p-6">
         <div className="text-center">
-          <XSparkLogo className="h-12 md:h-16 w-auto mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading...</p>
+          <XSparkLogo className="h-12 md:h-16 w-auto mx-auto mb-6" />
+          <Loader2 className="h-6 w-6 animate-spin text-[#92278F] mx-auto mb-3" />
+          <p className="text-muted-foreground text-sm">Loading...</p>
         </div>
       </div>
     )
@@ -55,8 +57,13 @@ export default function SystemSelectorPage() {
   if (!user) return null
 
   const handleSystemSelection = (systemPath: string) => {
+    // Set loading state for the clicked system
+    setNavigatingToSystem(systemPath)
+    
     // Store the selected system for future logins
     localStorage.setItem("lastSelectedSystem", systemPath)
+    
+    // Navigate to the selected system
     router.push(systemPath)
   }
 
@@ -100,21 +107,22 @@ export default function SystemSelectorPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4 md:p-6">
-      <div className="w-full max-w-4xl mx-auto">
-        {/* Top bar with logout */}
-        <div className="mb-4 flex items-center justify-end">
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex items-center gap-2 rounded-full border-[#E4E4E7] px-3 py-1.5 text-xs font-medium text-[#4B4F68] hover:bg-[#F4F4F5]"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                <span>Log out</span>
-              </Button>
-            </AlertDialogTrigger>
+    <div className="min-h-screen bg-background flex flex-col p-4 md:p-6">
+      {/* Header with logout button in far right corner */}
+      <header className="w-full flex items-center justify-between mb-4 md:mb-6">
+        <div className="flex-1"></div>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex items-center gap-2 rounded-full border-[#E4E4E7] px-3 py-1.5 text-xs sm:text-sm font-medium text-[#4B4F68] hover:bg-[#F4F4F5]"
+            >
+              <LogOut className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden sm:inline">Log out</span>
+              <span className="sm:hidden">Logout</span>
+            </Button>
+          </AlertDialogTrigger>
             <AlertDialogContent className="sm:max-w-md">
               <AlertDialogHeader>
                 <AlertDialogTitle className="text-xl font-bold text-[#1D1F2C]">
@@ -141,8 +149,9 @@ export default function SystemSelectorPage() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-        </div>
+      </header>
 
+      <div className="w-full max-w-4xl mx-auto flex flex-col items-center justify-center flex-1">
         {/* Logo Section */}
         <div className="flex justify-center mb-8 md:mb-12">
           <XSparkLogo className="h-12 md:h-16 w-auto" />
@@ -172,9 +181,17 @@ export default function SystemSelectorPage() {
               </div>
               <Button 
                 onClick={() => handleSystemSelection("/dashboard")}
-                className="w-40 mx-auto mt-auto gradient-primary text-white hover:opacity-90 transition-opacity"
+                disabled={navigatingToSystem !== null}
+                className="w-40 mx-auto mt-auto gradient-primary text-white hover:opacity-90 transition-opacity disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                Access HRMS
+                {navigatingToSystem === "/dashboard" ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Loading...
+                  </>
+                ) : (
+                  "Access HRMS"
+                )}
               </Button>
             </CardContent>
           </Card>
@@ -193,9 +210,17 @@ export default function SystemSelectorPage() {
               </div>
               <Button 
                 onClick={() => handleSystemSelection("/ams-dashboard")}
-                className="w-40 mx-auto mt-auto gradient-primary text-white hover:opacity-90 transition-opacity"
+                disabled={navigatingToSystem !== null}
+                className="w-40 mx-auto mt-auto gradient-primary text-white hover:opacity-90 transition-opacity disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                Access AMS
+                {navigatingToSystem === "/ams-dashboard" ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Loading...
+                  </>
+                ) : (
+                  "Access AMS"
+                )}
               </Button>
             </CardContent>
           </Card>

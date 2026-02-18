@@ -7,8 +7,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Building2, Calendar, Clock, Users } from "lucide-react"
+import { Building2, Calendar, Clock, Users, X } from "lucide-react"
 import { getCurrentUser } from "@/lib/auth"
+import { useToast } from "@/hooks/use-toast"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import {
   getBookingTimeBounds,
   loadRoomBookings,
@@ -27,20 +29,25 @@ type RoomAvailabilityModalProps = {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const sanitizeEmployeeName = (value?: string | null) => {
-  if (!value) return "Employee"
+  if (!value) return null
   const trimmed = value.trim()
   if (UUID_REGEX.test(trimmed)) {
-    return "Employee"
+    // If it's a UUID, return null so we can fetch the actual name
+    return null
   }
   return trimmed
 }
 
 export function RoomAvailabilityModal({ open, onOpenChange }: RoomAvailabilityModalProps) {
   const user = getCurrentUser()
+  const { toast } = useToast()
   const [bookings, setBookings] = useState<RoomBookingRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [referenceTime, setReferenceTime] = useState(() => new Date())
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [bookingToCancel, setBookingToCancel] = useState<RoomBookingRecord | null>(null)
+  const [isCancelling, setIsCancelling] = useState(false)
 
   const persistBookings = useCallback((records: RoomBookingRecord[]) => {
     if (typeof window === "undefined") return
@@ -56,10 +63,23 @@ export function RoomAvailabilityModal({ open, onOpenChange }: RoomAvailabilityMo
     const end = rawEnd ? rawEnd.slice(0, 5) : ""
     const time = row.time ?? (start && end ? `${start}-${end}` : start || end || "")
 
+    // Get employee name - prefer API-provided name, fallback to sanitized value
+    const apiEmployeeName = row.employee_name ?? row.booked_by_name
+    const sanitizedName = sanitizeEmployeeName(apiEmployeeName ?? row.booked_by)
+    const employeeName = apiEmployeeName || sanitizedName || null
+    
+    // Get employee role - determine if EMPLOYEE or SUPERVISOR
+    const employeeRole = row.employee_role ?? row.role ?? row.position ?? null
+    const roleName = employeeRole?.toLowerCase() || ""
+    // Map role to either EMPLOYEE or SUPERVISOR
+    const displayJobTitle = roleName.includes("supervisor") || roleName === "supervisor" ? "SUPERVISOR" : "EMPLOYEE"
+
     return {
       id: row.id ?? row.booking_id ?? `${row.room_id ?? "room"}-${date}-${start || "start"}`,
       employeeId: row.booked_by ?? row.employee_id ?? row.employeeId ?? "",
-      employeeName: sanitizeEmployeeName(row.employee_name ?? row.booked_by_name ?? row.booked_by ?? "Employee"),
+      employeeName: employeeName ? employeeName.toUpperCase() : null,
+      employeeRole: employeeRole,
+      jobTitle: displayJobTitle,
       room: row.room_details?.room_name ?? row.room ?? row.room_id ?? "Room",
       meetingCategory: row.meeting_category ?? row.meetingCategory ?? "Internal",
       meetingAgenda: row.meeting_agenda ?? row.meetingAgenda ?? "",
@@ -157,10 +177,13 @@ export function RoomAvailabilityModal({ open, onOpenChange }: RoomAvailabilityMo
           isCancelled,
         }
       })
-      .filter(({ startMinutes, isCancelled }) => {
+      .filter(({ startMinutes, endMinutes, isCancelled, runtimeStatus }) => {
         // Filter out cancelled meetings
         if (isCancelled) return false
-        // Filter out past meetings
+        // Keep meetings that are in progress (current time is within start and end time)
+        const isInProgress = runtimeStatus === 'In Progress'
+        if (isInProgress) return true
+        // Filter out past meetings (only if not in progress)
         const isFuture = startMinutes === null || startMinutes > nowMinutes
         return isFuture
       })
@@ -217,18 +240,18 @@ export function RoomAvailabilityModal({ open, onOpenChange }: RoomAvailabilityMo
 
   const statusBadge = (status?: string | null) => {
     const normalized = (status || "booked").toLowerCase()
-    const variant: "default" | "secondary" | "outline" | "destructive" =
-      normalized === "in progress"
-        ? "default"
-        : normalized === "pending"
-        ? "destructive"
-        : normalized === "completed"
-        ? "secondary"
-        : "outline"
-    return <Badge variant={variant}>{toTitleCase(status)}</Badge>
+    const colorClass = getStatusColor(status)
+    return (
+      <Badge 
+        variant="outline" 
+        className={`${colorClass} border-2 font-medium`}
+      >
+        {toTitleCase(status)}
+      </Badge>
+    )
   }
 
-  const toTitleCase = (value?: string | null) => {
+    const toTitleCase = (value?: string | null) => {
     if (!value) return "Unknown"
     return value
       .toLowerCase()
@@ -236,6 +259,66 @@ export function RoomAvailabilityModal({ open, onOpenChange }: RoomAvailabilityMo
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ")
   }
+
+  // Generate harmonious colors based on room name hash
+  const getRoomColor = (roomName: string) => {
+    let hash = 0
+    for (let i = 0; i < roomName.length; i++) {
+      hash = roomName.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    // Generate harmonious pastel colors
+    const hue = Math.abs(hash) % 360
+    return `hsl(${hue}, 65%, 90%)`
+  }
+
+  // Get status color based on booking status
+  const getStatusColor = (status?: string | null) => {
+    const normalized = (status || "booked").toLowerCase()
+    if (normalized === "in progress") return "bg-blue-100 text-blue-800 border-blue-300"
+    if (normalized === "pending") return "bg-amber-100 text-amber-800 border-amber-300"
+    if (normalized === "completed" || normalized === "attended") return "bg-green-100 text-green-800 border-green-300"
+    if (normalized === "cancelled" || normalized.includes("cancel")) return "bg-gray-100 text-gray-600 border-gray-300"
+    if (normalized === "missed") return "bg-red-100 text-red-800 border-red-300"
+    // Default booked status
+    return "bg-purple-100 text-purple-800 border-purple-300"
+  }
+
+  const handleCancelClick = (booking: RoomBookingRecord) => {
+    setBookingToCancel(booking)
+    setCancelDialogOpen(true)
+  }
+
+  const handleCancelConfirm = async () => {
+    if (!bookingToCancel) return
+    setIsCancelling(true)
+    try {
+      const response = await fetch(`/api/room-bookings/${bookingToCancel.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "cancelled" }),
+      })
+      const json = await response.json().catch(() => ({}))
+      if (!response.ok || json.success === false) {
+        throw new Error(json?.error || "Failed to cancel booking")
+      }
+      await refreshFromApi(false)
+      toast({
+        title: "Booking cancelled",
+        description: "The meeting has been cancelled successfully.",
+      })
+      setCancelDialogOpen(false)
+      setBookingToCancel(null)
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Failed to cancel booking",
+        description: error instanceof Error ? error.message : "Please try again later.",
+      })
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
 
   if (!user) return null
 
@@ -259,31 +342,62 @@ export function RoomAvailabilityModal({ open, onOpenChange }: RoomAvailabilityMo
                   <div className="text-center py-6 text-sm text-muted-foreground">No bookings for today.</div>
                 ) : (
                   <div className="space-y-2">
-                    {todaysSchedule.map((booking, index) => (
-                      <div
-                        key={
-                          booking.id ??
-                          `${booking.room ?? 'room'}-${booking.date ?? 'date'}-${booking.time ?? booking.startTime ?? index}`
-                        }
-                        className="flex items-center justify-between p-3 border rounded-lg"
-                      >
-                        <div className="flex flex-col">
-                          <span className="font-medium text-[#25294B]">
-                            {booking.meetingAgenda || "Room Booking"}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {formatTimeRange(booking)} • {sanitizeEmployeeName(booking.employeeName)}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-sm font-medium">{booking.room}</span>
-                          <div className="text-xs text-muted-foreground flex items-center gap-2 justify-end">
-                            {booking.meetingCategory}
-                            {statusBadge(booking.runtimeStatus || booking.status)}
+                    {todaysSchedule.map((booking, index) => {
+                      const roomColor = getRoomColor(booking.room || "default")
+                      return (
+                        <div
+                          key={
+                            booking.id ??
+                            `${booking.room ?? 'room'}-${booking.date ?? 'date'}-${booking.time ?? booking.startTime ?? index}`
+                          }
+                          className="flex items-center justify-between p-3 border-2 rounded-lg transition-all hover:shadow-md"
+                          style={{ 
+                            borderLeftColor: roomColor,
+                            borderLeftWidth: '4px',
+                            backgroundColor: `${roomColor}15`
+                          }}
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-medium text-[#25294B]">
+                              {booking.meetingAgenda || "Room Booking"}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {formatTimeRange(booking)} • {booking.employeeName || "UNKNOWN"}
+                              {booking.jobTitle && (
+                                <span className="font-semibold text-[#25294B] ml-1">
+                                  • {booking.jobTitle}
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          <div className="text-right flex items-center gap-3">
+                            <div className="flex flex-col items-end">
+                              <span 
+                                className="text-sm font-medium px-2 py-1 rounded-md"
+                                style={{ backgroundColor: roomColor }}
+                              >
+                                {booking.room}
+                              </span>
+                              <div className="text-xs text-muted-foreground flex items-center gap-2 justify-end mt-1">
+                                {booking.meetingCategory}
+                                {statusBadge(booking.runtimeStatus || booking.status)}
+                              </div>
+                            </div>
+                            {(booking.runtimeStatus || booking.status)?.toLowerCase() !== "in progress" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                                onClick={() => handleCancelClick(booking)}
+                                title="Cancel booking"
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </CardContent>
@@ -335,6 +449,35 @@ export function RoomAvailabilityModal({ open, onOpenChange }: RoomAvailabilityMo
             </CardHeader>
           </Card>
         )}
+
+        {/* Cancel Confirmation Dialog */}
+        <AlertDialog open={cancelDialogOpen} onOpenChange={(open) => {
+          if (!isCancelling) {
+            setCancelDialogOpen(open)
+            if (!open) {
+              setBookingToCancel(null)
+            }
+          }
+        }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Cancel booking?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to cancel this meeting? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isCancelling}>Keep Booking</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleCancelConfirm}
+                disabled={isCancelling}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {isCancelling ? "Cancelling..." : "Cancel Booking"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )

@@ -36,6 +36,7 @@ const DeviceFiltersSchema = z.object({
   limit: z.coerce.number().min(1).optional().default(100),
   offset: z.coerce.number().min(0).optional().default(0),
   availableOnly: z.union([z.string(), z.boolean()]).optional(),
+  syncStatus: z.union([z.string(), z.boolean()]).optional(), // Sync device statuses before returning
 })
 
 // GET /api/devices - list devices with optional filters
@@ -50,7 +51,20 @@ export async function GET(request: NextRequest) {
       limit: searchParams.get('limit') || '50',
       offset: searchParams.get('offset') || '0',
       availableOnly: searchParams.get('availableOnly') ?? undefined,
+      syncStatus: searchParams.get('syncStatus') ?? undefined,
     })
+
+    // Sync device statuses if requested (before fetching devices)
+    const shouldSyncStatus = normalizeBoolean(parsedFilters.syncStatus)
+    if (shouldSyncStatus) {
+      try {
+        const syncedCount = await devicesService.syncDeviceStatuses()
+        console.log(`[devices API] Synced ${syncedCount} device statuses`)
+      } catch (syncError) {
+        console.error('[devices API] Error syncing device statuses:', syncError)
+        // Don't fail the request if sync fails, just log the error
+      }
+    }
 
     // CRITICAL: Fetch devices with no caching
     // If assigned_to is provided, filter devices assigned to that employee UUID

@@ -116,7 +116,8 @@ export class IncidentsService extends BaseService {
       throw new Error('device_id is required')
     }
 
-    const device = await devicesService.getDeviceById(trimmed)
+    // Use getDeviceByIdentifier to support multiple identifier types (device_id, asset_tag, serial_number, UUID)
+    const device = await devicesService.getDeviceByIdentifier(trimmed)
     if (!device?.device_id) {
       throw new Error('Device not found')
     }
@@ -168,7 +169,7 @@ export class IncidentsService extends BaseService {
       }
 
       return {
-        data: (data ?? []).map((row) => this.normalize(row)),
+        data: (data ?? []).map((row: any) => this.normalize(row)),
         count: count ?? data?.length ?? 0,
       }
     } catch (error) {

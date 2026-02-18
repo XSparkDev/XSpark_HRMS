@@ -121,7 +121,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </Link>
 
           {/* Notifications */}
-          <Button variant="ghost" size="icon" className="relative">
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="relative"
+            onClick={() => {
+              // TODO: Add notifications dropdown/dialog
+              console.log("Notifications clicked - implement notifications UI")
+            }}
+          >
             <Bell className="h-5 w-5" />
             <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-[#E31E24]" />
           </Button>

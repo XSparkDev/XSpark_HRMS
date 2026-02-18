@@ -4,7 +4,9 @@ export const ROOM_BOOKINGS_UPDATED_EVENT = 'room-bookings:updated'
 export type RoomBookingRecord = {
   id: string
   employeeId: string
-  employeeName: string
+  employeeName: string | null
+  employeeRole?: string | null
+  jobTitle?: string | null
   room: string
   meetingCategory: string
   editableSections?: string

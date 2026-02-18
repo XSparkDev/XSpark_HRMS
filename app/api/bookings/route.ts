@@ -98,6 +98,33 @@ export async function POST(request: NextRequest) {
   try {
     const payload = createSchema.parse(await request.json())
 
+    // Derive booking date and time components for conflict checks
+    const startDate = new Date(payload.start_time)
+    const endDate = new Date(payload.end_time)
+
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'start_time and end_time must be valid ISO datetime strings',
+        },
+        { status: 400 },
+      )
+    }
+
+    const bookingDate = startDate.toISOString().split('T')[0]
+    const startTime = startDate.toISOString().slice(11, 16) // HH:MM
+    const endTime = endDate.toISOString().slice(11, 16) // HH:MM
+
+    // Prevent the same user from booking overlapping meetings across rooms
+    await bookingsService.ensureUserTimeSlotIsAvailable({
+      bookedBy: payload.booked_by,
+      bookingDate,
+      startTime,
+      endTime,
+      excludeBookingId: payload.booking_id,
+    })
+
     const createPayload: CreateBookingInput = {
       booking_id: payload.booking_id,
       room_id: payload.room_id,
@@ -130,6 +157,13 @@ export async function POST(request: NextRequest) {
           details: error.errors,
         },
         { status: 400 },
+      )
+    }
+
+    if (error instanceof Error && error.message.includes('already have a booking at this time')) {
+      return NextResponse.json(
+        { success: false, error: error.message },
+        { status: 409 },
       )
     }
 

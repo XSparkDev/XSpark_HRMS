@@ -55,3 +55,4 @@ COMMENT ON COLUMN public.bookings.purpose IS 'Purpose of the meeting/booking';
 
 
 
+

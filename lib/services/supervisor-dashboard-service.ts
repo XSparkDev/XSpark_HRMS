@@ -6,8 +6,10 @@
 
 import { BaseService } from './base-service'
 import { supabase } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { devicesService } from './devices-service'
+import { borrowService } from './borrow-service'
 
 export interface DeviceStats {
   total: number
@@ -185,51 +187,193 @@ class SupervisorDashboardService extends BaseService {
   /**
    * Get pending borrow requests
    */
-  async getPendingBorrowRequests(): Promise<BorrowRequest[]> {
+  async getPendingBorrowRequests(forceRefresh: boolean = false): Promise<BorrowRequest[]> {
+    // If force refresh is requested, clear cache first
+    if (forceRefresh) {
+      this.clearCache('pending-borrow-requests')
+    }
     return this.getCachedOrFetch('pending-borrow-requests', async () => {
-      const { data, error } = await supabase
-        .from('borrows')
-        .select(`
-          id,
-          employee_id,
-          device_id,
-          borrow_date,
-          expected_return_date,
-          purpose,
-          status,
-          created_at,
-          updated_at,
-          devices:device_id (
-            asset_tag,
-            model,
-            brand,
-            device_type
-          ),
-          employees:employee_id (
-            name,
-            employee_id
-          )
-        `)
-        .in('status', ['Pending', 'Pending Approval', 'Awaiting Approval'])
-        .order('created_at', { ascending: false })
+      // Call API route instead of borrowService directly (borrowService uses supabaseAdmin which only works server-side)
+      // The API route runs on the server and can use supabaseAdmin correctly
+      console.log('[SupervisorDashboardService] Fetching pending borrows via API route')
+      
+      try {
+        const response = await fetch('/api/borrows?isBorrowed=false&limit=100', {
+          cache: 'no-store',
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Accept': 'application/json',
+          },
+        })
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => 'Unknown error')
+          throw new Error(`API request failed: ${response.status} ${errorText}`)
+        }
+
+        const json = await response.json()
+        
+        console.log('[SupervisorDashboardService] API response:', {
+          success: json.success,
+          dataCount: json.data?.length || 0,
+          meta: json.meta,
+        })
+
+        if (!json.success || !Array.isArray(json.data)) {
+          console.warn('[SupervisorDashboardService] Invalid API response format')
+          return []
+        }
+
+        const borrowRecords = json.data
+
+        if (!borrowRecords || borrowRecords.length === 0) {
+          console.warn('[SupervisorDashboardService] No pending borrows found via API')
+          return []
+        }
+
+      // Fetch device and employee info for all borrows
+      const deviceIds = [...new Set(borrowRecords.map((b: any) => b.device_id).filter(Boolean))]
+      const employeeIds = [...new Set(borrowRecords.map((b: any) => b.borrowed_by).filter(Boolean))]
+
+      console.log('[SupervisorDashboardService] Fetching relations:', {
+        deviceIds: deviceIds.length,
+        employeeIds: employeeIds.length,
+      })
+
+      // Fetch devices via API (supabaseAdmin doesn't work from client-side)
+      const devicesResponse = await fetch(`/api/devices?limit=1000&offset=0`, {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+        },
+      })
+      const devicesJson = await devicesResponse.json().catch(() => ({ success: false, data: [] }))
+      const allDevices = devicesJson.success && Array.isArray(devicesJson.data) ? devicesJson.data : []
+      const devicesMap = new Map(allDevices.filter((d: any) => deviceIds.includes(d.device_id)).map((d: any) => [d.device_id, d]))
+
+      // Fetch employees via API
+      const employeesResponse = await fetch(`/api/employees?limit=1000&offset=0`, {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+        },
+      })
+      const employeesJson = await employeesResponse.json().catch(() => ({ success: false, data: [] }))
+      const allEmployees = employeesJson.success && Array.isArray(employeesJson.data) ? employeesJson.data : []
+      const employeesMap = new Map(allEmployees.filter((e: any) => employeeIds.includes(e.id)).map((e: any) => [e.id, e]))
+
+      // Sort by borrow_date descending
+      const sortedData = borrowRecords.sort((a: any, b: any) => {
+        const dateA = new Date(a.borrow_date || 0).getTime()
+        const dateB = new Date(b.borrow_date || 0).getTime()
+        return dateB - dateA
+      })
+
+      const mapped = sortedData.map((item: any) => {
+        const device = devicesMap.get(item.device_id)
+        const employee = employeesMap.get(item.borrowed_by)
+
+        return {
+          id: item.borrow_id || item.id,
+          employee_id: employee?.employee_id || item.borrowed_by || 'Unknown',
+          employee_name: employee?.name || 'Unknown',
+          device_id: item.device_id,
+          device_name: device?.model || device?.brand || device?.device_type || 'Device',
+          asset_tag: device?.asset_tag || item.device_id,
+          borrow_date: item.borrow_date,
+          expected_return_date: item.return_date,
+          purpose: item.notes || '',
+          status: 'pending',
+          created_at: item.borrow_date,
+          updated_at: item.borrow_date,
+        }
+      })
+
+      console.log('[SupervisorDashboardService] Mapped pending borrow requests:', {
+        count: mapped.length,
+        sample: mapped.slice(0, 2).map((m: any) => ({
+          id: m.id,
+          employee_name: m.employee_name,
+          device_name: m.device_name,
+        }))
+      })
+
+      return mapped
+      } catch (error) {
+        console.error('[SupervisorDashboardService] Error fetching pending borrows via API:', error)
+        return []
+      }
+    })
+  }
+
+  /**
+   * Get active borrows (current borrows - approved but not returned)
+   * Uses standard definition: approved_at IS NOT NULL AND returned_at IS NULL
+   */
+  async getActiveBorrows(forceRefresh: boolean = false): Promise<BorrowRequest[]> {
+    // If force refresh is requested, clear cache first
+    if (forceRefresh) {
+      this.clearCache('active-borrows')
+    }
+    return this.getCachedOrFetch('active-borrows', async () => {
+      // Fetch active borrows: is_borrowed = true (device is currently borrowed)
+      // Use supabaseAdmin to bypass RLS policies (same as API route)
+      const { data, error } = await supabaseAdmin
+          .from('borrows')
+          .select(`
+          borrow_id,
+            borrowed_by,
+            device_id,
+            borrow_date,
+          return_date,
+          is_borrowed,
+          notes,
+          qr_code_url,
+            devices:device_id (
+              asset_tag,
+              model,
+              brand,
+              device_type
+            ),
+            employees:borrowed_by (
+              name,
+              employee_id
+            )
+          `)
+        .eq('is_borrowed', true) // is_borrowed = true means device is currently borrowed
+        .order('borrow_date', { ascending: false })
 
       if (error) {
-        throw new Error(`Failed to fetch borrow requests: ${error.message}`)
+        console.error('[SupervisorDashboardService] Error fetching active borrows:', error)
+        throw new Error(`Failed to fetch active borrows: ${error.message}`)
       }
+      
+      // Log for debugging
+      console.log('[SupervisorDashboardService] Active borrows query result:', {
+        totalFetched: (data || []).length,
+        activeCount: (data || []).length,
+        sample: (data || []).slice(0, 2).map((item: any) => ({
+          borrow_id: item.borrow_id,
+          is_borrowed: item.is_borrowed,
+        }))
+      })
 
       return (data || []).map((item: any) => ({
-        id: item.id,
-        employee_id: item.employee_id,
+        id: item.borrow_id || item.id,
+        employee_id: item.employees?.employee_id || item.borrowed_by || 'Unknown',
         employee_name: item.employees?.name || 'Unknown',
         device_id: item.device_id,
         device_name: item.devices?.model || item.devices?.brand || item.devices?.device_type || 'Device',
         asset_tag: item.devices?.asset_tag || item.device_id,
         borrow_date: item.borrow_date,
-        expected_return_date: item.expected_return_date,
-        purpose: item.purpose || '',
-        status: item.status,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
+        expected_return_date: item.return_date,
+        purpose: item.notes || '',
+        status: 'borrowed', // All records with is_borrowed=true are active/borrowed
+        created_at: item.borrow_date, // Use borrow_date as created_at since created_at doesn't exist
+        updated_at: item.borrow_date,
       }))
     })
   }
@@ -274,6 +418,7 @@ class SupervisorDashboardService extends BaseService {
         employee_name: item.employees?.name || 'Unknown',
         device_id: item.device_id,
         device_name: item.devices?.model || item.devices?.brand || item.devices?.device_type || 'Device',
+        asset_tag: item.devices?.asset_tag || item.device_id,
         return_date: item.return_date,
         device_condition: item.device_condition || 'Good',
         status: item.status,
@@ -625,44 +770,41 @@ class SupervisorDashboardService extends BaseService {
 
   /**
    * Approve a borrow request
+   * Uses the new clean API endpoint
    */
   async approveBorrowRequest(requestId: string, notes?: string): Promise<void> {
     try {
-      // First, get the borrow request to find the device_id
-      const { data: borrowData, error: fetchError } = await supabase
-        .from('borrows')
-        .select('device_id')
-        .eq('id', requestId)
-        .single()
+      // Get current user for supervisorId
+      const { getCurrentUser } = await import('@/lib/auth')
+      const user = getCurrentUser()
+      const supervisorId = user?.id || user?.employeeId
 
-      if (fetchError || !borrowData) {
-        throw new Error(`Failed to fetch borrow request: ${fetchError?.message || 'Request not found'}`)
+      if (!supervisorId) {
+        throw new Error('Supervisor ID is required for approval')
       }
 
-      const deviceId = borrowData.device_id
+      // Call the new API endpoint
+      const response = await fetch(`/api/borrows/${requestId}?action=approve`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          supervisorId,
+          reason: notes,
+        }),
+      })
 
-      // Update borrow request status
-      const { error: borrowError } = await supabase
-        .from('borrows')
-        .update({
-          status: 'Approved',
-          updated_at: new Date().toISOString(),
-          supervisor_notes: notes,
-        })
-        .eq('id', requestId)
-
-      if (borrowError) {
-        throw new Error(`Failed to approve borrow request: ${borrowError.message}`)
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `Failed to approve borrow request: ${response.statusText}`)
       }
 
-      // Update device status from "available" to "borrowed"
-      if (deviceId) {
-        try {
-          await devicesService.setDeviceStatus(deviceId, 'borrowed')
-        } catch (deviceError) {
-          console.error('Failed to update device status:', deviceError)
-          // Don't throw here - approval succeeded, device status update is secondary
-        }
+      const result = await response.json()
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to approve borrow request')
       }
 
       this.clearCache('pending-borrow-requests')
@@ -675,23 +817,45 @@ class SupervisorDashboardService extends BaseService {
 
   /**
    * Reject a borrow request
+   * Uses the new clean API endpoint
    */
   async rejectBorrowRequest(requestId: string, reason?: string): Promise<void> {
     try {
-      const { error } = await supabase
-        .from('borrows')
-        .update({
-          status: 'Rejected',
-          updated_at: new Date().toISOString(),
-          supervisor_notes: reason,
-        })
-        .eq('id', requestId)
+      // Get current user for supervisorId
+      const { getCurrentUser } = await import('@/lib/auth')
+      const user = getCurrentUser()
+      const supervisorId = user?.id || user?.employeeId
 
-      if (error) {
-        throw new Error(`Failed to reject borrow request: ${error.message}`)
+      if (!supervisorId) {
+        throw new Error('Supervisor ID is required for rejection')
+      }
+
+      // Call the new API endpoint
+      const response = await fetch(`/api/borrows/${requestId}?action=reject`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          supervisorId,
+          reason: reason,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `Failed to reject borrow request: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to reject borrow request')
       }
 
       this.clearCache('pending-borrow-requests')
+      this.clearCache('device-stats')
     } catch (error) {
       console.error('Failed to reject borrow request:', error)
       throw error
@@ -745,6 +909,68 @@ class SupervisorDashboardService extends BaseService {
       this.clearCache('pending-return-requests')
     } catch (error) {
       console.error('Failed to reject return request:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Delete a borrow request (only for approved or rejected requests)
+   */
+  async deleteBorrowRequest(requestId: string): Promise<void> {
+    try {
+      // Use borrowService.deleteBorrow which handles device status updates
+      await borrowService.deleteBorrow(requestId, { hardDelete: true })
+      
+      this.clearCache('pending-borrow-requests')
+      this.clearCache('device-stats')
+    } catch (error) {
+      console.error('Failed to delete borrow request:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Delete a return request (only for approved or rejected requests)
+   */
+  async deleteReturnRequest(requestId: string): Promise<void> {
+    try {
+      // Get the return request to find the device_id
+      const { data: returnData, error: fetchError } = await supabase
+        .from('returns')
+        .select('device_id')
+        .eq('id', requestId)
+        .single()
+
+      if (fetchError || !returnData) {
+        throw new Error(`Failed to fetch return request: ${fetchError?.message || 'Request not found'}`)
+      }
+
+      const deviceId = returnData.device_id
+
+      // Delete the return request
+      const { error: deleteError } = await supabase
+        .from('returns')
+        .delete()
+        .eq('id', requestId)
+
+      if (deleteError) {
+        throw new Error(`Failed to delete return request: ${deleteError.message}`)
+      }
+
+      // Update device status to available after deletion
+      if (deviceId) {
+        try {
+          await devicesService.setDeviceStatus(deviceId, 'available')
+        } catch (deviceError) {
+          console.error('Failed to update device status:', deviceError)
+          // Don't throw here - deletion succeeded, device status update is secondary
+        }
+      }
+
+      this.clearCache('pending-return-requests')
+      this.clearCache('device-stats')
+    } catch (error) {
+      console.error('Failed to delete return request:', error)
       throw error
     }
   }

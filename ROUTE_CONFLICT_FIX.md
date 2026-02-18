@@ -122,3 +122,4 @@ app/api/devices/
 These routes use `[identifier]` but are at different path levels, so no conflict:
 - `/api/borrows/borrower/[identifier]/route.ts` ✅ (different path)
 
+

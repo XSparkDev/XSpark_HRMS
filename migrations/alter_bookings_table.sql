@@ -99,3 +99,4 @@ COMMENT ON COLUMN public.bookings.updated_at IS
 
 
 
+

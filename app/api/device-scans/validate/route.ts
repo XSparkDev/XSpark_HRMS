@@ -56,9 +56,25 @@ export async function POST(request: NextRequest) {
 
       // Check borrow status is "Approved – Awaiting Scan" or similar
       const status = (borrow.status || "").toLowerCase()
-      if (!status.includes("approved") && !status.includes("pending")) {
+      const approvalStatus = (borrow.approval_status || "").toLowerCase()
+      
+      // For collection, the borrow must be approved
+      // Check if both status and approval_status indicate approval
+      const isApproved = 
+        (status === "approved" || status.includes("approved")) &&
+        (approvalStatus === "approved" || approvalStatus.includes("approved"))
+      
+      // Also allow pending status for auto-approved supervisor requests
+      const isPendingButAllowed = 
+        (status === "pending" || status.includes("pending")) &&
+        (approvalStatus === "approved" || approvalStatus.includes("approved"))
+      
+      if (!isApproved && !isPendingButAllowed) {
         return NextResponse.json(
-          { success: false, error: "Borrow request is not in approved state" },
+          { 
+            success: false, 
+            error: "Borrow request must be approved before collection. Current status: " + (borrow.status || "pending") + ", approval: " + (borrow.approval_status || "pending_approval")
+          },
           { status: 400 }
         )
       }
@@ -72,13 +88,33 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Update status to "Borrowed"
-      await borrowService.updateBorrow(borrow_id, {
-        status: "borrowed",
-        approval_status: "approved",
-      }).catch(() => {})
+      // If borrow is approved but status is still "pending", update status to "approved" first
+      if (isPendingButAllowed && !isApproved) {
+        try {
+          await borrowService.updateBorrow(borrow_id, {
+            status: "approved",
+            approval_status: "approved",
+          })
+        } catch (updateError) {
+          console.warn('[device-scans] Failed to update pending borrow to approved:', updateError)
+        }
+      }
 
-      // Update device status
+      // Update status to "Borrowed" - use pickupDevice to ensure all fields are set correctly
+      try {
+        await borrowService.pickupDevice(borrow_id)
+      } catch (pickupError) {
+        // Fallback to updateBorrow if pickupDevice fails
+        console.warn('[device-scans] pickupDevice failed, falling back to updateBorrow:', pickupError)
+        await borrowService.updateBorrow(borrow_id, {
+          status: "borrowed",
+          approval_status: "approved",
+          is_borrowed: true,
+          picked_up_at: new Date().toISOString(),
+        }).catch(() => {})
+      }
+
+      // Update device status (pickupDevice already does this, but ensure it's set)
       await devicesService.setDeviceStatus(device.device_id, "borrowed").catch(() => {})
 
       return NextResponse.json({
