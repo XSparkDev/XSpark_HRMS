@@ -1210,7 +1210,8 @@ const selectedBorrowDevice = useMemo(
 
   // Return handlers
   const returnableDevices = useMemo(
-    () => history.filter((entry) => entry.status === "Borrowed"),
+    // Allow selecting borrowed devices; keep "Awaiting Return" visible so users can see pending returns too.
+    () => history.filter((entry) => entry.status === "Borrowed" || entry.status === "Awaiting Return"),
     [history],
   )
   const selectedReturnEntry = useMemo(
@@ -1253,7 +1254,7 @@ const selectedBorrowDevice = useMemo(
         entry.recordId === returnDeviceId
           ? {
               ...entry,
-              status: "Pending",
+              status: "Awaiting Return",
               returnDate: today,
               action: entry.action === "Incident" ? entry.action : "Return",
               returnCondition,
@@ -1269,7 +1270,7 @@ const selectedBorrowDevice = useMemo(
       deviceName: returningEntry.deviceName,
       deviceType: returningEntry.deviceType,
       returnDate: today,
-      status: "Pending",
+      status: "Awaiting Return",
       condition: returnCondition || undefined,
       image: returnFileName || null,
     })
@@ -1278,6 +1279,12 @@ const selectedBorrowDevice = useMemo(
     setReturnConfirmOpen(true)
     setBannerMessage(`${returningEntry.deviceName} return recorded.`)
     setTimeout(() => setBannerMessage(null), 6000)
+
+    // Open scan modal to submit the return request to backend
+    setCollectScanMode("return")
+    setCollectScanBorrowId(returningEntry.recordId)
+    setCollectScanDeviceId(returningEntry.deviceRecordId ?? returningEntry.deviceId)
+    setCollectScanModalOpen(true)
     setReturnDeviceId("")
     setReturnCondition("")
     setReturnFileName(null)
@@ -1496,10 +1503,20 @@ const selectedBorrowDevice = useMemo(
     if (!borrowId) return
     
     try {
-      // Update status to "Returned"
+      // Status-first return flow:
+      // the scan validates the device AND submits a return request (pending supervisor approval),
+      // so local UI should reflect "Awaiting Return" (not "Returned").
       updateHistory((prev) =>
         prev.map((e) =>
-          e.recordId === borrowId ? { ...e, status: "Returned" as DeviceHistoryStatus, returnDate: new Date().toISOString().split("T")[0] } : e,
+          e.recordId === borrowId
+            ? {
+                ...e,
+                status: "Awaiting Return" as DeviceHistoryStatus,
+                isReturnPending: true,
+                returnDate: new Date().toISOString().split("T")[0],
+                action: e.action === "Incident" ? e.action : "Return",
+              }
+            : e,
         ),
       )
       
@@ -1518,8 +1535,8 @@ const selectedBorrowDevice = useMemo(
       await generateReturnReceipt(borrowId)
       
       toast({
-        title: "Device returned successfully",
-        description: "Device has been scanned and returned.",
+        title: "Return request submitted",
+        description: "Your return request is awaiting supervisor approval.",
       })
       
       // Trigger history sync
@@ -1903,8 +1920,13 @@ const selectedBorrowDevice = useMemo(
                             value={borrowDate ? new Date(borrowDate).toISOString().split('T')[0] : ""}
                             onChange={(e) => {
                               if (e.target.value) {
-                                const date = new Date(e.target.value + 'T00:00:00')
-                                const day = date.getDay()
+                                const dateOnly = e.target.value
+                                const parsed = parseDateOnly(dateOnly)
+                                if (!parsed) {
+                                  setBorrowDate("")
+                                  return
+                                }
+                                const day = parsed.getDay()
                                 if (day === 0 || day === 6) {
                                   toast({
                                     variant: "destructive",
@@ -1913,7 +1935,8 @@ const selectedBorrowDevice = useMemo(
                                   })
                                   return
                                 }
-                                setBorrowDate(date.toISOString())
+                                // Store as date-only string to avoid timezone shifts
+                                setBorrowDate(dateOnly)
                               } else {
                                 setBorrowDate("")
                               }
@@ -2130,14 +2153,9 @@ const selectedBorrowDevice = useMemo(
               onOpenChange={(open) => {
                 setBorrowConfirmOpen(open)
                 if (!open) {
-                  if (lastBorrowRecordId) {
-                    updateHistory((prev) =>
-                      prev.map((entry) =>
-                        entry.recordId === lastBorrowRecordId ? { ...entry, status: "Borrowed" } : entry,
-                      ),
-                    )
-                    setLastBorrowRecordId(null)
-                  }
+                  // Keep history entry in its current status (typically "Pending").
+                  // It will transition to "Borrowed" only after proper approval/collection flows.
+                  setLastBorrowRecordId(null)
                   setBorrowReceipt(null)
                 }
               }}

@@ -108,6 +108,10 @@ export function ApproveBorrowModal({
     setIsProcessing(true)
     try {
       await onConfirm(request.id)
+      toast({
+        title: 'Borrow approved',
+        description: 'The borrow request has been approved successfully.',
+      })
       onOpenChange(false)
       setScannedCode(null)
     } catch (error) {

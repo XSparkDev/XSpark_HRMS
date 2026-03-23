@@ -73,7 +73,8 @@ type ManagementHistoryRecord = {
   actual_return_date: string | null // For returns
   status: string // Combined status for display
   approval_status?: "Pending" | "Approved" | "Rejected" // For borrows/returns
-  borrow_status?: "Active" | "Returned" | "Overdue" | "Pending Pickup" // For borrows
+  // Display-oriented status derived from authoritative `borrows.borrow_status`
+  borrow_status?: "Pending Borrow" | "Borrowed" | "Awaiting Return" | "Returned" | "Rejected" | "Overdue" // For borrows
   incident_type?: string // For incidents
   incident_severity?: string | null | undefined // For incidents
   approved_by_name: string | null
@@ -93,11 +94,11 @@ const getApprovalStatusBadgeColor = (status: string) => {
 
 const getBorrowStatusBadgeColor = (status: string) => {
   const statusLower = status.toLowerCase()
-  if (statusLower === "active" || statusLower === "borrowed") return "#92278F"
+  if (statusLower === "borrowed") return "#92278F"
   if (statusLower === "returned") return "#16A34A"
   if (statusLower === "overdue") return "#BE1E2D"
-  if (statusLower === "pending pickup" || statusLower === "approved") return "#F59E0B"
-  if (statusLower === "pending") return "#2563EB"
+  if (statusLower === "pending borrow") return "#2563EB"
+  if (statusLower === "awaiting return") return "#F59E0B"
   if (statusLower === "rejected") return "#DC2626"
   return undefined
 }
@@ -232,7 +233,7 @@ export default function DeviceManagementHistoryPage() {
       const borrowEmployeeUuids = borrows.map((b) => b.borrowed_by).filter(Boolean)
       const incidentEmployeeUuids = incidents.map((i) => i.reported_by).filter(Boolean)
       const employeeUuids = Array.from(new Set([...borrowEmployeeUuids, ...incidentEmployeeUuids]))
-      const approverUuids = Array.from(new Set(borrows.map((b) => b.approved_by).filter(Boolean)))
+      const approverUuids = Array.from(new Set((borrows as any[]).map((b) => b.approved_by).filter(Boolean)))
       const borrowDeviceIds = borrows.map((b) => b.device_id).filter(Boolean)
       const incidentDeviceIds = incidents.map((i) => i.device_id).filter(Boolean)
       const deviceIds = Array.from(new Set([...borrowDeviceIds, ...incidentDeviceIds]))
@@ -340,33 +341,58 @@ export default function DeviceManagementHistoryPage() {
       borrows.forEach((borrow) => {
         const employee = employeesMap.get(borrow.borrowed_by)
         const device = devicesMap.get(borrow.device_id)
-        const approver = borrow.approved_by ? approversMap.get(borrow.approved_by) : null
+        const approverId = (borrow as any).approved_by
+        const approver = approverId ? approversMap.get(approverId) : null
 
-        // Determine approval status
-        const approvalStatusRaw = borrow.approval_status || borrow.status || ""
+        // Status-first: authoritative field is `borrow.borrow_status`
+        const rawBorrowStatus = String((borrow as any).borrow_status || "").toLowerCase().trim()
+
+        // Derive display statuses + approval status for UI filters
         let approvalStatus: "Pending" | "Approved" | "Rejected" = "Pending"
-        if (approvalStatusRaw.toLowerCase().includes("approved")) approvalStatus = "Approved"
-        else if (approvalStatusRaw.toLowerCase().includes("rejected")) approvalStatus = "Rejected"
+        let borrowStatus: "Pending Borrow" | "Borrowed" | "Awaiting Return" | "Returned" | "Rejected" | "Overdue" =
+          "Pending Borrow"
 
-        // Determine borrow status
-        let borrowStatus: "Active" | "Returned" | "Overdue" | "Pending Pickup" = "Pending Pickup"
-        const statusLower = (borrow.status || "").toLowerCase()
-        const isBorrowed = borrow.is_borrowed === true
-        const returnedAt = borrow.returned_at
-
-        if (returnedAt || statusLower === "returned") {
-          borrowStatus = "Returned"
-        } else if (statusLower === "rejected" || statusLower === "cancelled") {
-          borrowStatus = "Pending Pickup"
-        } else if (isBorrowed) {
+        if (rawBorrowStatus === "pending_borrow") {
+          approvalStatus = "Pending"
+          borrowStatus = "Pending Borrow"
+        } else if (rawBorrowStatus === "rejected") {
+          approvalStatus = "Rejected"
+          borrowStatus = "Rejected"
+        } else if (rawBorrowStatus === "borrowed") {
+          approvalStatus = "Approved"
           if (borrow.return_date) {
             const returnDate = new Date(borrow.return_date)
-            borrowStatus = returnDate < now ? "Overdue" : "Active"
+            borrowStatus = returnDate < now ? "Overdue" : "Borrowed"
           } else {
-            borrowStatus = "Active"
+            borrowStatus = "Borrowed"
           }
-        } else if (approvalStatus === "Approved") {
-          borrowStatus = "Pending Pickup"
+        } else if (rawBorrowStatus === "pending_return") {
+          approvalStatus = "Approved"
+          borrowStatus = "Awaiting Return"
+        } else if (rawBorrowStatus === "returned") {
+          approvalStatus = "Approved"
+          borrowStatus = "Returned"
+        } else {
+          // Legacy fallback if borrow_status isn't populated yet
+          const statusLower = String(borrow.status || "").toLowerCase()
+          const approvalStatusRaw = String(borrow.approval_status || borrow.status || "").toLowerCase()
+          if (approvalStatusRaw.includes("approved")) approvalStatus = "Approved"
+          else if (approvalStatusRaw.includes("rejected")) approvalStatus = "Rejected"
+
+          if (borrow.is_returned === true || borrow.returned_at || statusLower === "returned") {
+            borrowStatus = "Returned"
+          } else if (statusLower.includes("rejected")) {
+            borrowStatus = "Rejected"
+          } else if (borrow.is_borrowed === true) {
+            if (borrow.return_date) {
+              const returnDate = new Date(borrow.return_date)
+              borrowStatus = returnDate < now ? "Overdue" : "Borrowed"
+            } else {
+              borrowStatus = "Borrowed"
+            }
+          } else {
+            borrowStatus = "Pending Borrow"
+          }
         }
 
         const employeeFullName = employee
@@ -529,10 +555,11 @@ export default function DeviceManagementHistoryPage() {
     // Status filter
     if (statusFilter !== "all") {
       filtered = filtered.filter((row) => {
-        if (statusFilter === "active") return row.borrow_status === "Active"
+        if (statusFilter === "active") return row.borrow_status === "Borrowed"
         if (statusFilter === "returned") return row.borrow_status === "Returned" || row.record_type === "Return"
         if (statusFilter === "overdue") return row.borrow_status === "Overdue"
-        if (statusFilter === "pending") return row.borrow_status === "Pending Pickup" || row.approval_status === "Pending"
+        // Pending includes: pending borrow + awaiting return approval
+        if (statusFilter === "pending") return row.borrow_status === "Pending Borrow" || row.borrow_status === "Awaiting Return"
         if (statusFilter === "incident") return row.record_type === "Incident"
         return true
       })
@@ -590,8 +617,8 @@ export default function DeviceManagementHistoryPage() {
             ? {
                 ...r,
                 approval_status: "Approved" as const,
-                borrow_status: "Pending Pickup" as const,
-                status: "Pending Pickup (Approved)",
+                borrow_status: "Borrowed" as const,
+                status: "Borrowed (Approved)",
               }
             : r
         )
@@ -1045,10 +1072,13 @@ export default function DeviceManagementHistoryPage() {
                   const approvalColor = row.approval_status ? getApprovalStatusBadgeColor(row.approval_status) : undefined
                   const borrowColor = row.borrow_status ? getBorrowStatusBadgeColor(row.borrow_status) : undefined
                   const isLoading = actionLoading?.startsWith(row.id)
-                  const canApprove = row.record_type !== "Incident" && row.approval_status === "Pending"
-                  const canReject = row.record_type !== "Incident" && row.approval_status === "Pending"
-                  const canMarkReturned = row.record_type !== "Incident" && (row.borrow_status === "Active" || row.borrow_status === "Overdue")
-                  const canExtend = row.record_type !== "Incident" && (row.borrow_status === "Active" || row.borrow_status === "Overdue")
+                  // Status-first actions:
+                  // - Approve/Reject only applies to pending borrow requests
+                  // - "Mark returned" only applies to pending return approvals
+                  const canApprove = row.record_type !== "Incident" && row.borrow_status === "Pending Borrow"
+                  const canReject = row.record_type !== "Incident" && row.borrow_status === "Pending Borrow"
+                  const canMarkReturned = row.record_type !== "Incident" && row.borrow_status === "Awaiting Return"
+                  const canExtend = row.record_type !== "Incident" && (row.borrow_status === "Borrowed" || row.borrow_status === "Overdue")
                   const canDelete = row.record_type === "Incident"
                   const canViewDetails = true // All records can be viewed
 

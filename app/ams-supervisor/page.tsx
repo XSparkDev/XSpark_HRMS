@@ -2,7 +2,7 @@
 
 import React from "react"
 import Link from "next/link"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AMSDashboardLayout } from "@/components/ams-dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -316,6 +316,10 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
   // Approve borrow requests table state
   const [showBorrowRequestsTable, setShowBorrowRequestsTable] = useState(false)
   const [showActiveBorrowsTable, setShowActiveBorrowsTable] = useState(false)
+  const showActiveBorrowsTableRef = useRef(showActiveBorrowsTable)
+  useEffect(() => {
+    showActiveBorrowsTableRef.current = showActiveBorrowsTable
+  }, [showActiveBorrowsTable])
   
   // Approve returns popup state
   const [showReturnsTable, setShowReturnsTable] = useState(false)
@@ -420,6 +424,64 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
       } catch (fallbackError) {
         console.error("Fallback to localStorage also failed", fallbackError)
       }
+    } finally {
+      setLoadingBorrow(false)
+    }
+  }, [])
+
+  // Active-borrows dialog loader: only fetch the data this dialog needs.
+  // This avoids unnecessary API calls (and retries) from `loadBorrowData()`.
+  const loadActiveBorrowsPopupData = useCallback(async () => {
+    if (typeof window === "undefined") return
+    setLoadingBorrow(true)
+    setDatabaseError(null)
+    try {
+      console.log("[SupervisorDashboard] Loading active borrows popup data...")
+
+      const [borrowData, activeBorrowsData] = await Promise.all([
+        supervisorDashboardService.getPendingBorrowRequests(true).catch((err) => {
+          console.error("[SupervisorDashboard] Error fetching pending borrows:", err)
+          return []
+        }),
+        supervisorDashboardService.getActiveBorrows(true).catch((err) => {
+          console.error("[SupervisorDashboard] Error fetching active borrows:", err)
+          return []
+        }),
+      ])
+
+      // Keep borrowRequests in sync (pending borrow requests are "successful" in your logs).
+      setBorrowRequests(
+        borrowData.map((item) => ({
+          id: item.id,
+          employeeName: item.employee_name,
+          employeeId: item.employee_id,
+          deviceName: item.device_name,
+          deviceId: item.device_id,
+          assetTag: item.asset_tag,
+          borrowDate: item.borrow_date,
+          purpose: item.purpose,
+          status: item.status,
+          createdAt: item.created_at,
+        }))
+      )
+
+      setActiveBorrows(
+        activeBorrowsData.map((item) => ({
+          id: item.id,
+          employeeName: item.employee_name,
+          employeeId: item.employee_id,
+          deviceName: item.device_name,
+          deviceId: item.device_id,
+          assetTag: item.asset_tag,
+          borrowDate: item.borrow_date,
+          purpose: item.purpose,
+          status: item.status || "approved",
+        }))
+      )
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to load active borrows"
+      console.error("Failed to load active borrows", error)
+      setDatabaseError(errorMessage)
     } finally {
       setLoadingBorrow(false)
     }
@@ -668,7 +730,11 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
 
     const unsubscribeBorrows = supervisorDashboardService.subscribeToBorrowRequests((payload) => {
       console.log("Borrow request update:", payload)
-      loadBorrowData()
+      if (showActiveBorrowsTableRef.current) {
+        loadActiveBorrowsPopupData()
+      } else {
+        loadBorrowData()
+      }
     })
 
     const unsubscribeRoomBookings = supervisorDashboardService.subscribeToRoomBookings((payload) => {
@@ -677,7 +743,8 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     })
 
     // Legacy event listeners for backward compatibility
-    const storageHandler = () => loadBorrowData()
+    const storageHandler = () =>
+      showActiveBorrowsTableRef.current ? loadActiveBorrowsPopupData() : loadBorrowData()
     const handleRoomBookingsUpdate = () => {
       // Clear localStorage cache and refresh room bookings (consistent with employee dashboard)
       if (typeof window !== 'undefined') {
@@ -694,7 +761,6 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     const interval = setInterval(() => {
       fetchDeviceStats()
       fetchResourceCount()
-      loadBorrowData()
     }, 60000) // Every minute instead of 8 seconds
 
     return () => {
@@ -1261,9 +1327,6 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
           // Clear cache to ensure fresh data
           supervisorDashboardService.clearCache('active-borrows')
           setShowActiveBorrowsTable(true)
-          // Force refresh with a small delay to ensure cache is cleared
-          await new Promise(resolve => setTimeout(resolve, 100))
-          await loadBorrowData()
           break
         }
       }
@@ -1670,46 +1733,16 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     [],
   )
 
-  // Handler for successful QR scan - actually approve the request
+  // Handler for successful QR scan - verification step only (approval happens on explicit confirm)
   const handleQRScanSuccess = useCallback(
     async (scannedCode: string) => {
       if (!pendingApprovalRequest) return
 
       try {
-        if (pendingApprovalRequest.type === "borrow") {
-          // Approve borrow request (this will also update device status)
-          await supervisorDashboardService.approveBorrowRequest(pendingApprovalRequest.id)
-          toast({ 
-            title: "Request approved", 
-            description: "Borrow request approved and device status updated to 'borrowed'." 
-          })
-        } else {
-          await supervisorDashboardService.approveReturnRequest(pendingApprovalRequest.id)
-          toast({ title: "Return approved", description: "Return request approved successfully." })
-        }
-        
-        // Close modal
-        setShowApprovalQRScanner(false)
-        setPendingApprovalRequest(null)
-        
-        // Refresh data after approval
-        await loadBorrowData()
-        await fetchDeviceStats()
-        if (showDeviceAvailability) {
-          // Refresh available devices list
-          try {
-            const response = await fetch("/api/devices?status=available&limit=1000", { cache: "no-store" })
-            const result = await response.json()
-            if (result.success && Array.isArray(result.data)) {
-              setAvailableDevicesList(result.data)
-            } else {
-              setAvailableDevicesList([])
-            }
-          } catch (error) {
-            console.error("Failed to fetch available devices:", error)
-            setAvailableDevicesList([])
-          }
-        }
+        toast({
+          title: "Device Found – Ready for Approval",
+          description: "The scanned device matches this request. Click Confirm to approve.",
+        })
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Failed to approve request"
         toast({
@@ -1721,6 +1754,54 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     },
     [pendingApprovalRequest, loadBorrowData, fetchDeviceStats, toast, showDeviceAvailability],
   )
+
+  const handleQRApproveConfirm = useCallback(async () => {
+    if (!pendingApprovalRequest) return
+
+    try {
+      if (pendingApprovalRequest.type === "borrow") {
+        await supervisorDashboardService.approveBorrowRequest(pendingApprovalRequest.id)
+        toast({
+          title: "Borrow Request Approved Successfully",
+          description: "Device status updated to 'borrowed'.",
+        })
+      } else {
+        await supervisorDashboardService.approveReturnRequest(pendingApprovalRequest.id)
+        toast({
+          title: "Return Request Approved Successfully",
+          description: "Device marked as returned and set back to available.",
+        })
+      }
+
+      setShowApprovalQRScanner(false)
+      setPendingApprovalRequest(null)
+
+      await loadBorrowData()
+      await fetchDeviceStats()
+      if (showDeviceAvailability) {
+        try {
+          const response = await fetch("/api/devices?status=available&limit=1000", { cache: "no-store" })
+          const result = await response.json()
+          if (result.success && Array.isArray(result.data)) {
+            setAvailableDevicesList(result.data)
+          } else {
+            setAvailableDevicesList([])
+          }
+        } catch (error) {
+          console.error("Failed to fetch available devices:", error)
+          setAvailableDevicesList([])
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to approve request"
+      toast({
+        variant: "destructive",
+        title: "Approval failed",
+        description: errorMessage,
+      })
+      throw error
+    }
+  }, [pendingApprovalRequest, loadBorrowData, fetchDeviceStats, toast, showDeviceAvailability])
 
   // OLD refreshBorrowRequests function removed - now handled by BorrowRequestsTable component
 
@@ -2638,7 +2719,6 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                         <TableCell>
                           <div>
                             <div className="font-medium text-[#25294B]">{request.employeeName}</div>
-                            <div className="text-sm text-muted-foreground">{request.employeeId}</div>
                           </div>
                         </TableCell>
                         <TableCell className="font-medium text-[#25294B]">{request.deviceName}</TableCell>
@@ -2689,8 +2769,8 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                       <p className="font-medium">{selectedApprovalRequest.employeeName}</p>
                     </div>
                     <div>
-                      <Label className="text-xs text-muted-foreground">Employee ID</Label>
-                      <p className="font-medium">{selectedApprovalRequest.employeeId}</p>
+                      <Label className="text-xs text-muted-foreground">Requester</Label>
+                      <p className="font-medium">{selectedApprovalRequest.employeeName}</p>
                     </div>
                     <div>
                       <Label className="text-xs text-muted-foreground">Device Name</Label>
@@ -2955,7 +3035,7 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
               supervisorDashboardService.clearCache('active-borrows')
               // Small delay to ensure cache is cleared before fetching
               await new Promise(resolve => setTimeout(resolve, 100))
-              await loadBorrowData()
+              await loadActiveBorrowsPopupData()
             }
           }}
         >
@@ -2976,7 +3056,7 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                   size="sm"
                   onClick={async () => {
                     supervisorDashboardService.clearCache('active-borrows')
-                    await loadBorrowData()
+                    await loadActiveBorrowsPopupData()
                   }}
                   disabled={loadingBorrow}
                 >
@@ -3026,7 +3106,6 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                             <TableCell className="py-3 px-4">
                               <div className="space-y-0.5">
                                 <div className="font-medium text-[#25294B] text-sm">{borrow.employeeName}</div>
-                                <div className="text-xs text-muted-foreground">{borrow.employeeId}</div>
                             </div>
                           </TableCell>
                             <TableCell className="font-medium text-[#25294B] text-sm py-3 px-4">{borrow.deviceName}</TableCell>
@@ -3074,7 +3153,10 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                   <RefreshCw className="h-8 w-8 animate-spin text-[#92278F] mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">Loading requests...</p>
                 </div>
-              ) : returnRequests.filter((r) => r.status === "Pending Return Approval" || r.status === "Pending Approval").length === 0 ? (
+              ) : returnRequests.filter((r) => {
+                const s = (r.status || "").toLowerCase()
+                return s === "pending" || s === "pending approval" || s === "awaiting approval"
+              }).length === 0 ? (
                 <div className="text-center py-8">
                   <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto mb-3" />
                   <p className="text-muted-foreground">No pending return requests</p>
@@ -3096,7 +3178,10 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                     </TableHeader>
                     <TableBody>
                       {returnRequests
-                        .filter((r) => r.status === "Pending Return Approval" || r.status === "Pending Approval")
+                        .filter((r) => {
+                          const s = (r.status || "").toLowerCase()
+                          return s === "pending" || s === "pending approval" || s === "awaiting approval"
+                        })
                         .map((request) => {
                           // Format request date & time (created_at) to show both date and time
                           const formattedDateTime = request.createdAt 
@@ -3127,7 +3212,6 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                               <TableCell className="py-3 px-4">
                                 <div className="space-y-0.5">
                                   <div className="font-medium text-[#25294B] text-sm">{request.employeeName}</div>
-                                  <div className="text-xs text-muted-foreground">{request.employeeId}</div>
                             </div>
                           </TableCell>
                               <TableCell className="font-medium text-[#25294B] text-sm py-3 px-4">{request.deviceName}</TableCell>
@@ -3159,7 +3243,10 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end" className="w-48">
-                                    {(request.status === "Pending Return Approval" || request.status === "Pending Approval") && (
+                                    {(() => {
+                                      const s = (request.status || "").toLowerCase()
+                                      return s === "pending" || s === "pending approval" || s === "awaiting approval"
+                                    })() && (
                                       <>
                                         <DropdownMenuItem
                                 onClick={() => {
@@ -3170,15 +3257,6 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                               >
                                           <QrCode className="h-4 w-4 mr-2" />
                                           Approve & Scan
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                onClick={() => {
-                                            handleOpenRejectModal(request.id, "return")
-                                }}
-                                          className="text-[#BE1E2D] hover:bg-[#BE1E2D]/10 cursor-pointer"
-                              >
-                                          <X className="h-4 w-4 mr-2" />
-                                Reject
                                         </DropdownMenuItem>
                                       </>
                                     )}
@@ -3246,6 +3324,7 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
             deviceName={pendingApprovalRequest.deviceName}
             employeeName={pendingApprovalRequest.employeeName}
             onScanSuccess={handleQRScanSuccess}
+            onApprove={handleQRApproveConfirm}
             onError={(error) => {
               toast({
                 variant: "destructive",

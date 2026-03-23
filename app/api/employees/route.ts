@@ -48,7 +48,8 @@ const EmployeeFiltersSchema = z.object({
   employment_status: z.string().optional(),
   nationality: z.string().optional(),
   is_active: z.boolean().optional(),
-  limit: z.number().min(1).max(100).default(50),
+  // Allow higher limits for internal dashboards/components that load many employees
+  limit: z.number().min(1).max(1000).default(50),
   offset: z.number().min(0).default(0)
 })
 

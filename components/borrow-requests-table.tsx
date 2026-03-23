@@ -89,8 +89,8 @@ export function BorrowRequestsTable({
   const fetchRequests = useCallback(async () => {
     setLoading(true)
     try {
-      // Fetch pending borrows (isBorrowed=false)
-      const borrowsResponse = await fetch('/api/borrows?isBorrowed=false&limit=100', {
+      // Status-first: pending borrows are borrow_status='pending_borrow'
+      const borrowsResponse = await fetch('/api/borrows?borrowStatus=pending_borrow&limit=100', {
         cache: 'no-store',
         credentials: 'include',
         headers: {
@@ -149,7 +149,7 @@ export function BorrowRequestsTable({
           assetTag: device?.asset_tag || item.device_id,
           borrowDate: item.borrow_date,
           purpose: item.notes || '',
-          status: 'pending',
+          status: 'pending_borrow',
           createdAt: item.borrow_date,
         }
       })
@@ -377,37 +377,31 @@ export function BorrowRequestsTable({
           ) : (
             <div className="border rounded-lg overflow-hidden">
               <Table>
-                <TableHeader>
-                  <TableRow className="bg-[#92278F]/5">
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
-                      Request ID
-                    </TableHead>
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
-                      Employee Name
-                    </TableHead>
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
-                      Employee Surname
-                    </TableHead>
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
-                      Device
-                    </TableHead>
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
-                      Asset Tag
-                    </TableHead>
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
-                      Date & Time
-                    </TableHead>
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
-                      Purpose
-                    </TableHead>
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
-                      Status
-                    </TableHead>
-                    <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4 text-right">
-                      Actions
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
+                  <TableHeader>
+                    <TableRow className="bg-[#92278F]/5">
+                      <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
+                        Employee Name
+                      </TableHead>
+                      <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
+                        Employee Surname
+                      </TableHead>
+                      <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
+                        Device
+                      </TableHead>
+                      <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
+                        Date & Time
+                      </TableHead>
+                      <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
+                        Purpose
+                      </TableHead>
+                      <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">
+                        Status
+                      </TableHead>
+                      <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4 text-right">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
                 <TableBody>
                   {requests.map((request) => {
                     const isPending = request.status.toLowerCase() === 'pending'
@@ -416,9 +410,6 @@ export function BorrowRequestsTable({
 
                     return (
                       <TableRow key={request.id} className="hover:bg-[#92278F]/5">
-                        <TableCell className="text-[#58595B] text-sm py-3 px-4 font-mono">
-                          {request.id.substring(0, 8)}...
-                        </TableCell>
                         <TableCell className="font-medium text-[#25294B] text-sm py-3 px-4">
                           {request.employeeName}
                         </TableCell>
@@ -429,16 +420,20 @@ export function BorrowRequestsTable({
                           {request.deviceName}
                         </TableCell>
                         <TableCell className="text-[#58595B] text-sm py-3 px-4">
-                          {request.assetTag}
-                        </TableCell>
-                        <TableCell className="text-[#58595B] text-sm py-3 px-4">
                           {formatDateTime(request.createdAt || request.borrowDate)}
                         </TableCell>
                         <TableCell className="max-w-xs truncate text-[#58595B] text-sm py-3 px-4">
                           {request.purpose}
                         </TableCell>
                         <TableCell className="py-3 px-4">
-                          <Badge className="bg-[#92278F]/10 text-[#92278F] border-[#92278F]/30 text-xs">
+                          <Badge
+                            onClick={isPending ? () => handleApproveClick(request) : undefined}
+                            className={`text-xs border ${
+                              isPending
+                                ? 'bg-[#BE1E2D]/10 text-[#BE1E2D] border-[#BE1E2D]/30 cursor-pointer hover:bg-[#BE1E2D]/20'
+                                : 'bg-muted text-muted-foreground border-border cursor-default'
+                            }`}
+                          >
                             {request.status}
                           </Badge>
                         </TableCell>

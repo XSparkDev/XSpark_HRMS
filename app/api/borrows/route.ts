@@ -27,18 +27,56 @@ export async function GET(request: NextRequest) {
 const listSchema = z.object({
   deviceId: z.string().optional(),
   borrowedBy: z.string().optional(),
+  // Status-first: borrowStatus accepts either:
+  // - 'active' (legacy high-level alias)
+  // - one of the canonical borrow_status values
+  borrowStatus: z.preprocess(
+    (val) => {
+      if (val === null || val === undefined || val === '') return undefined
+      return typeof val === 'string' ? val.trim().toLowerCase() : val
+    },
+    z
+      .enum(['active', 'pending_borrow', 'borrowed', 'pending_return', 'returned', 'rejected'])
+      .optional(),
+  ),
+  borrowRequest: z.preprocess(
+    (val) => {
+      if (val === null || val === undefined || val === '') return undefined
+      if (typeof val === 'boolean') return val
+      if (typeof val === 'string') {
+        const normalized = val.trim().toLowerCase()
+        if (['true', '1', 'yes'].includes(normalized)) return true
+        if (['false', '0', 'no'].includes(normalized)) return false
+      }
+      return undefined
+    },
+    z.boolean().optional(),
+  ),
   isBorrowed: z.preprocess(
     (val) => {
       if (val === null || val === undefined || val === '') return undefined
       if (typeof val === 'boolean') return val
       if (typeof val === 'string') {
         const normalized = val.trim().toLowerCase()
-      if (['true', '1', 'yes'].includes(normalized)) return true
-      if (['false', '0', 'no'].includes(normalized)) return false
+        if (['true', '1', 'yes'].includes(normalized)) return true
+        if (['false', '0', 'no'].includes(normalized)) return false
       }
       return undefined
     },
-    z.boolean().optional()
+    z.boolean().optional(),
+  ),
+  isReturned: z.preprocess(
+    (val) => {
+      if (val === null || val === undefined || val === '') return undefined
+      if (typeof val === 'boolean') return val
+      if (typeof val === 'string') {
+        const normalized = val.trim().toLowerCase()
+        if (['true', '1', 'yes'].includes(normalized)) return true
+        if (['false', '0', 'no'].includes(normalized)) return false
+      }
+      return undefined
+    },
+    z.boolean().optional(),
   ),
   fromDate: z.string().optional(),
   toDate: z.string().optional(),
@@ -48,7 +86,7 @@ const listSchema = z.object({
       const num = typeof val === 'string' ? parseInt(val, 10) : val
       return isNaN(num) ? undefined : num
     },
-    z.number().min(1).max(200).optional()
+    z.number().min(1).max(200).optional(),
   ),
   offset: z.preprocess(
     (val) => {
@@ -56,7 +94,7 @@ const listSchema = z.object({
       const num = typeof val === 'string' ? parseInt(val, 10) : val
       return isNaN(num) ? undefined : num
     },
-    z.number().min(0).optional()
+    z.number().min(0).optional(),
   ),
 })
 
@@ -97,9 +135,18 @@ export async function GET(request: NextRequest) {
     
     const borrowedBy = searchParams.get('borrowedBy')
     if (borrowedBy && borrowedBy.trim() !== '') filters.borrowedBy = borrowedBy
+
+    const borrowStatus = searchParams.get('borrowStatus')
+    if (borrowStatus && borrowStatus.trim() !== '') filters.borrowStatus = borrowStatus
+
+    const borrowRequest = searchParams.get('borrowRequest')
+    if (borrowRequest && borrowRequest.trim() !== '') filters.borrowRequest = borrowRequest
     
     const isBorrowed = searchParams.get('isBorrowed')
     if (isBorrowed && isBorrowed.trim() !== '') filters.isBorrowed = isBorrowed
+    
+    const isReturned = searchParams.get('isReturned')
+    if (isReturned && isReturned.trim() !== '') filters.isReturned = isReturned
     
     const fromDate = searchParams.get('fromDate')
     if (fromDate && fromDate.trim() !== '') filters.fromDate = fromDate
@@ -113,16 +160,92 @@ export async function GET(request: NextRequest) {
     const offset = searchParams.get('offset')
     if (offset && offset.trim() !== '') filters.offset = offset
     
-    const parsed = listSchema.parse(filters)
+    // Parse filters with Zod, but fall back gracefully if validation fails
+    let parsed
+    try {
+      parsed = listSchema.parse(filters)
+    } catch (error) {
+      console.warn('[borrows] GET query validation failed, falling back to lenient parsing:', error)
+      // Lenient fallback: coerce known fields manually so callers are not blocked
+      parsed = {
+        deviceId: filters.deviceId,
+        borrowedBy: filters.borrowedBy,
+        borrowStatus:
+          typeof filters.borrowStatus === 'string' ? filters.borrowStatus.trim().toLowerCase() : undefined,
+        borrowRequest:
+          typeof filters.borrowRequest === 'string'
+            ? ['true', '1', 'yes'].includes(filters.borrowRequest.trim().toLowerCase())
+            : undefined,
+        isBorrowed:
+          typeof filters.isBorrowed === 'string'
+            ? ['true', '1', 'yes'].includes(filters.isBorrowed.trim().toLowerCase())
+            : undefined,
+        isReturned:
+          typeof filters.isReturned === 'string'
+            ? ['true', '1', 'yes'].includes(filters.isReturned.trim().toLowerCase())
+            : undefined,
+        fromDate: filters.fromDate,
+        toDate: filters.toDate,
+        limit: (() => {
+          const raw = filters.limit
+          const num =
+            typeof raw === 'string'
+              ? parseInt(raw, 10)
+              : typeof raw === 'number'
+              ? raw
+              : undefined
+          if (!num || Number.isNaN(num) || num < 1) return undefined
+          // Hard cap to prevent accidental huge queries
+          return Math.min(num, 200)
+        })(),
+        offset: (() => {
+          const raw = filters.offset
+          const num =
+            typeof raw === 'string'
+              ? parseInt(raw, 10)
+              : typeof raw === 'number'
+              ? raw
+              : undefined
+          if (num === undefined || Number.isNaN(num) || num < 0) return undefined
+          return num
+        })(),
+      }
+    }
 
-    const { data, count } = await borrowService.listBorrows({
+    console.log('[borrows] GET request with filters:', {
       deviceId: parsed.deviceId,
       borrowedBy: parsed.borrowedBy,
+      borrowStatus: parsed.borrowStatus,
+      borrowRequest: (parsed as any).borrowRequest,
       isBorrowed: parsed.isBorrowed,
+      isReturned: parsed.isReturned,
       fromDate: parsed.fromDate,
       toDate: parsed.toDate,
       limit: parsed.limit,
       offset: parsed.offset,
+    })
+
+    const { data, count } = await borrowService.listBorrows({
+      deviceId: parsed.deviceId,
+      borrowedBy: parsed.borrowedBy,
+      borrowStatus: parsed.borrowStatus,
+      borrowRequest: (parsed as any).borrowRequest,
+      isBorrowed: parsed.isBorrowed,
+      isReturned: parsed.isReturned,
+      fromDate: parsed.fromDate,
+      toDate: parsed.toDate,
+      limit: parsed.limit,
+      offset: parsed.offset,
+    })
+
+    console.log('[borrows] GET response:', {
+      dataCount: data?.length || 0,
+      count,
+      sampleIds: data?.slice(0, 3).map((b: any) => ({
+        id: b.borrow_id || b.id,
+        is_borrowed: b.is_borrowed,
+        is_returned: b.is_returned,
+      })),
     })
 
     return NextResponse.json({

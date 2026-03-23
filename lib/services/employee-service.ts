@@ -103,35 +103,56 @@ export class EmployeeService {
    */
   async getAllActive(filters?: EmployeeFilters): Promise<Employee[]> {
     try {
-      let query = supabase
-        .from('active_employees')
-        .select('*')
+      const buildQuery = (source: 'active_employees' | 'employees') => {
+        let query = supabase.from(source).select('*')
 
-      // Apply filters
-      if (filters?.search) {
-        query = query.or(`first_name.ilike.%${filters.search}%,last_name.ilike.%${filters.search}%,email.ilike.%${filters.search}%,employee_id.ilike.%${filters.search}%`)
+        // Apply filters
+        if (filters?.search) {
+          query = query.or(
+            `first_name.ilike.%${filters.search}%,last_name.ilike.%${filters.search}%,email.ilike.%${filters.search}%,employee_id.ilike.%${filters.search}%`,
+          )
+        }
+
+        if (filters?.department) {
+          query = query.eq('department', filters.department)
+        }
+
+        if (filters?.employment_status) {
+          query = query.eq('employment_status', filters.employment_status)
+        }
+
+        // When using base employees table, enforce active flag
+        if (source === 'employees') {
+          query = query.eq('is_active', true)
+        }
+
+        if (typeof filters?.limit === 'number') {
+          query = query.limit(filters.limit)
+        }
+
+        if (typeof filters?.offset === 'number') {
+          const offset = filters.offset || 0
+          const limit = filters.limit || 50
+          query = query.range(offset, offset + limit - 1)
+        }
+
+        return query.order('created_at', { ascending: false })
       }
 
-      if (filters?.department) {
-        query = query.eq('department', filters.department)
-      }
+      // First try the materialized/view `active_employees`
+      let { data, error } = await buildQuery('active_employees')
 
-      if (filters?.employment_status) {
-        query = query.eq('employment_status', filters.employment_status)
+      // If the view doesn't exist or errors (common in local dev), fall back to base table
+      if (error) {
+        console.warn(
+          '[EmployeeService] active_employees view unavailable, falling back to employees table:',
+          error,
+        )
+        ;({ data, error } = await buildQuery('employees'))
       }
-
-      if (filters?.limit) {
-        query = query.limit(filters.limit)
-      }
-
-      if (filters?.offset) {
-        query = query.range(filters.offset, (filters.offset || 0) + (filters.limit || 50) - 1)
-      }
-
-      const { data, error } = await query.order('created_at', { ascending: false })
 
       if (error) throw error
-      return data || []
+      return (data as Employee[]) || []
     } catch (error) {
       console.error('Error fetching active employees:', error)
       throw new Error('Failed to fetch employees')

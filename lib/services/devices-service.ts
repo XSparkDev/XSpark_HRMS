@@ -80,10 +80,10 @@ export class DevicesService extends BaseService {
     // can result in empty result sets when policies check auth.uid().
     let query = this.admin.from(this.table).select('*', { count: 'exact' })
     
-    // NOTE: deleted_at filter is currently disabled because all devices in the database
-    // appear to have deleted_at set. To re-enable soft-delete filtering, uncomment the line below
-    // after ensuring devices have deleted_at = NULL for active devices.
-     query = query.is('delete_at', null)
+    // NOTE: Filter out soft-deleted devices (where deleted_at IS NULL means not deleted)
+    // If all devices in your database have deleted_at set and you want to show them all,
+    // comment out the line below
+    query = query.is('deleted_at', null)
 
     if (filters.search) {
       const term = `%${filters.search}%`
@@ -143,9 +143,87 @@ export class DevicesService extends BaseService {
     const { data, error, count } = await query.order('updated_at', { ascending: false })
     
     // Handle errors gracefully - log but don't throw
-    // Only return empty array if there's a critical error
+    // Check for column errors (like wrong column name) and retry without the problematic filter
     if (error) {
-      console.error('[DevicesService] Error listing devices:', error)
+      const errorMessage = error.message || String(error)
+      console.error('[DevicesService] Error listing devices:', {
+        message: errorMessage,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      })
+      
+      // If error is about deleted_at column not existing, retry without that filter
+      if (errorMessage.includes('deleted_at') || errorMessage.includes('column') || errorMessage.includes('does not exist')) {
+        console.warn('[DevicesService] deleted_at column issue detected, retrying without deleted_at filter')
+        try {
+          // Retry query without deleted_at filter
+          let retryQuery = this.admin.from(this.table).select('*', { count: 'exact' })
+          
+          // Reapply all filters except deleted_at
+          if (filters.search) {
+            const term = `%${filters.search}%`
+            retryQuery = retryQuery.or(
+              [
+                `asset_tag.ilike.${term}`,
+                `serial_number.ilike.${term}`,
+                `model.ilike.${term}`,
+                `brand.ilike.${term}`,
+                `device_type.ilike.${term}`,
+                `notes.ilike.${term}`,
+              ].join(','),
+            )
+          }
+          if (filters.status) {
+            if (Array.isArray(filters.status)) {
+              retryQuery = retryQuery.in('status', filters.status)
+            } else {
+              retryQuery = retryQuery.eq('status', filters.status)
+            }
+          }
+          if (filters.device_type) {
+            if (Array.isArray(filters.device_type)) {
+              retryQuery = retryQuery.in('device_type', filters.device_type)
+            } else {
+              retryQuery = retryQuery.eq('device_type', filters.device_type)
+            }
+          }
+          if (filters.location) {
+            retryQuery = retryQuery.ilike('location', `%${filters.location}%`)
+          }
+          if (filters.assigned_to) {
+            retryQuery = retryQuery.eq('assigned_to', filters.assigned_to)
+          }
+          if (typeof filters.isAvailable === 'boolean') {
+            if (filters.isAvailable) {
+              retryQuery = retryQuery.eq('status', 'available').is('assigned_to', null)
+            } else {
+              retryQuery = retryQuery.neq('status', 'available')
+            }
+          }
+          if (typeof filters.limit === 'number' && typeof filters.offset === 'number') {
+            retryQuery = retryQuery.range(filters.offset, filters.offset + filters.limit - 1)
+          } else if (typeof filters.limit === 'number') {
+            retryQuery = retryQuery.limit(filters.limit)
+          }
+          
+          const { data: retryData, error: retryError, count: retryCount } = await retryQuery.order('updated_at', { ascending: false })
+          
+          if (retryError) {
+            console.error('[DevicesService] Retry query also failed:', retryError)
+            // Fall through to return empty array
+          } else {
+            // Success on retry
+            return {
+              data: (retryData ?? []).map((record: Record<string, any>) => this.normalizeDeviceRecord(record)),
+              count: retryCount ?? retryData?.length ?? 0,
+            }
+          }
+        } catch (retryErr) {
+          console.error('[DevicesService] Exception during retry:', retryErr)
+        }
+      }
+      
       // Check if it's a critical error or just a warning
       // For non-critical errors (like RLS issues), try to return data if available
       if (data && Array.isArray(data) && data.length > 0) {

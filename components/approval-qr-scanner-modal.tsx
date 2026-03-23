@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -16,7 +16,8 @@ interface ApprovalQRScannerModalProps {
   assetTag?: string | null
   deviceName?: string
   employeeName?: string
-  onScanSuccess: (scannedCode: string) => void
+  onScanSuccess?: (scannedCode: string) => void
+  onApprove: () => Promise<void>
   onError?: (error: string) => void
 }
 
@@ -30,11 +31,24 @@ export function ApprovalQRScannerModal({
   deviceName,
   employeeName,
   onScanSuccess,
+  onApprove,
   onError,
 }: ApprovalQRScannerModalProps) {
   const [scannedCode, setScannedCode] = useState<string>("")
   const [error, setError] = useState<string | null>(null)
   const [validating, setValidating] = useState(false)
+  const [isVerified, setIsVerified] = useState(false)
+  const [isApproving, setIsApproving] = useState(false)
+
+  useEffect(() => {
+    if (!open) {
+      setScannedCode("")
+      setError(null)
+      setValidating(false)
+      setIsVerified(false)
+      setIsApproving(false)
+    }
+  }, [open])
 
   const handleScan = useCallback(
     async (result: string) => {
@@ -75,13 +89,15 @@ export function ApprovalQRScannerModal({
           throw new Error("Scanned device does not match the requested device")
         }
 
-        // Success - call callback
+        // Success - mark verified and notify parent (optional)
         setValidating(false)
-        onScanSuccess(result)
+        setIsVerified(true)
+        onScanSuccess?.(result)
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Invalid device scanned"
         setError(errorMessage)
         setValidating(false)
+        setIsVerified(false)
         onError?.(errorMessage)
       }
     },
@@ -100,14 +116,32 @@ export function ApprovalQRScannerModal({
     setScannedCode("")
     setError(null)
     setValidating(false)
+    setIsVerified(false)
+    setIsApproving(false)
     onOpenChange(false)
   }, [onOpenChange])
+
+  const handleApprove = useCallback(async () => {
+    if (!isVerified || validating || isApproving) return
+    setIsApproving(true)
+    try {
+      await onApprove()
+      handleClose()
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to approve request"
+      setError(errorMessage)
+      onError?.(errorMessage)
+    } finally {
+      setIsApproving(false)
+    }
+  }, [isVerified, validating, isApproving, onApprove, handleClose, onError])
 
   const title = requestType === "borrow" ? "Scan Device to Approve Borrow" : "Scan Device to Approve Return"
   const instruction =
     requestType === "borrow"
       ? "Please scan the device QR code to approve the borrow request."
       : "Please scan the device QR code to approve the return request."
+  const approveLabel = requestType === "borrow" ? "Confirm & Approve Borrow" : "Confirm & Approve Return"
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -175,6 +209,13 @@ export function ApprovalQRScannerModal({
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={handleClose} disabled={validating}>
               Cancel
+            </Button>
+            <Button
+              onClick={handleApprove}
+              disabled={!isVerified || validating || isApproving}
+              className="bg-[#16A34A] hover:bg-[#15803D] text-white"
+            >
+              {isApproving ? "Approving..." : approveLabel}
             </Button>
           </div>
         </div>

@@ -7,8 +7,7 @@
 6 silly config load:file:/usr/local/etc/npmrc
 7 verbose title npm run dev
 8 verbose argv "run" "dev"
-9 verbose logfile logs-max:10 dir:/Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2026-02-16T08_13_51_026Z-
-10 verbose logfile /Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2026-02-16T08_13_51_026Z-debug-0.log
+9 verbose logfile logs-max:10 dir:/Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2026-02-18T09_13_05_123Z-
+10 verbose logfile /Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2026-02-18T09_13_05_123Z-debug-0.log
 11 silly logfile start cleaning logs, removing 1 files
 12 silly logfile done cleaning log files
-13 http fetch GET 200 https://registry.npmjs.org/npm 287ms

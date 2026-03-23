@@ -38,7 +38,7 @@ BEGIN
         AND column_name = 'asset_id'
     ) THEN
         ALTER TABLE public.maintenance_requests
-        ADD COLUMN asset_id uuid;
+        ADD COLUMN asset_id text;
         
         -- Migrate existing device_id records to asset_id
         UPDATE public.maintenance_requests

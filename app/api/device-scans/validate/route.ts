@@ -13,7 +13,14 @@ const validateSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const payload = validateSchema.parse(await request.json())
-    const { borrow_id, device_id, scanned_code, mode } = payload
+    let { borrow_id, device_id, scanned_code, mode } = payload
+
+    // Extract device ID from URL if scanned code is a URL
+    // Handle URLs like "http://localhost:3000/assets/DEV-009" or "/assets/DEV-009"
+    const urlMatch = scanned_code.match(/(?:^|\/)(?:assets|device)\/([A-Z0-9-]+)/i)
+    if (urlMatch && urlMatch[1]) {
+      scanned_code = urlMatch[1]
+    }
 
     // Find device by scanned code (could be asset_tag, serial_number, or device_id)
     const device = await devicesService.getDeviceByIdentifier(scanned_code).catch(() => null)
@@ -43,38 +50,38 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Validate device ID matches
-      const borrowDeviceId = borrow.device_id || borrow.asset_tag || borrow.serial_number
-      const scannedDeviceId = device.device_id || device.asset_tag || device.serial_number
+      // Validate scanned device matches the borrow record
+      const borrowDeviceId = borrow.device_id
+      const scannedDeviceId = device.device_id
 
-      if (borrowDeviceId !== scannedDeviceId && device.device_id !== borrow.device_id) {
+      if (!borrowDeviceId || !scannedDeviceId || scannedDeviceId !== borrowDeviceId) {
         return NextResponse.json(
           { success: false, error: "Incorrect device scanned. Device ID does not match." },
           { status: 400 }
         )
       }
 
-      // Check borrow status is "Approved – Awaiting Scan" or similar
-      const status = (borrow.status || "").toLowerCase()
-      const approvalStatus = (borrow.approval_status || "").toLowerCase()
-      
-      // For collection, the borrow must be approved
-      // Check if both status and approval_status indicate approval
-      const isApproved = 
-        (status === "approved" || status.includes("approved")) &&
-        (approvalStatus === "approved" || approvalStatus.includes("approved"))
-      
-      // Also allow pending status for auto-approved supervisor requests
-      const isPendingButAllowed = 
-        (status === "pending" || status.includes("pending")) &&
-        (approvalStatus === "approved" || approvalStatus.includes("approved"))
-      
-      if (!isApproved && !isPendingButAllowed) {
+      // Status-first flow:
+      // - pending_borrow  -> not collectible (supervisor must approve first)
+      // - borrowed        -> collectible (idempotent)
+      // - pending_return  -> already in return flow, not collectible
+      // - returned/rejected -> not collectible
+      const borrowStatus = String((borrow as any).borrow_status || "").toLowerCase().trim()
+      if (!borrowStatus) {
         return NextResponse.json(
-          { 
-            success: false, 
-            error: "Borrow request must be approved before collection. Current status: " + (borrow.status || "pending") + ", approval: " + (borrow.approval_status || "pending_approval")
-          },
+          { success: false, error: "Borrow record is missing borrow_status. Please migrate statuses first." },
+          { status: 409 }
+        )
+      }
+      if (borrowStatus === "pending_borrow") {
+        return NextResponse.json(
+          { success: false, error: "Borrow request must be approved before collection." },
+          { status: 400 }
+        )
+      }
+      if (borrowStatus !== "borrowed") {
+        return NextResponse.json(
+          { success: false, error: `Borrow is not collectible in status: ${borrowStatus}` },
           { status: 400 }
         )
       }
@@ -82,37 +89,19 @@ export async function POST(request: NextRequest) {
       // Check device is available
       const deviceStatus = (device.status || "").toLowerCase()
       if (deviceStatus.includes("borrowed") && !deviceStatus.includes("pending")) {
-        return NextResponse.json(
-          { success: false, error: "Device is not available" },
-          { status: 400 }
-        )
+        // If the device is already marked borrowed, treat collect as idempotent success.
+        return NextResponse.json({
+          success: true,
+          data: {
+            device_id: device.device_id,
+            borrow_id,
+            scanned_code,
+          },
+        })
       }
 
-      // If borrow is approved but status is still "pending", update status to "approved" first
-      if (isPendingButAllowed && !isApproved) {
-        try {
-          await borrowService.updateBorrow(borrow_id, {
-            status: "approved",
-            approval_status: "approved",
-          })
-        } catch (updateError) {
-          console.warn('[device-scans] Failed to update pending borrow to approved:', updateError)
-        }
-      }
-
-      // Update status to "Borrowed" - use pickupDevice to ensure all fields are set correctly
-      try {
-        await borrowService.pickupDevice(borrow_id)
-      } catch (pickupError) {
-        // Fallback to updateBorrow if pickupDevice fails
-        console.warn('[device-scans] pickupDevice failed, falling back to updateBorrow:', pickupError)
-        await borrowService.updateBorrow(borrow_id, {
-          status: "borrowed",
-          approval_status: "approved",
-          is_borrowed: true,
-          picked_up_at: new Date().toISOString(),
-        }).catch(() => {})
-      }
+      // Ensure device status is borrowed (borrow row is already 'borrowed' after approval).
+      // We do not update borrow_status here beyond idempotence.
 
       // Update device status (pickupDevice already does this, but ensure it's set)
       await devicesService.setDeviceStatus(device.device_id, "borrowed").catch(() => {})
@@ -145,25 +134,106 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Validate device ID matches
-      const borrowDeviceId = borrow.device_id || borrow.asset_tag || borrow.serial_number
-      const scannedDeviceId = device.device_id || device.asset_tag || device.serial_number
+      // Validate scanned device matches the borrow record
+      const borrowDeviceId = borrow.device_id
+      const scannedDeviceId = device.device_id
 
-      if (borrowDeviceId !== scannedDeviceId && device.device_id !== borrow.device_id) {
+      if (!borrowDeviceId || !scannedDeviceId || scannedDeviceId !== borrowDeviceId) {
         return NextResponse.json(
           { success: false, error: "Incorrect device scanned. Device ID does not match." },
           { status: 400 }
         )
       }
 
-      // Check borrow status is "Awaiting Return"
-      const status = (borrow.status || "").toLowerCase()
-      if (!status.includes("awaiting return") && status !== "borrowed") {
+      try {
+        // Status-first flow: return scan creates a *return request*.
+        // Borrow must be currently borrowed; we do NOT set is_returned=true here.
+        const borrowStatus = String((borrow as any).borrow_status || "").toLowerCase().trim()
+        if (!borrowStatus) {
+          return NextResponse.json(
+            { success: false, error: "Borrow record is missing borrow_status. Please migrate statuses first." },
+            { status: 409 }
+          )
+        }
+
+        if (borrowStatus === "returned" || borrowStatus === "rejected") {
+          return NextResponse.json(
+            { success: false, error: `Cannot request return for a ${borrowStatus} borrow.` },
+            { status: 400 }
+          )
+        }
+
+        // If a return request was already created, treat as idempotent success.
+        if (borrowStatus === "pending_return") {
+          return NextResponse.json({
+            success: true,
+            data: {
+              device_id: device.device_id,
+              borrow_id,
+              scanned_code,
+            },
+            message: "Return request already submitted and awaiting supervisor approval.",
+          })
+        }
+
+        if (borrowStatus !== "borrowed") {
+          return NextResponse.json(
+            { success: false, error: `Device is not returnable in status: ${borrowStatus}` },
+            { status: 400 }
+          )
+        }
+
+        const now = new Date().toISOString()
+        const { supabaseAdmin } = await import("@/lib/supabase-admin")
+
+        // 1) Create return request row (pending approval)
+        const { error: returnInsertError } = await supabaseAdmin
+          .from("returns")
+          .insert({
+            employee_id: (borrow as any).borrowed_by,
+            device_id: (borrow as any).device_id,
+            return_date: now,
+            status: "Pending",
+            created_at: now,
+            updated_at: now,
+          } as any)
+
+        if (returnInsertError) {
+          console.error("[device-scans] Failed to create return request:", returnInsertError)
+          return NextResponse.json(
+            { success: false, error: "Failed to submit return request. Please try again." },
+            { status: 500 }
+          )
+        }
+
+        // 2) Mark borrow as pending return (keep is_returned=false)
+        const { error: borrowUpdateError } = await supabaseAdmin
+          .from("borrows")
+          .update({
+            borrow_status: "pending_return",
+            borrow_request: true,
+            is_borrowed: true,
+            is_returned: false,
+            updated_at: now,
+          } as any)
+          .eq("borrow_id", borrow_id)
+
+        if (borrowUpdateError) {
+          console.error("[device-scans] Failed to update borrow to pending_return:", borrowUpdateError)
+          return NextResponse.json(
+            { success: false, error: "Return request created, but failed to update borrow status. Please contact support." },
+            { status: 500 }
+          )
+        }
+      } catch (err) {
+        console.error("[device-scans] Return scan flow failed:", err)
         return NextResponse.json(
-          { success: false, error: "Device is not in awaiting return state" },
-          { status: 400 }
+          { success: false, error: err instanceof Error ? err.message : "Failed to submit return request" },
+          { status: 500 }
         )
       }
+
+      // Keep device as borrowed until supervisor approves the return.
 
       return NextResponse.json({
         success: true,
@@ -172,6 +242,7 @@ export async function POST(request: NextRequest) {
           borrow_id,
           scanned_code,
         },
+        message: "Return request submitted and awaiting supervisor approval.",
       })
     }
 

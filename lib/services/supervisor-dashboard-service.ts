@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { devicesService } from './devices-service'
 import { borrowService } from './borrow-service'
+import { employeeService } from './employee-service'
 
 export interface DeviceStats {
   total: number
@@ -157,6 +158,28 @@ class SupervisorDashboardService extends BaseService {
     }
   }
 
+  private getEmployeeDisplayName(employee: any): string {
+    if (!employee) return 'Unknown'
+    const preferred = typeof employee.preferred_name === 'string' ? employee.preferred_name.trim() : ''
+    if (preferred) return preferred
+    const first = typeof employee.first_name === 'string' ? employee.first_name.trim() : ''
+    const last = typeof employee.last_name === 'string' ? employee.last_name.trim() : ''
+    const fullName = `${first} ${last}`.trim()
+    if (fullName) return fullName
+    const fallback = typeof employee.name === 'string' ? employee.name.trim() : ''
+    return fallback || 'Unknown'
+  }
+
+  private async buildEmployeesMap(employeeIds: string[]): Promise<Map<string, any>> {
+    if (employeeIds.length === 0) return new Map()
+    const employees = await employeeService.getAllActive({ limit: 1000 })
+    return new Map(
+      (employees || [])
+        .filter((employee: any) => employeeIds.includes(employee.id))
+        .map((employee: any) => [employee.id, employee]),
+    )
+  }
+
   /**
    * Get device statistics with caching
    */
@@ -196,9 +219,19 @@ class SupervisorDashboardService extends BaseService {
       // Call API route instead of borrowService directly (borrowService uses supabaseAdmin which only works server-side)
       // The API route runs on the server and can use supabaseAdmin correctly
       console.log('[SupervisorDashboardService] Fetching pending borrows via API route')
-      
+
       try {
-        const response = await fetch('/api/borrows?isBorrowed=false&limit=100', {
+        // Use absolute URL when running server-side (Node fetch requires it),
+        // and relative URL in the browser.
+        const baseUrl =
+          typeof window !== 'undefined'
+            ? ''
+            : process.env.NEXT_PUBLIC_SITE_URL ||
+              (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+
+        // Status-first: pending borrows are borrow_status='pending_borrow'
+        // (we keep boolean filters for compatibility, but pending should be driven by status)
+        const response = await fetch(`${baseUrl}/api/borrows?borrowStatus=pending_borrow&limit=100`, {
           cache: 'no-store',
           method: 'GET',
           credentials: 'include',
@@ -227,6 +260,19 @@ class SupervisorDashboardService extends BaseService {
 
         const borrowRecords = json.data
 
+        console.log('[SupervisorDashboardService] Raw pending borrow records from API:', {
+          count: borrowRecords?.length || 0,
+          sample: borrowRecords?.slice(0, 2).map((b: any) => ({
+            id: b.borrow_id || b.id,
+            device_id: b.device_id,
+            borrowed_by: b.borrowed_by,
+            is_borrowed: b.is_borrowed,
+            borrow_status: b.borrow_status,
+            status: b.status,
+            approval_status: b.approval_status,
+          }))
+        })
+
         if (!borrowRecords || borrowRecords.length === 0) {
           console.warn('[SupervisorDashboardService] No pending borrows found via API')
           return []
@@ -253,17 +299,8 @@ class SupervisorDashboardService extends BaseService {
       const allDevices = devicesJson.success && Array.isArray(devicesJson.data) ? devicesJson.data : []
       const devicesMap = new Map(allDevices.filter((d: any) => deviceIds.includes(d.device_id)).map((d: any) => [d.device_id, d]))
 
-      // Fetch employees via API
-      const employeesResponse = await fetch(`/api/employees?limit=1000&offset=0`, {
-        cache: 'no-store',
-        credentials: 'include',
-        headers: {
-          Accept: 'application/json',
-        },
-      })
-      const employeesJson = await employeesResponse.json().catch(() => ({ success: false, data: [] }))
-      const allEmployees = employeesJson.success && Array.isArray(employeesJson.data) ? employeesJson.data : []
-      const employeesMap = new Map(allEmployees.filter((e: any) => employeeIds.includes(e.id)).map((e: any) => [e.id, e]))
+      // Fetch employees via employee-service
+      const employeesMap = await this.buildEmployeesMap(employeeIds)
 
       // Sort by borrow_date descending
       const sortedData = borrowRecords.sort((a: any, b: any) => {
@@ -273,13 +310,13 @@ class SupervisorDashboardService extends BaseService {
       })
 
       const mapped = sortedData.map((item: any) => {
-        const device = devicesMap.get(item.device_id)
-        const employee = employeesMap.get(item.borrowed_by)
+        const device = devicesMap.get(item.device_id) as any
+        const employee = employeesMap.get(item.borrowed_by) as any
 
         return {
           id: item.borrow_id || item.id,
           employee_id: employee?.employee_id || item.borrowed_by || 'Unknown',
-          employee_name: employee?.name || 'Unknown',
+          employee_name: this.getEmployeeDisplayName(employee),
           device_id: item.device_id,
           device_name: device?.model || device?.brand || device?.device_type || 'Device',
           asset_tag: device?.asset_tag || item.device_id,
@@ -292,7 +329,7 @@ class SupervisorDashboardService extends BaseService {
         }
       })
 
-      console.log('[SupervisorDashboardService] Mapped pending borrow requests:', {
+      console.log('[SupervisorDashboardService] Mapped pending borrow requests (status-first):', {
         count: mapped.length,
         sample: mapped.slice(0, 2).map((m: any) => ({
           id: m.id,
@@ -319,62 +356,87 @@ class SupervisorDashboardService extends BaseService {
       this.clearCache('active-borrows')
     }
     return this.getCachedOrFetch('active-borrows', async () => {
-      // Fetch active borrows: is_borrowed = true (device is currently borrowed)
-      // Use supabaseAdmin to bypass RLS policies (same as API route)
-      const { data, error } = await supabaseAdmin
-          .from('borrows')
-          .select(`
-          borrow_id,
-            borrowed_by,
-            device_id,
-            borrow_date,
-          return_date,
-          is_borrowed,
-          notes,
-          qr_code_url,
-            devices:device_id (
-              asset_tag,
-              model,
-              brand,
-              device_type
-            ),
-            employees:borrowed_by (
-              name,
-              employee_id
-            )
-          `)
-        .eq('is_borrowed', true) // is_borrowed = true means device is currently borrowed
-        .order('borrow_date', { ascending: false })
+      console.log('[SupervisorDashboardService] Fetching active borrows via /api/borrows')
 
-      if (error) {
-        console.error('[SupervisorDashboardService] Error fetching active borrows:', error)
-        throw new Error(`Failed to fetch active borrows: ${error.message}`)
-      }
-      
-      // Log for debugging
-      console.log('[SupervisorDashboardService] Active borrows query result:', {
-        totalFetched: (data || []).length,
-        activeCount: (data || []).length,
-        sample: (data || []).slice(0, 2).map((item: any) => ({
-          borrow_id: item.borrow_id,
-          is_borrowed: item.is_borrowed,
-        }))
+      // 1) Fetch active borrows from API (which uses BorrowService and borrows table)
+      const borrowsResponse = await fetch('/api/borrows?borrowStatus=active&limit=100', {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
       })
 
-      return (data || []).map((item: any) => ({
-        id: item.borrow_id || item.id,
-        employee_id: item.employees?.employee_id || item.borrowed_by || 'Unknown',
-        employee_name: item.employees?.name || 'Unknown',
-        device_id: item.device_id,
-        device_name: item.devices?.model || item.devices?.brand || item.devices?.device_type || 'Device',
-        asset_tag: item.devices?.asset_tag || item.device_id,
-        borrow_date: item.borrow_date,
-        expected_return_date: item.return_date,
-        purpose: item.notes || '',
-        status: 'borrowed', // All records with is_borrowed=true are active/borrowed
-        created_at: item.borrow_date, // Use borrow_date as created_at since created_at doesn't exist
-        updated_at: item.borrow_date,
-      }))
+      if (!borrowsResponse.ok) {
+        const errorText = await borrowsResponse.text().catch(() => 'Unknown error')
+        throw new Error(`Failed to fetch active borrows: ${borrowsResponse.status} ${errorText}`)
+      }
+
+      const borrowsJson = await borrowsResponse.json()
+      if (!borrowsJson.success || !Array.isArray(borrowsJson.data)) {
+        throw new Error('Invalid /api/borrows response format for active borrows')
+      }
+
+      const borrowRecords = borrowsJson.data as any[]
+
+      console.log('[SupervisorDashboardService] Active borrows API result:', {
+        count: borrowRecords.length,
+        sample: borrowRecords.slice(0, 2).map((b) => ({
+          id: b.borrow_id || b.id,
+          is_borrowed: b.is_borrowed,
+          is_returned: b.is_returned,
+          borrow_status: b.borrow_status,
+        })),
+      })
+
+      if (borrowRecords.length === 0) {
+        return []
+      }
+
+      // 2) Enrich with devices and employees
+      const deviceIds = [...new Set(borrowRecords.map((b) => b.device_id).filter(Boolean))]
+      const employeeIds = [...new Set(borrowRecords.map((b) => b.borrowed_by).filter(Boolean))]
+
+      const [devicesResponse, employeesMap] = await Promise.all([
+        fetch('/api/devices?limit=1000&offset=0', {
+          cache: 'no-store',
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+        }),
+        this.buildEmployeesMap(employeeIds),
+      ])
+
+      const [devicesJson] = await Promise.all([
+        devicesResponse.json().catch(() => ({ success: false, data: [] })),
+      ])
+
+      const allDevices =
+        devicesJson.success && Array.isArray(devicesJson.data) ? devicesJson.data : []
+
+      const devicesMap = new Map(
+        allDevices.filter((d: any) => deviceIds.includes(d.device_id)).map((d: any) => [
+          d.device_id,
+          d,
+        ]),
+      )
+      // 3) Map into BorrowRequest shape used by the supervisor dashboard
+      return borrowRecords.map((item: any) => {
+        const device = devicesMap.get(item.device_id) as any
+        const employee = employeesMap.get(item.borrowed_by) as any
+
+        return {
+          id: item.borrow_id || item.id,
+          employee_id: employee?.employee_id || item.borrowed_by || 'Unknown',
+          employee_name: this.getEmployeeDisplayName(employee),
+          device_id: item.device_id,
+          device_name: device?.model || device?.brand || device?.device_type || 'Device',
+          asset_tag: device?.asset_tag || item.device_id,
+          borrow_date: item.borrow_date,
+          expected_return_date: item.return_date,
+          purpose: item.notes || '',
+          status: 'Borrowed', // All rows here are active borrows
+          created_at: item.borrow_date,
+          updated_at: item.borrow_date,
+        }
+      })
     })
   }
 
@@ -383,48 +445,51 @@ class SupervisorDashboardService extends BaseService {
    */
   async getPendingReturnRequests(): Promise<ReturnRequest[]> {
     return this.getCachedOrFetch('pending-return-requests', async () => {
-      const { data, error } = await supabase
-        .from('returns')
-        .select(`
-          id,
-          employee_id,
-          device_id,
-          return_date,
-          device_condition,
-          status,
-          created_at,
-          updated_at,
-          devices:device_id (
-            asset_tag,
-            model,
-            brand,
-            device_type
-          ),
-          employees:employee_id (
-            name,
-            employee_id
-          )
-        `)
-        .in('status', ['Pending', 'Pending Approval', 'Awaiting Approval'])
-        .order('created_at', { ascending: false })
+      const baseUrl =
+        typeof window !== 'undefined'
+          ? ''
+          : process.env.NEXT_PUBLIC_SITE_URL ||
+            (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
 
-      if (error) {
-        throw new Error(`Failed to fetch return requests: ${error.message}`)
+      const response = await fetch(`${baseUrl}/api/returns?status=pending&limit=100`, {
+        cache: 'no-store',
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error')
+        throw new Error(`Failed to fetch pending return requests: ${response.status} ${errorText}`)
       }
 
-      return (data || []).map((item: any) => ({
-        id: item.id,
-        employee_id: item.employee_id,
-        employee_name: item.employees?.name || 'Unknown',
-        device_id: item.device_id,
-        device_name: item.devices?.model || item.devices?.brand || item.devices?.device_type || 'Device',
-        asset_tag: item.devices?.asset_tag || item.device_id,
-        return_date: item.return_date,
-        device_condition: item.device_condition || 'Good',
-        status: item.status,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-      }))
+      const result = await response.json().catch(() => ({} as any))
+      if (!result?.success || !Array.isArray(result.data)) {
+        throw new Error('Invalid /api/returns response format for pending return requests')
+      }
+
+      const employeeIds = [...new Set(result.data.map((item: any) => item.employee_id).filter(Boolean))]
+      const employeesMap = await this.buildEmployeesMap(employeeIds)
+
+      return result.data.map((item: any) => {
+        const employee = employeesMap.get(item.employee_id)
+        return {
+          id: item.id,
+          employee_id: employee?.employee_id || item.employee_id,
+          employee_name: this.getEmployeeDisplayName(employee),
+          device_id: item.device_id,
+          device_name:
+            item.device_name || item.devices?.model || item.devices?.brand || item.devices?.device_type || 'Device',
+          asset_tag: item.asset_tag || item.devices?.asset_tag || item.device_id,
+          return_date: item.return_date,
+          device_condition: item.device_condition || 'Good',
+          status: item.status,
+          created_at: item.created_at,
+          updated_at: item.updated_at,
+        }
+      })
     })
   }
 
@@ -456,14 +521,14 @@ class SupervisorDashboardService extends BaseService {
         .map((device) => ({
           id: device.id || device.device_id,
           device_id: device.device_id,
-          asset_tag: device.asset_tag,
-          serial_number: device.serial_number,
-          device_type: device.device_type,
-          brand: device.brand,
-          model: device.model,
-          status: device.status,
-          created_at: device.created_at,
-          updated_at: device.updated_at,
+          asset_tag: device.asset_tag ?? null,
+          serial_number: device.serial_number ?? null,
+          device_type: device.device_type ?? null,
+          brand: device.brand ?? null,
+          model: device.model ?? null,
+          status: device.status ?? null,
+          created_at: device.created_at ?? null,
+          updated_at: device.updated_at ?? null,
         }))
     })
   }
@@ -638,7 +703,7 @@ class SupervisorDashboardService extends BaseService {
             schema: 'public',
             table: 'devices',
           },
-          (payload) => {
+          (payload: any) => {
             this.clearCache('device-stats')
             callback({
               eventType: payload.eventType,
@@ -685,7 +750,7 @@ class SupervisorDashboardService extends BaseService {
             schema: 'public',
             table: 'borrows',
           },
-          (payload) => {
+          (payload: any) => {
             this.clearCache('pending-borrow-requests')
             callback({
               eventType: payload.eventType,
@@ -732,7 +797,7 @@ class SupervisorDashboardService extends BaseService {
             schema: 'public',
             table: 'room_bookings',
           },
-          (payload) => {
+          (payload: any) => {
             this.clearCache('upcoming-room-bookings')
             callback({
               eventType: payload.eventType,
@@ -799,7 +864,20 @@ class SupervisorDashboardService extends BaseService {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || `Failed to approve borrow request: ${response.statusText}`)
+        const message =
+          (errorData && typeof errorData.error === 'string' && errorData.error) ||
+          `Failed to approve borrow request: ${response.statusText}`
+
+        // If the backend reports that the borrow is already approved, treat this as a
+        // non-fatal, idempotent success: clear caches and return without throwing.
+        if (message.toLowerCase().includes('already approved')) {
+          console.warn('[SupervisorDashboardService] Borrow already approved, treating as success')
+          this.clearCache('pending-borrow-requests')
+          this.clearCache('device-stats')
+          return
+        }
+
+        throw new Error(message)
       }
 
       const result = await response.json()
@@ -867,6 +945,24 @@ class SupervisorDashboardService extends BaseService {
    */
   async approveReturnRequest(requestId: string, notes?: string): Promise<void> {
     try {
+      // Fetch request so we can finalize the underlying borrow record.
+      // Keeping `borrows.is_returned = false` until this supervisor approval.
+      const { data: req, error: fetchError } = await supabase
+        .from('returns')
+        .select('id, device_id, employee_id')
+        .eq('id', requestId)
+        .maybeSingle()
+
+      if (fetchError) {
+        throw new Error(`Failed to fetch return request: ${fetchError.message}`)
+      }
+
+      const deviceId = (req as any)?.device_id as string | null | undefined
+      if (!deviceId) {
+        throw new Error('Return request is missing device_id')
+      }
+
+      // Mark the return request approved
       const { error } = await supabase
         .from('returns')
         .update({
@@ -878,6 +974,50 @@ class SupervisorDashboardService extends BaseService {
 
       if (error) {
         throw new Error(`Failed to approve return request: ${error.message}`)
+      }
+
+      // Finalize the active borrow for this device (if present)
+      const { data: activeBorrow, error: activeBorrowError } = await supabase
+        .from('borrows')
+        .select('borrow_id')
+        .eq('device_id', deviceId)
+        .eq('is_borrowed', true)
+        .eq('is_returned', false)
+        .order('borrow_date', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (activeBorrowError) {
+        throw new Error(`Failed to find active borrow: ${activeBorrowError.message}`)
+      }
+
+      const borrowId = (activeBorrow as any)?.borrow_id as string | null | undefined
+      if (borrowId) {
+        const now = new Date().toISOString()
+        const { error: borrowUpdateError } = await supabase
+          .from('borrows')
+          .update({
+            is_returned: true,
+            is_borrowed: false,
+            borrow_status: 'returned',
+            return_date: now,
+            updated_at: now,
+          })
+          .eq('borrow_id', borrowId)
+
+        if (borrowUpdateError) {
+          throw new Error(`Failed to update borrow as returned: ${borrowUpdateError.message}`)
+        }
+      }
+
+      // Set device back to available (best-effort; do not fail approval if this update is blocked by RLS)
+      const { error: deviceUpdateError } = await supabase
+        .from('devices')
+        .update({ status: 'available', updated_at: new Date().toISOString() } as any)
+        .eq('device_id', deviceId)
+
+      if (deviceUpdateError) {
+        console.warn('[SupervisorDashboardService] Device status update failed after return approval:', deviceUpdateError)
       }
 
       this.clearCache('pending-return-requests')
