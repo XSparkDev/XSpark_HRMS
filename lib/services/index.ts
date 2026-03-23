@@ -169,3 +169,15 @@ export default {
   resourcesService,
   ServiceFactory
 }
+
+// Notifications
+export {
+  notificationService,
+} from './notification-service'
+export type {
+  NotificationType,
+  NotificationRecord,
+  CreateNotificationInput,
+  CreateNotificationOptions,
+  NotificationRealtimeHandlers,
+} from './notification-service'

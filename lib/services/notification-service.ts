@@ -34,6 +34,8 @@ export interface CreateNotificationInput {
   notification_type: NotificationType
   published_by?: string | null
   is_confidential?: boolean
+  is_read?: boolean
+  email_sent?: boolean
 }
 
 export interface CreateNotificationOptions {
@@ -86,6 +88,7 @@ export class NotificationService extends BaseService {
         payload.employee_id,
         payload.title,
         duplicateWindowMinutes,
+        payload.published_by ?? null,
       )
       if (duplicate) {
         console.log('[NotificationService] Duplicate notification prevented:', duplicate.id)
@@ -97,6 +100,9 @@ export class NotificationService extends BaseService {
       ...payload,
       is_confidential: payload.is_confidential ?? false,
       published_by: payload.published_by ?? null,
+      // Ensure deterministic values for callers even if the DB has defaults.
+      is_read: payload.is_read ?? false,
+      email_sent: payload.email_sent ?? false,
     })
 
     const record = await this.executeInsert<any>(
@@ -153,6 +159,7 @@ export class NotificationService extends BaseService {
     employeeId: string,
     title: string,
     windowMinutes: number = 5,
+    publishedBy: string | null = null,
   ): Promise<NotificationRecord | null> {
     try {
       const cutoffTime = new Date()
@@ -163,6 +170,13 @@ export class NotificationService extends BaseService {
         .select('*')
         .eq('employee_id', employeeId)
         .eq('title', title)
+        .modify((q: any) => {
+          if (publishedBy) {
+            q.eq('published_by', publishedBy)
+          } else {
+            q.is('published_by', null)
+          }
+        })
         .gte('created_at', cutoffTime.toISOString())
         .order('created_at', { ascending: false })
         .limit(1)

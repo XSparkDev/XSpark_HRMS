@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useState, useEffect, memo } from "react"
+import { type ReactNode, useState, useEffect, useRef, memo } from "react"
 import dynamic from "next/dynamic"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
@@ -54,6 +54,50 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [employeeId, setEmployeeId] = useState<string>("")
   const [isEmployeeVerified, setIsEmployeeVerified] = useState(true)
+  const [unreadNotifications, setUnreadNotifications] = useState<any[]>([])
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const didInitialNotificationFetch = useRef(false)
+
+  const fetchUnreadNotifications = async (employeeIdToUse: string) => {
+    if (!employeeIdToUse) return
+    setNotificationsLoading(true)
+    try {
+      const response = await fetch(
+        `/api/notifications?employeeId=${employeeIdToUse}&onlyUnread=true`,
+      )
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `Failed to fetch notifications: ${response.status}`)
+      }
+      const result = await response.json()
+      setUnreadNotifications(result.data || [])
+    } catch (error) {
+      console.error("[Notifications] fetch unread failed:", error)
+      setUnreadNotifications([])
+    } finally {
+      setNotificationsLoading(false)
+    }
+  }
+
+  const handleNotificationClick = async (notification: any) => {
+    if (!notification?.id) return
+    try {
+      const response = await fetch(`/api/notifications/${notification.id}/read`, {
+        method: "PATCH",
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `Failed to mark notification as read: ${response.status}`)
+      }
+      // Remove from local list so it disappears immediately.
+      setUnreadNotifications((prev) => prev.filter((n) => n.id !== notification.id))
+    } catch (error) {
+      console.error("[Notifications] mark as read failed:", error)
+    }
+  }
+
+  const unreadCount = unreadNotifications.length
 
   useEffect(() => {
     const currentUser = getCurrentUser()
@@ -86,9 +130,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           const dn = legalName || profile.preferred_name || currentUser?.name || ''
           setDisplayName(dn)
           // Set employee ID for AI chat widget
-          if (profile.id) {
-            setEmployeeId(profile.id)
-          }
+          if (profile.id) setEmployeeId(profile.id)
           setIsEmployeeVerified(isEmployeeFullyVerified(profile))
         } else if (currentUser?.name) {
           setDisplayName(currentUser.name)
@@ -103,6 +145,22 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     window.addEventListener('profile-updated', onProfileUpdated as EventListener)
     return () => window.removeEventListener('profile-updated', onProfileUpdated as EventListener)
   }, [router])
+
+  // 1) Fetch once on page load (after we know employeeId)
+  useEffect(() => {
+    if (!employeeId) return
+    if (didInitialNotificationFetch.current) return
+    didInitialNotificationFetch.current = true
+    fetchUnreadNotifications(employeeId)
+  }, [employeeId])
+
+  // 2) Re-fetch whenever the bell dropdown is opened
+  useEffect(() => {
+    if (!notificationsOpen) return
+    if (!employeeId) return
+    fetchUnreadNotifications(employeeId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notificationsOpen, employeeId])
 
   if (user === undefined) {
     return null // Render nothing until user is determined
@@ -170,7 +228,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="flex-1" />
 
           {/* Notifications */}
-          <DropdownMenu>
+          <DropdownMenu open={notificationsOpen} onOpenChange={setNotificationsOpen}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
@@ -179,15 +237,43 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 aria-label="View notifications"
               >
                 <Bell className="h-5 w-5" />
-                <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-[#E31E24]" />
+                {unreadCount > 0 && (
+                  <Badge
+                    className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-[#E31E24] text-white text-xs flex items-center justify-center p-0"
+                  >
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </Badge>
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-72">
               <DropdownMenuLabel>Notifications</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <div className="p-3 text-sm text-muted-foreground">
-                No new notifications yet.
-              </div>
+              {notificationsLoading ? (
+                <div className="p-3 text-sm text-muted-foreground">Loading notifications...</div>
+              ) : unreadCount === 0 ? (
+                <div className="p-3 text-sm text-muted-foreground">No new notifications yet.</div>
+              ) : (
+                <div className="max-h-[420px] overflow-auto">
+                  {unreadNotifications.map((notification) => (
+                    <button
+                      key={notification.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
+                      onClick={() => handleNotificationClick(notification)}
+                    >
+                      <div className="flex flex-col gap-1">
+                        <div className="text-sm font-semibold text-[#25294B]">
+                          {notification.title}
+                        </div>
+                        <div className="text-xs text-muted-foreground line-clamp-2">
+                          {notification.message}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 

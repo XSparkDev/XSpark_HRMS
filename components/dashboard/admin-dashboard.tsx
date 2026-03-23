@@ -74,10 +74,20 @@ export function AdminDashboard() {
     missingDocuments: 0,
     pendingWarnings: 0,
   })
+  const [verificationRequests, setVerificationRequests] = useState<any[]>([])
 
   useEffect(() => {
     fetchDashboardData()
   }, [])
+
+  const parseVerificationRequestMessage = (message?: string) => {
+    if (!message) return null
+    // Message format:
+    // "Employee [full name] (ID: [employee_id_or_code]) has requested ..."
+    const match = message.match(/^Employee\s+(.+?)\s+\(ID:\s*([^)]+)\)/i)
+    if (!match) return null
+    return { fullName: match[1].trim(), employeeCode: match[2].trim() }
+  }
 
   const fetchDashboardData = async () => {
     try {
@@ -99,12 +109,11 @@ export function AdminDashboard() {
         }
       }
 
-      const [leaveRes, employeesRes, unverifiedRes, approvedLeaveRes] = await Promise.all([
+      const [leaveRes, employeesRes, approvedLeaveRes] = await Promise.all([
         fetch("/api/leave/requests?status=pending&limit=5", { headers }),
         // For dashboard purposes, “Active Employees” = all employees in the employees table
         // (the API defaults to all when no is_active filter is provided).
         fetch("/api/employees", { headers }),
-        fetch("/api/employees?id_verified=false&is_active=true", { headers }),
         // Used to calculate how many people are currently on leave today.
         // API enforces limit <= 100, so keep it within that bound.
         fetch("/api/leave/requests?status=approved&limit=100", { headers }),
@@ -112,7 +121,6 @@ export function AdminDashboard() {
 
       const leaveData = await leaveRes.json()
       const employeesData = await employeesRes.json()
-      const unverifiedData = await unverifiedRes.json()
       const approvedLeaveData = await approvedLeaveRes.json()
 
       // Pending requests for the card at the top
@@ -142,14 +150,39 @@ export function AdminDashboard() {
         return start <= today && today <= end
       }).length
 
+      const employees: any[] = Array.isArray(employeesData.data) ? employeesData.data : []
+      // Keep verification logic aligned with Employee Management:
+      // verified === id_verified && bank_verified
+      const unverifiedCount = employees.filter((emp) => !(emp?.id_verified && emp?.bank_verified)).length
+
       setStats({
-        activeEmployees: employeesData.data?.length || 0,
+        activeEmployees: employees.length,
         onLeaveToday: onLeaveTodayCount,
-        unverified: unverifiedData.data?.length || 0,
+        unverified: unverifiedCount,
         expiringContracts: 0, // TODO: implement contract expiration logic
         missingDocuments: 0, // TODO: implement document completeness check
         pendingWarnings: 0, // TODO: implement disciplinary records
       })
+
+      // Fetch unread verification request notifications for this admin
+      const adminEmployeeUuid = await getEmployeeUuid()
+      if (adminEmployeeUuid) {
+        const notifRes = await fetch(
+          `/api/notifications?employeeId=${adminEmployeeUuid}&onlyUnread=true`,
+          { headers },
+        )
+        const notifJson = await notifRes.json().catch(() => ({}))
+        const unread = (notifJson.data || []) as any[]
+        const verification = unread.filter((n) => n?.title === "Verification Request")
+        // Deduplicate by requester (published_by) so repeated legacy rows show once.
+        const dedupedByRequester = verification.filter((n, idx, arr) => {
+          const requester = n?.published_by || n?.id
+          return arr.findIndex((x) => (x?.published_by || x?.id) === requester) === idx
+        })
+        setVerificationRequests(dedupedByRequester)
+      } else {
+        setVerificationRequests([])
+      }
     } catch (error) {
       console.error("Error fetching dashboard data:", error)
     } finally {
@@ -545,6 +578,14 @@ export function AdminDashboard() {
               <span className="text-sm">Pending warnings:</span>
               <Badge className="bg-[#A6206A] text-white rounded-full">{stats.pendingWarnings}</Badge>
             </div>
+
+            {/* Verification Requests Row */}
+            <Link href="/employees" className="block">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
+                <span className="text-sm">Verification requests:</span>
+                <Badge className="bg-[#A6206A] text-white rounded-full">{verificationRequests.length}</Badge>
+              </div>
+            </Link>
           </div>
         </CardContent>
       </Card>

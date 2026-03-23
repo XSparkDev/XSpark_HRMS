@@ -21,6 +21,7 @@ import { Calendar as DatePicker } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
 import { addDays, format, formatDistanceToNow } from "date-fns"
 import { calculateLeaveBalance, calculateWorkingDays, getLeaveTypeDisplayName } from "@/lib/validation/leave"
+import { useToast } from "@/hooks/use-toast"
 import {
   Calendar,
   FileText,
@@ -58,6 +59,7 @@ const Notes2Scheduled = dynamic(
 export default function DashboardPage() {
   const router = useRouter()
   const user = getCurrentUser()
+  const { toast } = useToast()
   const [showContactHrModal, setShowContactHrModal] = useState(false)
   const [showLeaveModal, setShowLeaveModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
@@ -66,6 +68,7 @@ export default function DashboardPage() {
   const [leaveBalances, setLeaveBalances] = useState<Record<string, { available: number; total: number }>>({})
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
   const [showVerificationPopup, setShowVerificationPopup] = useState(false)
+  const [isRequestingVerification, setIsRequestingVerification] = useState(false)
 
   // Leave modal local state
   const [leaveType, setLeaveType] = useState("annual")
@@ -725,12 +728,54 @@ export default function DashboardPage() {
               Remind me later
             </Button>
             <Button
-              onClick={() => {
-                setShowVerificationPopup(false)
-                router.push("/profile")
+              disabled={isRequestingVerification}
+              onClick={async () => {
+                if (isRequestingVerification) return
+                setIsRequestingVerification(true)
+
+                try {
+                  const storedSession = localStorage.getItem("xspark_session")
+                  if (!storedSession) {
+                    throw new Error("Session expired. Please login again.")
+                  }
+
+                  const sessionParsed = JSON.parse(storedSession)
+                  const accessToken = sessionParsed?.access_token
+                  if (!accessToken) {
+                    throw new Error("Session expired. Please login again.")
+                  }
+
+                  const res = await fetch("/api/verification/request", {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${accessToken}`,
+                    },
+                  })
+
+                  const json = await res.json().catch(() => ({}))
+                  if (!res.ok || !json?.success) {
+                    throw new Error(json?.error || "Failed to send verification request.")
+                  }
+
+                  toast({
+                    title: "Success",
+                    description: "Verification request sent successfully.",
+                  })
+                  setShowVerificationPopup(false)
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "Failed to request verification."
+                  toast({
+                    title: "Request failed",
+                    description: message,
+                    variant: "destructive",
+                  })
+                } finally {
+                  setIsRequestingVerification(false)
+                }
               }}
             >
-              Request verification
+              {isRequestingVerification ? "Requesting..." : "Request verification"}
             </Button>
           </div>
         </DialogContent>
