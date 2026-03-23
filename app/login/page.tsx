@@ -35,6 +35,24 @@ const DEMO_ACCOUNTS = [
     icon: Shield,
     color: "text-indigo-600",
   },
+  {
+    id: "super_admin",
+    label: "Super Admin",
+    email: "hobixe4894@juhxs.com",
+    password: "SecurePass123!",
+    role: "super_admin",
+    icon: Shield,
+    color: "text-red-600",
+  },
+  {
+    id: "admin",
+    label: "Admin",
+    email: "seveta4223@delaeb.com",
+    password: "SecurePass123!",
+    role: "admin",
+    icon: Shield,
+    color: "text-purple-600",
+  },
 ]
 
 export default function LoginPage() {
