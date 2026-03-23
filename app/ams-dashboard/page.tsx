@@ -29,10 +29,11 @@ import {
   Loader2,
   RefreshCw,
   AlertTriangle,
+  ArrowRight,
 } from "lucide-react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Dialog as UIDialog, DialogContent as UIDialogContent, DialogHeader as UIDialogHeader, DialogTitle as UIDialogTitle, DialogClose } from "@/components/ui/dialog"
+import { Dialog as UIDialog, DialogContent as UIDialogContent, DialogHeader as UIDialogHeader, DialogTitle as UIDialogTitle, DialogDescription, DialogClose } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -499,16 +500,10 @@ const [assignedDevicesError, setAssignedDevicesError] = useState<string | null>(
   const [roomBookingsError, setRoomBookingsError] = useState<string | null>(null)
   const [roomsLookup, setRoomsLookup] = useState<Record<string, Room>>({})
   const [availableRooms, setAvailableRooms] = useState<Room[]>([])
-  const [allRooms, setAllRooms] = useState<Room[]>([]) // All rooms for dropdown
-  const [bookedRoomIds, setBookedRoomIds] = useState<Set<string>>(new Set()) // Room IDs that are booked for selected time
   const [availableRoomsLoading, setAvailableRoomsLoading] = useState(false)
   const [availableRoomsError, setAvailableRoomsError] = useState<string | null>(null)
   const [bookingSummaryData, setBookingSummaryData] = useState<any>(null)
   const roomsLookupRef = useRef<Record<string, Room>>({})
-  const roomBookingsRef = useRef<DashboardRoomBooking[]>([])
-  const isFetchingRoomBookingsRef = useRef<boolean>(false)
-  const userNameRef = useRef<string>(user?.name || "Employee")
-  const userIdentifierRef = useRef<string>(userIdentifier)
   const roomsList = useMemo(
     () =>
       Object.values(roomsLookup)
@@ -529,8 +524,6 @@ const [assignedDevicesError, setAssignedDevicesError] = useState<string | null>(
   })
   const [maintenanceRequests, setMaintenanceRequests] = useState<MaintenanceRequestRecord[]>([])
   const [borrowRequestsState, setBorrowRequestsState] = useState<BorrowRequestRecord[]>([])
-  const [borrowRequestsLoading, setBorrowRequestsLoading] = useState(false)
-  const [borrowRequestsError, setBorrowRequestsError] = useState<string | null>(null)
   const [deviceAvailabilityOpen, setDeviceAvailabilityOpen] = useState(false)
   const [deviceAvailabilitySearch, setDeviceAvailabilitySearch] = useState('')
 const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
@@ -543,20 +536,27 @@ const [selectedCheckInId, setSelectedCheckInId] = useState<string | null>(null)
   const [quickBorrowReceipt, setQuickBorrowReceipt] = useState<QuickBorrowReceipt | null>(null)
   const [bookingSummaryMode, setBookingSummaryMode] = useState<"result" | null>(null)
   const [bookingSubmitting, setBookingSubmitting] = useState(false)
+  const [quickBorrowSummaryMode, setQuickBorrowSummaryMode] = useState<"preview" | "result" | null>(null)
+  const [pendingQuickBorrow, setPendingQuickBorrow] = useState<{
+    apiPayload: {
+      device_id: string
+      borrowed_by: string
+      borrow_date: string
+      return_date: string | null
+      notes?: string
+    }
+    historyEntry: DeviceHistoryEntry
+    requestRecord: BorrowRequestRecord
+    deviceSupabaseId: string
+  } | null>(null)
+  const [quickBorrowSubmitting, setQuickBorrowSubmitting] = useState(false)
   const [pendingCheckInCandidate, setPendingCheckInCandidate] = useState<CheckInCandidate | null>(null)
   const [checkInSummaryMode, setCheckInSummaryMode] = useState<"preview" | "result" | null>(null)
   const [checkInConfirmOpen, setCheckInConfirmOpen] = useState(false)
-  const [checkInSubmitting, setCheckInSubmitting] = useState(false)
   const [postponeConfirmOpen, setPostponeConfirmOpen] = useState(false)
 
-  // Update refs whenever values change
-  useEffect(() => {
-    userNameRef.current = user?.name || "Employee"
-    userIdentifierRef.current = userIdentifier
-  }, [user?.name, userIdentifier])
-
   const persistRoomBookingsToStorage = useCallback(
-    (records?: DashboardRoomBooking[] | null, skipEvent = false) => {
+    (records?: DashboardRoomBooking[] | null) => {
       if (typeof window === "undefined") return
       const list = Array.isArray(records) ? records : []
       const storagePayload: RoomBookingRecord[] = list.map((booking) => {
@@ -568,8 +568,8 @@ const [selectedCheckInId, setSelectedCheckInId] = useState<string | null>(null)
 
         return {
           id: booking.id,
-          employeeId: booking.employeeId || userIdentifierRef.current || "",
-          employeeName: userNameRef.current,
+          employeeId: booking.employeeId || userIdentifier || "",
+          employeeName: user?.name || "Employee",
           room: roomDetail?.room_name || booking.room || booking.roomId || "Room",
           meetingCategory: booking.meetingCategory ?? "Internal",
           meetingAgenda: booking.meetingAgenda ?? "",
@@ -585,13 +585,9 @@ const [selectedCheckInId, setSelectedCheckInId] = useState<string | null>(null)
       })
 
       window.localStorage.setItem(ROOM_BOOKINGS_STORAGE_KEY, JSON.stringify(storagePayload))
-      // Only dispatch event if not called from internal fetch (skipEvent = true means skip)
-      // This prevents infinite loops when fetchRoomBookings calls persistRoomBookingsToStorage
-      if (!skipEvent) {
-        window.dispatchEvent(new CustomEvent(ROOM_BOOKINGS_UPDATED_EVENT))
-      }
+      window.dispatchEvent(new CustomEvent(ROOM_BOOKINGS_UPDATED_EVENT))
     },
-    [], // No dependencies - uses refs for all dynamic values
+    [user?.name, userIdentifier],
   )
 
   useEffect(() => {
@@ -725,15 +721,18 @@ const [selectedCheckInId, setSelectedCheckInId] = useState<string | null>(null)
     }
   }, [])
   
-  // Form states - matching device management page structure
-  const [borrowType, setBorrowType] = useState("")
-  const [borrowId, setBorrowId] = useState("")
-  const [borrowDate, setBorrowDate] = useState("")
-  const [borrowReturnDate, setBorrowReturnDate] = useState("")
-  const [borrowPurpose, setBorrowPurpose] = useState("")
-  const [borrowDateError, setBorrowDateError] = useState<string | null>(null)
-  const [borrowReturnError, setBorrowReturnError] = useState<string | null>(null)
-  const [borrowSubmitting, setBorrowSubmitting] = useState(false)
+  // Form states
+  const [borrowForm, setBorrowForm] = useState({
+    type: "",
+    name: "",
+    identifier: "", // Identifier field for searching devices using getDeviceByIdentifier
+    date: "",
+    dateTime: "",
+    returnDate: "",
+    purpose: "",
+  })
+  const [identifierSearchLoading, setIdentifierSearchLoading] = useState(false)
+  const [identifierSearchResult, setIdentifierSearchResult] = useState<DeviceRecord | null>(null)
   const [maintenanceForm, setMaintenanceForm] = useState({ deviceId: "", deviceName: "", category: "", description: "", priority: "Medium" })
   const [bookingForm, setBookingForm] = useState({ room: "", category: "", meetingType: "", date: "", startTime: "12:00", endTime: "13:00", agenda: "" })
   const [bookingErrors, setBookingErrors] = useState<BookingErrors>({})
@@ -795,135 +794,58 @@ const getReturnDateUpperBound = (start: Date | null) => {
   return limit.toISOString().split("T")[0]
 }
 
-  // Borrow date ISO for validation (matching device management page)
-  const borrowDateIso = useMemo(() => {
-    if (borrowDate) {
-      return borrowDate.split("T")[0]
-    }
-    return ""
-  }, [borrowDate])
+  const borrowReturnLimitIso = useMemo(() => getReturnDateUpperBound(parseDateOnly(borrowForm.date || todayIso)), [borrowForm.date, todayIso])
 
-  // Today's date for min date validation
-  const todayIsoDate = useMemo(() => {
-    return new Date().toISOString().split("T")[0]
-  }, [])
+  const ensureReturnDateIsValid = useCallback(
+    (returnDate: string | undefined, context: "change" | "submit" = "submit") => {
+      if (!returnDate) return true
+      const borrowDateValue = borrowForm.date || todayIso
+      const borrowDateObj = parseDateOnly(borrowDateValue)
+      const returnDateObj = parseDateOnly(returnDate)
+      if (!borrowDateObj || !returnDateObj) return true
+      if (returnDateObj <= borrowDateObj) {
+        toast({
+          variant: "destructive",
+          title: "Return date issue",
+          description: "Return date must be after the borrow date.",
+        })
+        return false
+      }
+      if (isWeekend(returnDate)) {
+        toast({
+          variant: "destructive",
+          title: "Weekend not allowed",
+          description: "Device returns are not allowed on weekends. Please pick a weekday.",
+        })
+        return false
+      }
+      const diff = calculateDayDiff(borrowDateObj, returnDateObj)
+      if (diff !== null && diff > MAX_BORROW_DURATION_DAYS) {
+        toast({
+          variant: "destructive",
+          title: "Return date too far",
+          description: `Return date can be at most ${MAX_BORROW_DURATION_DAYS} days after the borrow date.`,
+        })
+        return false
+      }
+      return true
+    },
+    [borrowForm.date, todayIso, toast],
+  )
 
-  const borrowReturnLimitIso = useMemo(() => getReturnDateUpperBound(parseDateOnly(borrowDateIso)), [borrowDateIso])
-
-  // Validation functions matching device management page
-  const isWeekendDate = (value: string) => {
-    const parsed = parseDateOnly(value)
-    if (!parsed) return false
-    const day = parsed.getDay()
-    return day === 0 || day === 6
-  }
-
-  // Validate borrow date (prevent past dates and weekends)
-  const isBorrowDateValid = (value: string) => {
-    const parsed = parseDateOnly(value)
-    if (!parsed) return false
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    parsed.setHours(0, 0, 0, 0)
-    if (parsed < today) return false
-    // Prevent weekends (Saturday = 6, Sunday = 0)
-    const day = parsed.getDay()
-    if (day === 0 || day === 6) return false
-    return true
-  }
-
-  const isReturnDateValid = (value: string) => {
-    const parsed = parseDateOnly(value)
-    if (!parsed) return false
-    const borrowDate = parseDateOnly(borrowDateIso)
-    if (!borrowDate) return false
-    borrowDate.setHours(0, 0, 0, 0)
-    if (parsed <= borrowDate) {
-      return false
-    }
-    if (isWeekendDate(value)) {
-      return false
-    }
-    const diff = (parsed.getTime() - borrowDate.getTime()) / (1000 * 60 * 60 * 24)
-    if (diff > MAX_BORROW_DURATION_DAYS) {
-      return false
-    }
-    return true
-  }
-
-  // Handle borrow date change with validation
-  const handleBorrowDateChange = (value: string) => {
-    setBorrowDate(value)
-    if (!value) {
-      setBorrowDateError(null)
-      setBorrowReturnDate("") // Clear return date if borrow date is cleared
-      return
-    }
-    if (!parseDateOnly(value)) {
-      setBorrowDateError("Invalid borrow date.")
-      return
-    }
-    // Check for weekends
-    if (isWeekendDate(value)) {
-      setBorrowDateError("Borrow date cannot fall on a weekend.")
-      toast({
-        variant: "destructive",
-        title: "Invalid borrow date",
-        description: "Borrow date cannot fall on a weekend.",
-      })
-      return
-    }
-    if (!isBorrowDateValid(value)) {
-      setBorrowDateError("Borrow date cannot be in the past.")
-      toast({
-        variant: "destructive",
-        title: "Invalid borrow date",
-        description: "Borrow date must be today or a future date.",
-      })
-      return
-    }
-    setBorrowDateError(null)
-    // Clear return date if it's now invalid relative to the new borrow date
-    if (borrowReturnDate && !isReturnDateValid(borrowReturnDate)) {
-      setBorrowReturnDate("")
-      setBorrowReturnError(null)
-    }
-  }
-
-  const handleBorrowReturnDateChange = (value: string) => {
-    setBorrowReturnDate(value)
-    if (!value) {
-      setBorrowReturnError(null)
-      return
-    }
-    if (!parseDateOnly(value)) {
-      setBorrowReturnError("Invalid return date.")
-      return
-    }
-    if (isWeekendDate(value)) {
-      setBorrowReturnError("Return date cannot fall on a weekend.")
-      toast({
-        variant: "destructive",
-        title: "Weekend not allowed",
-        description: "Device returns must be scheduled for weekdays.",
-      })
-      return
-    }
-    if (!isReturnDateValid(value)) {
-      const diffError =
-        borrowReturnLimitIso && value > borrowReturnLimitIso
-          ? `Return date can be at most ${MAX_BORROW_DURATION_DAYS} days after the borrow date.`
-          : "Return date must be after the borrow date."
-      setBorrowReturnError(diffError)
-      toast({
-        variant: "destructive",
-        title: "Invalid return date",
-        description: diffError,
-      })
-    } else {
-      setBorrowReturnError(null)
-    }
-  }
+  const handleBorrowReturnDateChange = useCallback(
+    (value: string) => {
+      if (!value) {
+        setBorrowForm((prev) => ({ ...prev, returnDate: "" }))
+        return
+      }
+      if (!ensureReturnDateIsValid(value, "change")) {
+        return
+      }
+      setBorrowForm((prev) => ({ ...prev, returnDate: value }))
+    },
+    [ensureReturnDateIsValid],
+  )
 
   const isAwaitingBorrowApproval = (...statuses: Array<string | null | undefined>) => {
     return statuses.some((status) => {
@@ -948,6 +870,72 @@ const getReturnDateUpperBound = (start: Date | null) => {
     return startMinutes - endMinutes
   }
 
+  const findAvailableDeviceByIdentifier = (identifier: string) => {
+    return availableBorrowDevices.find((device) => {
+      return getDeviceIdentifier(device) === identifier
+    })
+  }
+
+  // Search for device using getDeviceByIdentifier from devices-service.ts
+  // This uses the API endpoint /api/devices/[deviceId] which calls getDeviceByIdentifier()
+  // It tries multiple lookup strategies: device_id, id, asset_tag, serial_number
+  // Note: The route parameter is [deviceId] but accepts any identifier (device_id, UUID, asset_tag, serial_number)
+  const handleIdentifierSearch = async (identifier: string) => {
+    if (!identifier.trim()) {
+      setIdentifierSearchResult(null)
+      return
+    }
+
+    setIdentifierSearchLoading(true)
+    setIdentifierSearchResult(null)
+
+    try {
+      // Call API endpoint /api/devices/[deviceId] that uses getDeviceByIdentifier from devices-service.ts
+      // The deviceId parameter accepts flexible identifiers (device_id, UUID, asset_tag, serial_number)
+      const response = await fetch(`/api/devices/${encodeURIComponent(identifier)}`, {
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        },
+      })
+
+      const json = await response.json()
+
+      if (response.ok && json.success && json.data) {
+        // Device found using getDeviceByIdentifier
+        setIdentifierSearchResult(json.data)
+        
+        // Auto-populate form if device is available
+        const foundDevice = json.data
+        if (foundDevice.device_type) {
+          setBorrowForm((prev) => ({
+            ...prev,
+            type: toTitleCase(foundDevice.device_type),
+            identifier: identifier,
+          }))
+        }
+      } else {
+        // Device not found
+        setIdentifierSearchResult(null)
+        toast({
+          variant: 'destructive',
+          title: 'Device not found',
+          description: `No device found with identifier: ${identifier}`,
+        })
+      }
+    } catch (error) {
+      console.error('[dashboard] Error searching device by identifier:', error)
+      setIdentifierSearchResult(null)
+      toast({
+        variant: 'destructive',
+        title: 'Search failed',
+        description: 'Unable to search for device. Please try again.',
+      })
+    } finally {
+      setIdentifierSearchLoading(false)
+    }
+  }
 
   const validateBooking = (form: typeof bookingForm): BookingErrors => {
     const errors: BookingErrors = {}
@@ -1006,12 +994,6 @@ const getReturnDateUpperBound = (start: Date | null) => {
 
     return errors
   }
-
-  // Check if booking form is ready (no validation errors)
-  const bookingFormReady = useMemo(() => {
-    const errors = validateBooking(bookingForm)
-    return Object.keys(errors).length === 0
-  }, [bookingForm])
 
   const pushBookingErrors = (errors: BookingErrors, context: "date" | "start" | "end" | "submit") => {
     if ((context === "date" || context === "submit") && errors.date && !bookingErrors.date) {
@@ -1153,11 +1135,10 @@ const getReturnDateUpperBound = (start: Date | null) => {
             description: "You already have a booking at this time on this date. You cannot book multiple rooms simultaneously.",
           })
         } else {
-          // Display the detailed error message from backend (includes who booked it and time)
           toast({
             variant: "destructive",
             title: "Room unavailable",
-            description: errorMessage,
+            description: "The selected room is already booked for that time window.",
           })
         }
         return
@@ -1205,187 +1186,189 @@ const getReturnDateUpperBound = (start: Date | null) => {
     }
   }
 
-  const submitBorrow = async () => {
-    const trimmedPurpose = borrowPurpose.trim()
-    if (!borrowDialogReady) {
+  const handleQuickBorrowSubmit = () => {
+    if (!quickBorrowReady) {
       toast({
         variant: "destructive",
-        title: "Borrowing details incomplete",
-        description: "Select a device, borrow date, return date, and purpose before borrowing.",
+        title: "Missing details",
+        description: "Please complete the borrow form before submitting.",
       })
       return
     }
 
-    const selectedDevice = availableBorrowDevices.find((device) => device.id === borrowId)
-    if (!selectedDevice) {
-      toast({
-        variant: "destructive",
-        title: "Device not found",
-        description: "Selected device is no longer available.",
-      })
+    const trimmedPurpose = borrowForm.purpose.trim()
+    if (!ensureReturnDateIsValid(borrowForm.returnDate, "submit")) {
       return
     }
 
-    // Validate borrow date (prevent past dates)
-    if (!borrowDateIso) {
+    const deviceIdentifier = borrowForm.name?.trim()
+    if (!deviceIdentifier) {
       toast({
         variant: "destructive",
-        title: "Borrow date required",
-        description: "Please select a borrow date.",
-      })
-      setBorrowDateError("Borrow date is required.")
-      return
-    }
-
-    // Check for weekends
-    if (isWeekendDate(borrowDateIso)) {
-      toast({
-        variant: "destructive",
-        title: "Invalid borrow date",
-        description: "Borrow date cannot fall on a weekend.",
-      })
-      setBorrowDateError("Borrow date cannot fall on a weekend.")
-      return
-    }
-    if (!isBorrowDateValid(borrowDateIso)) {
-      toast({
-        variant: "destructive",
-        title: "Invalid borrow date",
-        description: "Borrow date cannot be in the past.",
-      })
-      setBorrowDateError("Borrow date cannot be in the past.")
-      return
-    }
-
-    if (borrowReturnDate && !isReturnDateValid(borrowReturnDate)) {
-      const message =
-        borrowReturnLimitIso && borrowReturnDate > borrowReturnLimitIso
-          ? `Return date can be at most ${MAX_BORROW_DURATION_DAYS} days after the borrow date.`
-          : "Please choose a valid weekday after the borrow date."
-      setBorrowReturnError(message)
-      toast({
-        variant: "destructive",
-        title: "Invalid return date",
-        description: message,
+        title: "Device missing",
+        description: "Select a device before submitting your request.",
       })
       return
     }
-
-    // Convert borrow date (YYYY-MM-DD) to ISO datetime format for API
-    const borrowDateValue = borrowDateIso ? new Date(borrowDateIso + 'T00:00:00').toISOString() : new Date().toISOString()
-    const recordId = crypto.randomUUID()
-    const assetTag = selectedDevice.asset_tag || selectedDevice.serial_number || selectedDevice.id || "Unknown"
-    const resolvedDeviceName = selectedDevice.model || selectedDevice.brand || toTitleCase(selectedDevice.device_type ?? undefined) || "Device"
-    const resolvedDeviceType = toTitleCase(selectedDevice.device_type ?? undefined) || "Device"
-
+    const resolvedDevice = findAvailableDeviceByIdentifier(deviceIdentifier)
+    const deviceName =
+      resolvedDevice?.model ||
+      resolvedDevice?.brand ||
+      toTitleCase(resolvedDevice?.device_type) ||
+      deviceIdentifier
+    const deviceType = toTitleCase(resolvedDevice?.device_type) || borrowForm.type || "Device"
+    const recordId = `BR-${Date.now()}`
+    const nowIso = new Date().toISOString()
+    const borrowDateValue = borrowForm.dateTime || nowIso
     const borrowerIdentifier =
       employeeRecord?.id ||
       employeeRecord?.employee_id ||
       user?.employeeId ||
-      user?.email ||
       user?.id ||
+      user?.email ||
       userIdentifier
 
     if (!borrowerIdentifier) {
       toast({
         variant: "destructive",
         title: "Missing profile data",
-        description: "We could not determine who is borrowing this device.",
+        description: "We couldn't resolve your employee record. Please refresh and try again.",
       })
       return
     }
-
-    if (borrowSubmitting) return
-    setBorrowSubmitting(true)
-
-    try {
-      const response = await fetch("/api/borrows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          device_id: selectedDevice.id,
-          borrowed_by: borrowerIdentifier,
-          borrow_date: borrowDateValue,
-          return_date: borrowReturnDate || null,
-          notes: trimmedPurpose || undefined,
-        }),
-      })
-      const json = await response.json().catch(() => ({}))
-      if (!response.ok || json.success === false) {
-        throw new Error(json?.error || "Failed to record borrow in the database.")
-      }
-    } catch (error) {
+    if (!resolvedDevice?.id) {
       toast({
         variant: "destructive",
-        title: "Borrow not saved",
-        description: error instanceof Error ? error.message : "Unable to save this borrow request.",
+        title: "Device details incomplete",
+        description: "Please refresh the device list and try again.",
       })
       return
-    } finally {
-      setBorrowSubmitting(false)
     }
 
-    // Update local state and show confirmation
-    const newEntry: DeviceHistoryEntry = {
+    const requestRecord: BorrowRequestRecord = {
+      id: recordId,
+      employeeName: user?.name || "Employee",
+      employeeId: user?.employeeId || user?.email || "Unassigned",
+      deviceName,
+      assetTag: deviceIdentifier,
+      borrowDate: nowIso,
+      purpose: trimmedPurpose,
+      status: "Pending Approval",
+    }
+
+    const historyEntry: DeviceHistoryEntry = {
       recordId,
-      deviceId: assetTag,
-      deviceName: resolvedDeviceName,
-      deviceType: resolvedDeviceType,
-      borrowDate: borrowDateValue,
-      expectedReturnDate: borrowReturnDate || undefined,
+      deviceId: deviceIdentifier,
+      deviceName,
+      deviceType,
+      borrowDate: nowIso,
+      expectedReturnDate: borrowForm.returnDate || undefined,
       status: "Pending",
       action: "Borrow",
       notes: trimmedPurpose || undefined,
     }
 
-    addBorrowRequestRecord({
-      id: recordId,
-      employeeName: user?.name || "Employee",
-      employeeId: user?.employeeId || user?.email || "Unassigned",
-      deviceName: resolvedDeviceName,
-      assetTag: assetTag,
-      borrowDate: borrowDateValue,
-      purpose: trimmedPurpose,
-      status: "Pending Approval",
-    })
-    appendDeviceHistoryEntry(userIdentifier, newEntry)
+    const apiPayload = {
+      device_id: resolvedDevice.id,
+      borrowed_by: borrowerIdentifier,
+      borrow_date: borrowDateValue,
+      return_date: borrowForm.returnDate || null,
+      notes: trimmedPurpose || undefined,
+    }
 
-    setQuickBorrowReceipt({
-      deviceId: assetTag,
-      deviceName: resolvedDeviceName,
-      deviceType: resolvedDeviceType,
-      borrowDate: borrowDateValue,
-      expectedReturnDate: borrowReturnDate || undefined,
+    const receipt: QuickBorrowReceipt = {
+      deviceId: deviceIdentifier,
+      deviceName,
+      deviceType,
+      borrowDate: nowIso,
+      expectedReturnDate: borrowForm.returnDate || undefined,
       status: 'Pending',
+    }
+
+    setPendingQuickBorrow({
+      apiPayload,
+      historyEntry,
+      requestRecord,
+      deviceSupabaseId: resolvedDevice.id,
     })
+    setQuickBorrowReceipt(receipt)
+    setQuickBorrowSummaryMode("preview")
     setQuickBorrowSummaryOpen(true)
     setBorrowDeviceOpen(false)
-
-    // Reset form
-    setBorrowType("")
-    setBorrowId("")
-    setBorrowDate("")
-    setBorrowReturnDate("")
-    setBorrowPurpose("")
-    setBorrowDateError(null)
-    setBorrowReturnError(null)
-
-    // Update device status
-    try {
-      const response = await fetch('/api/devices', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: selectedDevice.id ?? assetTag, status: 'pending borrow' }),
-      })
-      const result = await response.json()
-      if (result.success) {
-        await refreshDashboardData()
-      }
-    } catch (statusError) {
-      console.warn('Device status update skipped:', statusError)
-    }
   }
 
+  const confirmQuickBorrow = async () => {
+    if (!pendingQuickBorrow || quickBorrowSubmitting) return
+    try {
+      setQuickBorrowSubmitting(true)
+      const borrowResponse = await fetch('/api/borrows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pendingQuickBorrow.apiPayload),
+      })
+      const borrowJson = await borrowResponse.json()
+      if (!borrowResponse.ok || borrowJson.success === false) {
+        throw new Error(borrowJson.error || 'Failed to submit borrow request')
+      }
+
+      addBorrowRequestRecord(pendingQuickBorrow.requestRecord)
+      appendDeviceHistoryEntry(userIdentifier, pendingQuickBorrow.historyEntry)
+
+      toast({
+        title: "Borrow request submitted",
+        description: `${pendingQuickBorrow.requestRecord.deviceName} is awaiting supervisor approval.`,
+      })
+
+      setBorrowForm((prev) => {
+        const freshNow = new Date()
+        const freshDate = freshNow.toISOString().split("T")[0]
+        const freshDateTime = freshNow.toISOString()
+        return {
+          type: "",
+          name: "",
+          identifier: prev.identifier ?? "",
+          date: freshDate,
+          dateTime: freshDateTime,
+          returnDate: "",
+          purpose: "",
+        }
+      })
+
+      setQuickBorrowSummaryMode("result")
+      setQuickBorrowReceipt((prev) =>
+        prev ? { ...prev, status: 'Pending' } : prev,
+      )
+      setPendingQuickBorrow(null)
+
+      try {
+        const response = await fetch('/api/devices', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: pendingQuickBorrow.deviceSupabaseId, status: 'pending borrow' }),
+        })
+        const result = await response.json()
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to update device status')
+        }
+        await refreshDashboardData()
+      } catch (statusError) {
+        console.error('Failed to update device status', statusError)
+        toast({
+          variant: 'destructive',
+          title: 'Inventory not updated',
+          description: 'Your request is saved but the device status could not refresh automatically.',
+        })
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Unable to submit borrow",
+        description: error instanceof Error ? error.message : "Please try again.",
+      })
+    } finally {
+      setQuickBorrowSubmitting(false)
+    }
+  }
 
   const handleQuickMaintenanceSubmit = () => {
     if (!quickMaintenanceReady) {
@@ -1670,6 +1653,10 @@ const getReturnDateUpperBound = (start: Date | null) => {
     }
   }
   useEffect(() => {
+    const now = new Date()
+    const isoDate = now.toISOString().split("T")[0]
+    const isoDateTime = now.toISOString()
+    setBorrowForm(prev => ({ ...prev, date: isoDate, dateTime: isoDateTime }))
     setBookingForm(prev => ({
       ...prev,
       date: prev.date || todayIso,
@@ -1860,12 +1847,7 @@ const getReturnDateUpperBound = (start: Date | null) => {
     if (!userIdentifier) {
       setRoomBookings([])
       setRoomBookingsLoading(false)
-      persistRoomBookingsToStorage([], true)
-      return []
-    }
-
-    // Prevent multiple simultaneous fetches
-    if (isFetchingRoomBookingsRef.current) {
+      persistRoomBookingsToStorage([])
       return []
     }
 
@@ -1875,54 +1857,19 @@ const getReturnDateUpperBound = (start: Date | null) => {
     upcomingEnd.setDate(upcomingEnd.getDate() + 7)
     upcomingEnd.setHours(23, 59, 59, 999)
 
-    isFetchingRoomBookingsRef.current = true
     setRoomBookingsLoading(true)
     let normalized: DashboardRoomBooking[] = []
     try {
       const params = new URLSearchParams({
-        bookedBy: userIdentifier || '',
+        bookedBy: userIdentifier,
         scope: 'dashboard',
         fromDate: todayStart.toISOString(),
         toDate: upcomingEnd.toISOString(),
       })
-      const url = `/api/room-bookings?${params.toString()}`
-      
-      // Validate URL before fetching
-      if (!url || url === '/api/room-bookings?') {
-        throw new Error('Invalid URL constructed for room bookings fetch')
-      }
-      
-      let response: Response
-      try {
-        response = await fetch(url, {
-          method: 'GET',
-          cache: 'no-store',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          },
-        })
-      } catch (fetchError) {
-        console.error('[fetchRoomBookings] Fetch error:', fetchError)
-        throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to fetch room bookings. Please check your connection.'}`)
-      }
-      
-      if (!response) {
-        throw new Error('No response received from server')
-      }
-      
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error')
-        throw new Error(`Server error (${response.status}): ${errorText}`)
-      }
-      
-      let json: any
-      try {
-        json = await response.json()
-      } catch (parseError) {
-        console.error('[fetchRoomBookings] JSON parse error:', parseError)
-        throw new Error('Invalid JSON response from server')
-      }
+      const response = await fetch(`/api/room-bookings?${params.toString()}`, {
+        cache: 'no-store',
+      })
+      const json = await response.json()
       if (!response.ok || json.success === false) {
         throw new Error(json.error || 'Failed to load bookings')
       }
@@ -1968,36 +1915,30 @@ const getReturnDateUpperBound = (start: Date | null) => {
       setRoomBookings(sortedBookings)
       setRoomBookingsError(null)
       setScheduleError((prev) => (prev && prev.toLowerCase().includes('room bookings') ? null : prev))
-      // Skip event dispatch to prevent infinite loop (we're already fetching, don't trigger another fetch)
-      persistRoomBookingsToStorage(sortedBookings, true)
+      persistRoomBookingsToStorage(sortedBookings)
       return sortedBookings
     } catch (error) {
       console.error('Failed to load room bookings', error)
       setRoomBookings([])
-      persistRoomBookingsToStorage([], true)
+      persistRoomBookingsToStorage([])
       const message = error instanceof Error ? error.message : 'Unable to load room bookings'
       setRoomBookingsError(message)
       setScheduleError((prev) => prev ?? 'Unable to load room bookings')
       return []
     } finally {
-      isFetchingRoomBookingsRef.current = false
       setRoomBookingsLoading(false)
     }
-  }, [userIdentifier]) // Removed persistRoomBookingsToStorage - it's now stable with no dependencies
+  }, [persistRoomBookingsToStorage, userIdentifier])
 
   const fetchAvailableRooms = useCallback(async () => {
     if (!bookRoomOpen) {
       setAvailableRooms([])
-      setAllRooms([])
-      setBookedRoomIds(new Set())
       setAvailableRoomsError(null)
       setAvailableRoomsLoading(false)
       return
     }
     if (!bookingForm.date || !bookingForm.startTime || !bookingForm.endTime) {
       setAvailableRooms([])
-      setAllRooms([])
-      setBookedRoomIds(new Set())
       setAvailableRoomsLoading(false)
       return
     }
@@ -2005,54 +1946,30 @@ const getReturnDateUpperBound = (start: Date | null) => {
     setAvailableRoomsLoading(true)
     setAvailableRoomsError(null)
     try {
-      // Fetch all rooms (not filtered by availability)
-      const allRoomsParams = new URLSearchParams({
-        limit: '200',
-      })
-      const allRoomsResponse = await fetch(`/api/rooms?${allRoomsParams.toString()}`, { cache: 'no-store' })
-      const allRoomsJson = await allRoomsResponse.json()
-      if (!allRoomsResponse.ok || allRoomsJson.success === false) {
-        throw new Error(allRoomsJson.error || 'Failed to load rooms')
-      }
-      const allRoomsData: Room[] = allRoomsJson.data ?? []
-      setAllRooms(allRoomsData)
-      
-      // Update rooms lookup
-      setRoomsLookup((prev) => {
-        const next = { ...prev }
-        allRoomsData.forEach((room) => {
-          next[room.id] = room
-        })
-        return next
-      })
-
-      // Fetch available rooms (filtered - excludes booked rooms)
-      const availableParams = new URLSearchParams({
+      const params = new URLSearchParams({
         limit: '200',
         bookingDate: bookingForm.date,
         startTime: bookingForm.startTime,
         endTime: bookingForm.endTime,
         isAvailable: 'true',
       })
-      const availableResponse = await fetch(`/api/rooms?${availableParams.toString()}`, { cache: 'no-store' })
-      const availableJson = await availableResponse.json()
-      if (!availableResponse.ok || availableJson.success === false) {
-        throw new Error(availableJson.error || 'Failed to load available rooms')
+      const response = await fetch(`/api/rooms?${params.toString()}`, { cache: 'no-store' })
+      const json = await response.json()
+      if (!response.ok || json.success === false) {
+        throw new Error(json.error || 'Failed to load available rooms')
       }
-      const availableRoomsData: Room[] = availableJson.data ?? []
-      setAvailableRooms(availableRoomsData)
-
-      // Calculate booked room IDs: rooms in allRooms but NOT in availableRooms
-      const availableRoomIds = new Set(availableRoomsData.map((room) => room.id))
-      const bookedIds = new Set<string>(
-        allRoomsData.filter((room) => !availableRoomIds.has(room.id)).map((room) => room.id)
-      )
-      setBookedRoomIds(bookedIds)
+      const records: Room[] = json.data ?? []
+      setAvailableRooms(records)
+      setRoomsLookup((prev) => {
+        const next = { ...prev }
+        records.forEach((room) => {
+          next[room.id] = room
+        })
+        return next
+      })
     } catch (error) {
       setAvailableRooms([])
-      setAllRooms([])
-      setBookedRoomIds(new Set())
-      setAvailableRoomsError(error instanceof Error ? error.message : 'Unable to load rooms')
+      setAvailableRoomsError(error instanceof Error ? error.message : 'Unable to load available rooms')
     } finally {
       setAvailableRoomsLoading(false)
     }
@@ -2078,10 +1995,8 @@ const getReturnDateUpperBound = (start: Date | null) => {
   }, [roomsLookup])
 
   useEffect(() => {
-    roomBookingsRef.current = roomBookings
-    // Skip event dispatch to prevent loop - this is just syncing state to storage
-    persistRoomBookingsToStorage(roomBookings, true)
-  }, [roomBookings]) // persistRoomBookingsToStorage is now stable
+    persistRoomBookingsToStorage(roomBookings)
+  }, [roomBookings, persistRoomBookingsToStorage])
 
 
   useEffect(() => {
@@ -2116,118 +2031,35 @@ const getReturnDateUpperBound = (start: Date | null) => {
   }, [userIdentifier])
 
   useEffect(() => {
-    if (typeof window === "undefined" || !user || !employeeRecord) return
+    if (typeof window === "undefined") return
 
-    let isMounted = true
-
-    const fetchBorrowRequests = async () => {
-      setBorrowRequestsLoading(true)
-      setBorrowRequestsError(null)
-
-      try {
-        // Get employee UUID or employee_id for filtering
-        const borrowerIdentifier = employeeRecord?.id || employeeRecord?.employee_id || user?.employeeId || user?.id
-        
-        if (!borrowerIdentifier) {
-          console.warn("[Borrow Requests] No borrower identifier available")
-          setBorrowRequestsState([])
-          setBorrowRequestsLoading(false)
-          return
-        }
-
-        // Build query parameters for pending borrow requests
-        const params = new URLSearchParams()
-        params.set("borrowedBy", borrowerIdentifier)
-        params.set("isBorrowed", "false")
-        params.set("limit", "50")
-
-        const response = await fetch(`/api/borrows?${params.toString()}`)
-        const json = await response.json()
-
-        if (!isMounted) return
-
-        if (!response.ok || !json.success) {
-          throw new Error(json.error || "Failed to fetch borrow requests")
-        }
-
-        // Map API response to BorrowRequestRecord format
-        const mappedRequests: BorrowRequestRecord[] = (json.data || [])
-          .filter((borrow: any) => {
-            // Only include pending borrows (not approved, not returned)
-            const status = (borrow.status || "").toLowerCase()
-            const isPending = status.includes("pending") || 
-                             (!borrow.approved_at && !borrow.returned_at && borrow.is_borrowed === false)
-            return isPending
-          })
-          .map((borrow: any) => {
-            // Get device info from related data or fallback
-            const device = borrow.devices || {}
-            const employee = borrow.employees || {}
-            
-            return {
-              id: borrow.borrow_id || borrow.id || "",
-              employeeName: employee.name || user?.name || "Employee",
-              employeeId: employee.employee_id || user?.employeeId || "",
-              deviceName: device.model || device.brand || device.device_type || "Device",
-              assetTag: device.asset_tag || "",
-              borrowDate: borrow.borrow_date || new Date().toISOString(),
-              purpose: borrow.notes || "",
-              status: borrow.status || borrow.approval_status || "Pending",
-            }
-          })
-
-        setBorrowRequestsState(mappedRequests)
-      } catch (error) {
-        console.error("[Borrow Requests] Failed to fetch from API:", error)
-        if (isMounted) {
-          setBorrowRequestsError(error instanceof Error ? error.message : "Failed to fetch borrow requests")
-          // Fallback to localStorage if API fails
+    const loadBorrowRequests = () => {
       try {
         const stored = JSON.parse(localStorage.getItem("borrowRequests") || "[]") as BorrowRequestRecord[]
         setBorrowRequestsState(stored)
-          } catch (storageError) {
-            console.error("[Borrow Requests] Failed to load from localStorage:", storageError)
+      } catch (error) {
+        console.error("Failed to load borrow requests", error)
         setBorrowRequestsState([])
       }
     }
-      } finally {
-        if (isMounted) {
-          setBorrowRequestsLoading(false)
-        }
-      }
-    }
 
-    fetchBorrowRequests()
-
-    // Also listen to localStorage updates for backward compatibility
     const handleStorage = (event: StorageEvent) => {
       if (event.key === "borrowRequests") {
-        try {
-          const stored = JSON.parse(localStorage.getItem("borrowRequests") || "[]") as BorrowRequestRecord[]
-          if (isMounted) {
-            setBorrowRequestsState(stored)
-          }
-        } catch (error) {
-          console.error("Failed to load borrow requests from storage", error)
-        }
+        loadBorrowRequests()
       }
     }
 
-    const handleCustom = () => {
-      if (isMounted) {
-        fetchBorrowRequests()
-      }
-    }
+    const handleCustom = (() => loadBorrowRequests()) as EventListener
 
+    loadBorrowRequests()
     window.addEventListener("storage", handleStorage)
     window.addEventListener(BORROW_REQUESTS_UPDATED_EVENT, handleCustom)
 
     return () => {
-      isMounted = false
       window.removeEventListener("storage", handleStorage)
       window.removeEventListener(BORROW_REQUESTS_UPDATED_EVENT, handleCustom)
     }
-  }, [user, employeeRecord])
+  }, [])
 
   // Fetch employee record to get employee UUID for assigned devices queries
   useEffect(() => {
@@ -2294,6 +2126,11 @@ const getReturnDateUpperBound = (start: Date | null) => {
 
   useEffect(() => {
     if (!user) return
+
+    const now = new Date()
+    const isoDate = now.toISOString().split("T")[0]
+    const isoDateTime = now.toISOString()
+    setBorrowForm((prev) => ({ ...prev, date: isoDate, dateTime: isoDateTime }))
 
     refreshDashboardData()
   }, [user, refreshDashboardData])
@@ -2362,55 +2199,15 @@ const getReturnDateUpperBound = (start: Date | null) => {
     fetchRoomBookings()
   }, [fetchRoomBookings])
 
-  // Listen for room bookings updates from other pages (e.g., check-in from bookings page)
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    if (!userIdentifier) return // Don't set up listener if user not identified
-
-    const handleRoomBookingsUpdate = () => {
-      // Clear localStorage cache and refresh room bookings
-      // Only refresh if userIdentifier is available and component is mounted
-      if (!userIdentifier) {
-        console.warn('[handleRoomBookingsUpdate] Skipping refresh - userIdentifier not available')
-        return
-      }
-      
-      try {
-        window.localStorage.removeItem(ROOM_BOOKINGS_STORAGE_KEY)
-        // Use setTimeout to ensure this runs after any pending state updates
-        // and give the server time to process the previous request
-        setTimeout(() => {
-          if (userIdentifier) {
-            fetchRoomBookings().catch((err) => {
-              console.error('[handleRoomBookingsUpdate] Error refreshing bookings:', err)
-            })
-          }
-        }, 200)
-      } catch (error) {
-        console.error('[handleRoomBookingsUpdate] Error in handler:', error)
-      }
-    }
-
-    window.addEventListener(ROOM_BOOKINGS_UPDATED_EVENT, handleRoomBookingsUpdate)
-
-    return () => {
-      window.removeEventListener(ROOM_BOOKINGS_UPDATED_EVENT, handleRoomBookingsUpdate)
-    }
-  }, [fetchRoomBookings, userIdentifier])
-
   // Auto-update meeting statuses: "Missed" if past end time without check-in, "Awaiting" during meeting without check-in
   useEffect(() => {
-    if (!userIdentifier) return
+    if (!userIdentifier || roomBookings.length === 0) return
 
     const updateStatuses = async () => {
-      // Use ref to get the latest bookings without causing effect re-runs
-      const currentBookings = roomBookingsRef.current
-      if (currentBookings.length === 0) return
-
       const now = new Date()
       const updates: Array<{ id: string; status: string }> = []
 
-      for (const booking of currentBookings) {
+      for (const booking of roomBookings) {
         if (!booking.employeeId || booking.employeeId !== userIdentifier) continue
         if (booking.checkedInAt) continue // Already checked in
 
@@ -2451,12 +2248,11 @@ const getReturnDateUpperBound = (start: Date | null) => {
       }
     }
 
-    // Initial check
     updateStatuses()
     // Check every minute for status updates
     const interval = setInterval(updateStatuses, 60000)
     return () => clearInterval(interval)
-  }, [userIdentifier, fetchRoomBookings])
+  }, [roomBookings, userIdentifier, fetchRoomBookings])
 
   useEffect(() => {
     if (!bookRoomOpen) return
@@ -2777,7 +2573,7 @@ const getReturnDateUpperBound = (start: Date | null) => {
   }, [availableDeviceData, deviceData])
 
   const deviceAvailabilityPanel = useMemo(() => {
-    // Show all devices (excluding soft-deleted, handled by API/service), filtered by search term
+    // Show ALL devices from the database, filtered by search term
     if (deviceData.length === 0) return []
     
     if (!deviceAvailabilitySearch.trim()) {
@@ -2891,15 +2687,10 @@ const getReturnDateUpperBound = (start: Date | null) => {
   const borrowDeviceOptions = useMemo(
     () =>
       availableBorrowDevices.filter((device) => {
-        if (!borrowType) return true
-        return toTitleCase(device.device_type) === borrowType
+        if (!borrowForm.type) return true
+        return toTitleCase(device.device_type) === borrowForm.type
       }),
-    [availableBorrowDevices, borrowType]
-  )
-
-  const selectedBorrowDevice = useMemo(
-    () => availableBorrowDevices.find((device) => device.id === borrowId),
-    [availableBorrowDevices, borrowId]
+    [availableBorrowDevices, borrowForm.type]
   )
 
   const summaryRoomName = useMemo(() => {
@@ -2909,84 +2700,47 @@ const getReturnDateUpperBound = (start: Date | null) => {
     return roomsLookup[roomId]?.room_name ?? roomId
   }, [bookingSummaryData, roomsLookup])
 
-  // Helper function to format booking time range
-  const formatBookingTimeRange = useCallback((booking: DashboardRoomBooking | null | undefined) => {
-    if (!booking) return "—"
-    const startLabel = booking.startTime || ""
-    const endLabel = booking.endTime || ""
-    if (!startLabel && !endLabel) return "—"
-    if (!endLabel) return startLabel
-    if (!startLabel) return endLabel
-    return `${startLabel} - ${endLabel}`
-  }, [])
-
-  // Check-in dialog variables
-  const checkInRoomName = useMemo(() => {
-    if (!pendingCheckInCandidate) return "—"
-    const booking = pendingCheckInCandidate.booking
-    const roomId = booking.roomId ?? booking.room ?? ""
-    if (!roomId) return booking.room || booking.roomLabel || "—"
-    return roomsLookup[roomId]?.room_name ?? booking.room ?? booking.roomLabel ?? roomId
-  }, [pendingCheckInCandidate, roomsLookup])
-
-  const checkInDate = useMemo(() => {
-    if (!pendingCheckInCandidate) return "—"
-    return pendingCheckInCandidate.booking.date ?? pendingCheckInCandidate.booking.booking_date ?? "—"
-  }, [pendingCheckInCandidate])
-
-  const checkInTime = useMemo(() => {
-    if (!pendingCheckInCandidate) return "—"
-    return formatBookingTimeRange(pendingCheckInCandidate.booking)
-  }, [pendingCheckInCandidate, formatBookingTimeRange])
-
-  const checkInAgenda = useMemo(() => {
-    if (!pendingCheckInCandidate) return "Not provided"
-    const booking = pendingCheckInCandidate.booking
-    return booking.meetingAgenda || "Not provided"
-  }, [pendingCheckInCandidate])
-
   const reportableDevices = useMemo(
     () => deviceData.filter((device) => (device.status ?? "").toLowerCase() !== "borrowed"),
     [deviceData]
   )
 
   const scheduleLoading = assignmentsLoading || roomBookingsLoading
-  const borrowDialogReady = Boolean(borrowId && borrowDateIso && borrowReturnDate && borrowPurpose.trim() && !borrowDateError && !borrowReturnError)
+  const quickBorrowReady = Boolean(
+    borrowForm.type && borrowForm.name && borrowForm.date && borrowForm.returnDate && borrowForm.purpose.trim()
+  )
   const quickMaintenanceReady = Boolean(
     maintenanceForm.deviceId && maintenanceForm.category && maintenanceForm.priority && maintenanceForm.description
   )
 
-  const deriveDeviceAvailabilityStatus = useCallback((device: DeviceRecord): 'Available' | 'Assigned' | 'Borrowed' | 'Maintenance' => {
-    // Status derivation based on real database fields
-    // Priority: Borrowed > Maintenance > Assigned > Available
+  const deriveDeviceAvailabilityStatus = useCallback((device: DeviceRecord): 'Available' | 'Pending Borrow' | 'Borrowed' | 'Maintenance' => {
+    // CRITICAL: Trust the API-provided status as it's calculated from actual borrow records
+    const statusChunk = `${device.status ?? ''}`.toLowerCase()
+    const assignmentChunk = `${device.assignment_status ?? ''}`.toLowerCase()
     
-    const statusLower = (device.status ?? '').toLowerCase()
-    
-    // 1. Check for Borrowed status (device has active borrow record)
-    // The API already sets status to 'borrowed' if there's an active borrow
-    if (statusLower === 'borrowed') {
-      return 'Borrowed'
-    }
-    
-    // 2. Check for Maintenance status (device is flagged as under maintenance)
-    // The API sets status to 'in_maintenance' for devices under maintenance
-    if (statusLower === 'in_maintenance' || statusLower.includes('maintenance')) {
+    // Check for maintenance status first
+    if (statusChunk.includes('maintenance') || statusChunk.includes('repair') || statusChunk.includes('service') || statusChunk === 'in_maintenance') {
       return 'Maintenance'
     }
     
-    // 3. Check for Assigned status (device is assigned to a user, not currently borrowed)
-    // Check the assigned_to field from the database
-    if (device.assigned_to && device.assigned_to.trim() !== '') {
-      return 'Assigned'
+    // Only mark as Borrowed if status explicitly indicates borrowing AND we have evidence of active borrow
+    // Don't default to Borrowed - default to Available if uncertain
+    if (statusChunk === 'borrowed' || statusChunk === 'assigned') {
+      // Double-check: if status is 'assigned' but no active borrow indicators, it might be stale
+      return 'Borrowed'
     }
     
-    // 4. Default to Available (device is not assigned, not borrowed, not under maintenance)
+    if (statusChunk.includes('pending') || assignmentChunk.includes('pending') || statusChunk === 'pending borrow') {
+      return 'Pending Borrow'
+    }
+    
+    // Default to Available - don't assume Borrowed
     return 'Available'
   }, [])
 
-  const getAvailabilityTone = useCallback((status: 'Available' | 'Assigned' | 'Borrowed' | 'Maintenance') => {
+  const getAvailabilityTone = useCallback((status: 'Available' | 'Pending Borrow' | 'Borrowed' | 'Maintenance') => {
     switch (status) {
-      case 'Assigned':
+      case 'Pending Borrow':
         return 'text-white border-transparent'
       case 'Borrowed':
         return 'text-white border-transparent'
@@ -2997,12 +2751,12 @@ const getReturnDateUpperBound = (start: Date | null) => {
     }
   }, [])
   
-  const getAvailabilityBadgeColor = useCallback((status: 'Available' | 'Assigned' | 'Borrowed' | 'Maintenance') => {
+  const getAvailabilityBadgeColor = useCallback((status: 'Available' | 'Pending Borrow' | 'Borrowed' | 'Maintenance') => {
     switch (status) {
-      case 'Assigned':
-        return '#2563EB' // Blue for assigned devices
+      case 'Pending Borrow':
+        return '#2563EB'
       case 'Borrowed':
-        return '#BE1E2D' // Brand red for borrowed
+        return '#BE1E2D'
       case 'Maintenance':
         return '#BE1E2D' // Brand red for maintenance
       default:
@@ -3011,41 +2765,20 @@ const getReturnDateUpperBound = (start: Date | null) => {
   }, [])
 
   const getStatusBadgeColor = useCallback((status: string) => {
-    const statusLower = status.toLowerCase().trim().replace(/[–—]/g, '-')
-    
-    // Confirmed → Green
-    if (statusLower === "confirmed" || statusLower === "booked") return "#16A34A"
-    
-    // Attended → Green (same shade as confirmed)
-    if (statusLower === "attended") return "#16A34A"
-    
-    // Upcoming → Blue
+    const statusLower = status.toLowerCase().trim()
+    if (statusLower === "missed") return "#DC2626"
     if (statusLower === "upcoming") return "#2563EB"
-    
-    // Rescheduled → Orange
-    if (statusLower.includes("rescheduled")) return "#FF9800"
-    
-    // Cancelled → Red
-    if (statusLower.includes("cancelled") || statusLower.includes("canceled")) return "#DC2626"
-    
-    // Completed → Grey
-    if (statusLower === "completed") return "#6B7280"
-    
-    // In Progress – Confirmed → Blue-Green (teal)
-    if (statusLower.includes("in progress") && statusLower.includes("confirmed")) return "#14B8A6"
-    
-    // In Progress – Unconfirmed → Yellow
-    if (statusLower.includes("in progress") && statusLower.includes("unconfirmed")) return "#EAB308"
-    
-    // Missed → Dark Red
-    if (statusLower === "missed") return "#991B1B"
-    
-    // Pending → Orange/Amber
-    if (statusLower === "pending") return "#F59E0B"
-    
-    // Checked out → Purple
-    if (statusLower.includes("checked out") || statusLower === "checked-out") return "#92278F"
-    
+    if (statusLower === "checked-in") return "#6B7280"
+    if (statusLower === "in progress") return "#92278F"
+    if (statusLower === "in progress-awaiting check-in" || statusLower.includes("awaiting check-in")) {
+      return "#92278F"
+    }
+    if (statusLower === "attended") return "#16A34A"
+    if (statusLower === "rescheduled" || statusLower.includes("rescheduled")) return "#FF9800"
+    if (statusLower === "cancelled" || statusLower.includes("cancelled") || statusLower.includes("canceled")) return "#F44336"
+    if (statusLower === "confirmed" || statusLower === "booked") return "#2563EB"
+    if (statusLower === "pending") return "#25294B"
+    if (statusLower === "completed" || statusLower === "attended") return "#16A34A"
     return undefined
   }, [])
 
@@ -3114,85 +2847,11 @@ const getReturnDateUpperBound = (start: Date | null) => {
     setCheckInConfirmOpen(true)
   }
 
-  const handleConfirmCheckIn = async () => {
-    if (!pendingCheckInCandidate) return
-    setCheckInSubmitting(true)
-    try {
-      const target = pendingCheckInCandidate
-      const now = new Date()
-
-      if (now > target.endDate) {
-        toast({
-          variant: 'destructive',
-          title: 'Meeting ended',
-          description: 'This meeting has already ended.',
-        })
-        setCheckInConfirmOpen(false)
-        return
-      }
-
-      // Check if meeting has started
-      const meetingHasStarted = now >= target.startDate
-
-      // First check in
-      const checkInResponse = await fetch("/api/room-bookings/check-in", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ booking_id: target.booking.id || target.booking.booking_id }),
-      })
-      const checkInJson = await checkInResponse.json().catch(() => ({}))
-      if (!checkInResponse.ok || checkInJson.success === false) {
-        throw new Error(checkInJson?.error || "Failed to check in to this meeting.")
-      }
-
-      // Update status to "Confirmed" after check-in
-      const updateResponse = await fetch(`/api/room-bookings/${target.booking.id || target.booking.booking_id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "confirmed" }),
-      })
-      const updateJson = await updateResponse.json().catch(() => ({}))
-      if (!updateResponse.ok || updateJson.success === false) {
-        console.warn("Failed to update status to confirmed:", updateJson?.error)
-      }
-
-      // Reload bookings to get updated data
-      await fetchRoomBookings()
-
-      // Get the updated booking data
-      const updatedBooking = checkInJson.data?.booking || target.booking
-
-      // Notify dashboard to refresh room bookings (remove from meeting check-in section)
-      if (typeof window !== 'undefined') {
-        // Clear localStorage cache for room bookings so dashboard fetches fresh data
-        window.localStorage.removeItem(ROOM_BOOKINGS_STORAGE_KEY)
-        // Dispatch event to notify dashboard (if open) to refresh
-        window.dispatchEvent(new CustomEvent(ROOM_BOOKINGS_UPDATED_EVENT))
-      }
-
-      // Close confirmation dialog and show summary
-      setCheckInConfirmOpen(false)
-      // Ensure status is set to "Confirmed" in the booking object
-      const confirmedBooking = {
-        ...updatedBooking,
-        status: "confirmed",
-      }
-      setCheckInSummary({
-        booking: confirmedBooking,
-        timestamp: checkInJson.data?.check_in_time || checkInJson.data?.checked_in_at || new Date().toISOString(),
-      })
-      setCheckInSummaryMode("result")
-      setCheckInSummaryOpen(true)
-      setPendingCheckInCandidate(null)
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Unable to check in",
-        description: error instanceof Error ? error.message : "Please try again later.",
-      })
-    } finally {
-      setCheckInSubmitting(false)
+  const handleConfirmCheckIn = () => {
+    if (pendingCheckInCandidate) {
+      openCheckInSummaryPreview(pendingCheckInCandidate)
     }
+    setCheckInConfirmOpen(false)
   }
 
   const handleConfirmPostpone = () => {
@@ -3255,21 +2914,24 @@ const getReturnDateUpperBound = (start: Date | null) => {
         throw new Error(json.error || 'Failed to check in to meeting')
       }
 
-      // Update status to "Confirmed" after check-in
-      try {
-        const updateResponse = await fetch(`/api/room-bookings/${target.booking.id || target.booking.booking_id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ status: 'confirmed' }),
-        })
-        const updateJson = await updateResponse.json().catch(() => ({}))
-        if (!updateResponse.ok || updateJson.success === false) {
-          console.warn('Failed to update status to confirmed:', updateJson?.error)
+      // Only update status to "Attended" if meeting time has already passed
+      // If check-in is clicked before meeting start, don't change status
+      if (meetingHasStarted) {
+        try {
+          const updateResponse = await fetch(`/api/room-bookings/${target.booking.id || target.booking.booking_id}`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ status: 'attended' }),
+          })
+          const updateJson = await updateResponse.json().catch(() => ({}))
+          if (!updateResponse.ok || updateJson.success === false) {
+            console.warn('Failed to update status to attended:', updateJson?.error)
+          }
+        } catch (updateError) {
+          console.warn('Failed to update booking status:', updateError)
         }
-      } catch (updateError) {
-        console.warn('Failed to update booking status:', updateError)
       }
 
       // Calculate when to remove the toaster (10 minutes after meeting ends)
@@ -3319,7 +2981,7 @@ const getReturnDateUpperBound = (start: Date | null) => {
         startTime: checkedInBooking?.start_time || checkedInBooking?.startTime || target.booking.startTime,
         endTime: checkedInBooking?.end_time || checkedInBooking?.endTime || target.booking.endTime,
         time: checkedInBooking?.time || target.booking.time,
-        status: checkedInBooking?.status || target.booking.status || 'Confirmed',
+        status: checkedInBooking?.status || target.booking.status || 'Attended',
       }
 
       setCheckInSummary({
@@ -3587,18 +3249,9 @@ const getReturnDateUpperBound = (start: Date | null) => {
   const handleQuickActionClick = useCallback(
     async (key: string) => {
       switch (key) {
-        case 'borrow-device': {
+        case 'borrow-device':
           setBorrowDeviceOpen(true)
-          // Don't pre-fill borrow date - user must select it
-          setBorrowType("")
-          setBorrowId("")
-          setBorrowDate("")
-          setBorrowReturnDate("")
-          setBorrowPurpose("")
-          setBorrowDateError(null)
-          setBorrowReturnError(null)
           break
-        }
         case 'book-room': {
           setBookRoomOpen(true)
           const today = new Date().toISOString().split("T")[0]
@@ -3616,12 +3269,11 @@ const getReturnDateUpperBound = (start: Date | null) => {
         }
         case 'check-device-availability': {
           setDeviceAvailabilityOpen(true)
-          // Fetch all devices from the API and sync their statuses when opening the modal
-          // syncStatus=true will update device statuses in the database based on their actual state
+          // Fetch all devices from the API when opening the modal
           setDevicesLoading(true)
           setDevicesError(null)
           try {
-            const response = await fetch('/api/devices?syncStatus=true', {
+            const response = await fetch('/api/devices', {
               cache: 'no-store',
               headers: {
                 Accept: 'application/json',
@@ -3633,10 +3285,6 @@ const getReturnDateUpperBound = (start: Date | null) => {
             }
             if (Array.isArray(json.data)) {
               setDeviceData(json.data)
-              toast({
-                title: 'Device availability updated',
-                description: 'Device statuses have been synced with their current state.',
-              })
             } else {
               setDeviceData([])
             }
@@ -3722,103 +3370,131 @@ const getReturnDateUpperBound = (start: Date | null) => {
         {/* Employee Dashboard Enhancements */}
         {!isSupervisor && (
           <>
-            <div className="grid gap-4">
-              <Card className="rounded-xl border border-[#E5E7EB] bg-[#FFFFFF] shadow-sm">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-[#1F2937] font-semibold">Meeting Check-In</CardTitle>
-                  <CardDescription className="text-[#6B7280]">
-                    {activeCheckInBooking ? "Upcoming meeting" : "No meetings scheduled for today."}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4 text-sm text-[#1F2937]">
-                  {roomBookingsLoading ? (
-                    <div className="flex items-center justify-center py-8">
-                      <div className="flex flex-col items-center gap-2">
-                        <Loader2 className="h-6 w-6 animate-spin text-[#6B7280]" />
-                        <p className="text-xs text-[#6B7280]">Loading meetings...</p>
-                      </div>
-                    </div>
-                  ) : !activeCheckInBooking || checkInCandidates.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-8 text-center space-y-2">
-                      <p className="text-sm font-semibold text-[#1F2937]">No upcoming meetings</p>
-                      <p className="text-xs text-[#6B7280]">You don't have any meetings scheduled for today.</p>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-4 space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 space-y-1.5">
-                            <p className="text-base font-semibold text-[#1F2937]">
-                              {activeCheckInBooking.booking.meetingAgenda || "Room booking"}
-                            </p>
-                            <p className="text-sm text-[#6B7280]">
-                              {activeCheckInBooking.booking.meetingCategory || "Internal"}
-                            </p>
-                            <p className="text-sm text-[#6B7280]">
-                              Room: {activeCheckInBooking.booking.room || activeCheckInBooking.booking.roomLabel || "Room TBD"} ·{" "}
-                              {activeCheckInBooking.startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} -{" "}
-                              {activeCheckInBooking.endDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </p>
-                            <p className="text-sm text-[#6B7280]">
-                              {activeCheckInBooking.isInProgress
-                                ? `In progress · ends at ${activeCheckInBooking.endDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                                : (() => {
-                                    const minutes = Math.max(activeCheckInBooking.minutes ?? 0, 0)
-                                    const hours = Math.floor(minutes / 60)
-                                    const mins = minutes % 60
-                                    const parts = []
-                                    if (hours > 0) parts.push(`${hours}h`)
-                                    parts.push(`${mins}m`)
-                                    return `Starts in ${parts.join(" ")}`
-                                  })()}
+            {/* Upcoming Events */}
+            <Card className="hover:shadow-lg transition-shadow border border-[#808285]/20 bg-gradient-to-br from-white via-[#92278F]/6 to-[#BE1E2D]/10">
+          <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-[#25294B]">
+                  <CalendarIcon className="h-5 w-5 text-[#92278F]" />
+                  Upcoming events
+                </CardTitle>
+                <CardDescription className="text-[#58595B]">
+                  Bookings, returns, approvals, and maintenance
+                </CardDescription>
+          </CardHeader>
+          <CardContent>
+                {scheduleLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading your timeline…</p>
+                ) : scheduleItems.length > 0 ? (
+                  <div className="space-y-3">
+                    {scheduleItems.map((item) => {
+                      const Icon = scheduleIconMap[item.category]
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-3 rounded-lg border border-[#808285]/20 bg-white/80 p-3 transition-colors hover:bg-gradient-to-r hover:from-[#92278F]/5 hover:to-[#BE1E2D]/5"
+                        >
+                          <Icon className="h-5 w-5 text-[#92278F]" />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-[#25294B]">{item.title}</p>
+                            <p className="text-xs text-[#6B6E8A]">
+                              {item.details} · {formatRelativeTime(item.date)}
                             </p>
                           </div>
-                          <Badge
-                            variant="outline"
-                            className="text-xs font-medium border-[#E5E7EB] bg-[#F9FAFB] text-[#6B7280]"
-                          >
-                            Upcoming
+                          <Badge variant="outline" className="text-xs">
+                            {item.date.toLocaleDateString()}
                           </Badge>
                         </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No upcoming events yet.</p>
+                )}
+                {scheduleError && (
+                  <p className="mt-3 text-xs text-destructive">{scheduleError}</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Meeting Check-In */}
+            <div className="grid gap-4">
+              <Card className="border border-[#808285]/20 bg-gradient-to-br from-white via-[#dfeaff] to-[#f5ecff]">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-[#25294B]">
+                    <CalendarIcon className="h-5 w-5 text-[#92278F]" />
+                    Meeting Check-In
+                  </CardTitle>
+                  <CardDescription className="text-[#58595B]">
+                    {activeCheckInBooking
+                      ? `Starts in ${activeCheckInBooking.minutes ?? 0} min · ${
+                          activeCheckInBooking.booking.room || "Room TBD"
+                        }`
+                      : "No upcoming meetings within the next hour."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm text-[#25294B]">
+                  {activeCheckInBooking ? (
+                    <>
+                      <div className="flex items-center justify-between rounded-lg border border-[#E4E4E7] bg-white px-3 py-2">
+                        <div>
+                          <p className="font-semibold">
+                            {activeCheckInBooking.booking.meetingAgenda || "Room booking"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {activeCheckInBooking.startDate.toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}{" "}
+                            • {activeCheckInBooking.booking.meetingCategory || "Internal"}
+                          </p>
+                          <p className="text-xs font-semibold text-[#A0AEC0]">
+                            Status: {getBookingStatusLabel(activeCheckInBooking.booking)}
+                          </p>
+                        </div>
+                        <Badge variant="secondary" className="text-xs text-[#25294B]">
+                          {getBookingStatusLabel(activeCheckInBooking.booking)}
+                        </Badge>
                       </div>
-                      <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-[#E5E7EB]">
-                        <Button
-                          type="button"
-                          className="flex-1 min-w-[140px] h-10 rounded-md bg-gradient-to-r from-[#8B2A6C] to-[#B02A5C] text-white shadow-sm hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                          onClick={() => handleOpenCheckInConfirm(activeCheckInBooking)}
-                          disabled={checkInLoading || !activeCheckInBooking}
-                        >
-                          {checkInLoading ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Checking in...
-                            </>
-                          ) : (
-                            "Check In"
-                          )}
-                        </Button>
-                        <Button
-                          type="button"
-                          className="flex-1 min-w-[140px] h-10 rounded-md border border-[#E5E7EB] bg-[#F9FAFB] text-[#1F2937] shadow-sm hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
-                          onClick={() => handleQuickPostpone(activeCheckInBooking)}
-                          disabled={isPostponing || !activeCheckInBooking}
-                          variant="outline"
-                        >
-                          {isPostponing ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#6B7280]" />
-                              Postponing...
-                            </>
-                          ) : (
-                            "Postpone"
-                          )}
-                        </Button>
-                      </div>
+                      <Button
+                        className="w-full bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+                        onClick={() => handleOpenCheckInConfirm(activeCheckInBooking)}
+                        disabled={checkInLoading}
+                      >
+                        {checkInLoading ? "Checking in…" : "Check-In"}
+                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Checking in logs the current time and marks the meeting as attended.
+                      </p>
                     </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      You’ll be able to check in when you have a meeting within the next hour.
+                    </p>
                   )}
                 </CardContent>
               </Card>
             </div>
+
+            {/* Admin View */}
+            {(user.role === "hr_manager" || user.role === "super_admin") && (
+              <>
+                <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between pb-2">
+                      <CardTitle className="text-sm font-medium">Total Assets</CardTitle>
+                      <Building2 className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold text-navy">1,247</div>
+                      <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                        <ArrowRight className="h-3 w-3" />
+                        +12 this month
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </>
+            )}
 
           </>
         )}
@@ -4014,21 +3690,9 @@ const getReturnDateUpperBound = (start: Date | null) => {
         </UIDialog>
       )}
 
-      {/* Book a Device Modal - Matching device management page */}
+      {/* Book a Device Modal */}
       {!isSupervisor && (
-        <UIDialog open={borrowDeviceOpen} onOpenChange={(open) => {
-          setBorrowDeviceOpen(open)
-          if (!open) {
-            // Reset form when dialog closes
-            setBorrowType("")
-            setBorrowId("")
-            setBorrowDate("")
-            setBorrowReturnDate("")
-            setBorrowPurpose("")
-            setBorrowDateError(null)
-            setBorrowReturnError(null)
-          }
-        }}>
+        <UIDialog open={borrowDeviceOpen} onOpenChange={setBorrowDeviceOpen}>
           <UIDialogContent className="sm:max-w-lg space-y-4">
             <UIDialogHeader className="rounded-lg bg-white/80 p-4 shadow-sm space-y-1">
               <UIDialogTitle>Book a Device</UIDialogTitle>
@@ -4038,19 +3702,12 @@ const getReturnDateUpperBound = (start: Date | null) => {
               <div className="space-y-2">
                 <Label>Device Type</Label>
                 <Select
-                  value={borrowType}
-                  onValueChange={(value) => {
-                    setBorrowType(value)
-                    setBorrowId("")
-                  }}
+                  value={borrowForm.type}
+                  onValueChange={(v) => setBorrowForm({ ...borrowForm, type: v, name: '' })}
                   disabled={borrowDeviceTypeOptions.length === 0}
                 >
                   <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        borrowDeviceTypeOptions.length === 0 ? "No available types" : "Select device type"
-                      }
-                    />
+                    <SelectValue placeholder={borrowDeviceTypeOptions.length === 0 ? "No available types" : "Select device type"} />
                   </SelectTrigger>
                   <SelectContent>
                     {borrowDeviceTypeOptions.map((type) => (
@@ -4062,132 +3719,101 @@ const getReturnDateUpperBound = (start: Date | null) => {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Device</Label>
+                <Label>Device Name</Label>
                 <Select
-                  value={borrowId}
-                  onValueChange={(value) => {
-                    const selected = deviceData.find((device) => device.id === value)
-                    if (!selected) {
-                      toast({
-                        variant: "destructive",
-                        title: "Device not found",
-                        description: "Selected device is no longer available.",
-                      })
-                      return
-                    }
-                    const deviceStatus = deriveDeviceAvailabilityStatus(selected)
-                    if (deviceStatus !== 'Available') {
-                      toast({
-                        variant: "destructive",
-                        title: "Device not available",
-                        description: `This device is not available for assignment. Current status: ${deviceStatus}`,
-                      })
-                      return
-                    }
-                    setBorrowId(value)
-                    setBorrowType(selected ? toTitleCase(selected.device_type ?? undefined) : borrowType)
-                  }}
+                  value={borrowForm.name}
+                  onValueChange={(v) => setBorrowForm({ ...borrowForm, name: v })}
                   disabled={borrowDeviceOptions.length === 0}
                 >
                   <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        borrowDeviceOptions.length === 0
-                          ? borrowType
-                            ? "No devices for this type"
-                            : "Select a device type first"
-                          : "Select device"
-                      }
-                    />
+                    <SelectValue placeholder={borrowDeviceOptions.length === 0 ? "Select a device type first" : "Select device"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {borrowDeviceOptions
-                      .filter((device) => device.id) // Filter out devices without id
-                      .map((device) => {
-                        const label = device.model || device.brand || toTitleCase(device.device_type ?? undefined) || "Device"
-                        const tag = device.asset_tag || device.serial_number || device.id || "Unknown"
-                        const deviceStatus = deriveDeviceAvailabilityStatus(device)
-                        const isAvailable = deviceStatus === 'Available'
-                        return (
-                          <SelectItem 
-                            key={device.id} 
-                            value={device.id!}
-                            disabled={!isAvailable}
-                            className={!isAvailable ? "opacity-50 cursor-not-allowed" : ""}
-                          >
-                            {label} ({tag}){!isAvailable ? ` - ${deviceStatus}` : ''}
-                          </SelectItem>
-                        )
-                      })}
+                    {borrowDeviceOptions.map((device) => {
+                      const identifier = getDeviceIdentifier(device)
+                      const awaitingApproval = isAwaitingBorrowApproval(device.status, device.assignment_status)
+                      const deviceName = device.model || device.brand || toTitleCase(device.device_type)
+                      const label = `${identifier} • ${deviceName}${awaitingApproval ? ' • Awaiting approval' : ''}`
+                      return (
+                        <SelectItem key={identifier} value={identifier}>
+                          {label}
+                        </SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="rounded-lg border border-dashed border-muted/70 px-3 py-2 text-xs text-muted-foreground">
-                <div className="flex items-center justify-between">
-                  <span>Identifier</span>
-                  <span className="font-medium text-[#25294B]">
-                    {selectedBorrowDevice?.asset_tag ||
-                      selectedBorrowDevice?.serial_number ||
-                      (borrowId ? "Fetching details..." : "—")}
-                  </span>
+              <div className="space-y-2">
+                <Label>Identifier</Label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Enter device ID, asset tag, or serial number"
+                    value={borrowForm.identifier}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, identifier: e.target.value })}
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter' && borrowForm.identifier.trim()) {
+                        await handleIdentifierSearch(borrowForm.identifier.trim())
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handleIdentifierSearch(borrowForm.identifier.trim())}
+                    disabled={identifierSearchLoading || !borrowForm.identifier.trim()}
+                  >
+                    {identifierSearchLoading ? "Searching..." : "Search"}
+                  </Button>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Uses getDeviceByIdentifier from devices-service.ts (searches by device_id, asset_tag, or serial_number)
+                </p>
+                {identifierSearchResult && (
+                  <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-sm">
+                    <p className="font-medium text-green-800">Device Found:</p>
+                    <p className="text-green-700">
+                      {identifierSearchResult.asset_tag || identifierSearchResult.serial_number} • {identifierSearchResult.model || identifierSearchResult.brand || identifierSearchResult.device_type}
+                    </p>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
                   <Label>Borrow Date</Label>
                   <Input
                     type="date"
-                    min={todayIsoDate}
-                    value={borrowDateIso}
-                    onChange={(e) => handleBorrowDateChange(e.target.value)}
-                    aria-invalid={Boolean(borrowDateError) || undefined}
-                    className={`text-sm ${borrowDateError ? "border-destructive focus-visible:ring-destructive/40" : ""}`}
+                    value={borrowForm.date}
+                    readOnly
+                    disabled
+                    className="bg-muted/60 text-muted-foreground cursor-not-allowed"
                   />
-                  {borrowDateError ? (
-                    <p className="text-xs text-destructive">{borrowDateError}</p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Select a date (weekdays only, today or future).</p>
-                  )}
+                  <p className="text-xs text-muted-foreground">Borrow date is captured automatically.</p>
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <Label>Return Date</Label>
                   <Input
                     type="date"
-                    min={borrowDateIso || todayIsoDate}
+                    min={borrowForm.date || todayIso}
                     max={borrowReturnLimitIso}
-                    value={borrowReturnDate}
+                    value={borrowForm.returnDate}
                     onChange={(e) => handleBorrowReturnDateChange(e.target.value)}
-                    disabled={!borrowDateIso}
-                    aria-invalid={Boolean(borrowReturnError) || undefined}
-                    className={`text-sm ${borrowReturnError ? "border-destructive focus-visible:ring-destructive/40" : ""}`}
                   />
-                  {borrowReturnError ? (
-                    <p className="text-xs text-destructive">{borrowReturnError}</p>
-                  ) : (
-                    borrowReturnLimitIso && (
-                      <p className="text-[11px] text-muted-foreground">
-                        Return within {MAX_BORROW_DURATION_DAYS} days ({borrowReturnLimitIso} latest).
-                      </p>
-                    )
-                  )}
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Purpose</Label>
-                <Textarea rows={3} placeholder="Provide a brief purpose for borrowing" value={borrowPurpose} onChange={(e) => setBorrowPurpose(e.target.value)} />
+                <Textarea value={borrowForm.purpose} onChange={(e) => setBorrowForm({ ...borrowForm, purpose: e.target.value })} placeholder="Reason for borrowing..." rows={3} />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-end gap-2">
                 <DialogClose asChild>
-                  <Button variant="outline" className="w-40">
-                    Cancel
-                  </Button>
+                  <Button variant="outline">Cancel</Button>
                 </DialogClose>
-                <Button
-                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white w-40 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={submitBorrow}
-                  disabled={!borrowDialogReady || borrowSubmitting}
+                <Button 
+                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+                  onClick={handleQuickBorrowSubmit}
+                  disabled={!quickBorrowReady}
                 >
-                  {borrowSubmitting ? "Submitting…" : "Submit Request"}
+                  Book a Device
                 </Button>
               </div>
             </div>
@@ -4195,75 +3821,89 @@ const getReturnDateUpperBound = (start: Date | null) => {
         </UIDialog>
       )}
 
-      {/* Quick Borrow Summary - Matching device management page */}
+      {/* Quick Borrow Summary */}
       <UIDialog
         open={quickBorrowSummaryOpen}
         onOpenChange={(open) => {
           setQuickBorrowSummaryOpen(open)
           if (!open) {
+            if (quickBorrowSummaryMode === "preview") {
+              setBorrowDeviceOpen(true)
+            }
+            setQuickBorrowSummaryMode(null)
+            setPendingQuickBorrow(null)
             setQuickBorrowReceipt(null)
           }
         }}
       >
-        <UIDialogContent className="sm:max-w-lg space-y-4 rounded-xl">
-          <UIDialogHeader className="space-y-1 rounded-lg bg-white/80 p-4 shadow-sm border-b border-[#E4E4E7]">
+        <UIDialogContent className="sm:max-w-lg space-y-4">
+          <UIDialogHeader className="space-y-1">
             <UIDialogTitle>Borrow Summary</UIDialogTitle>
             <DialogDescription>Quick confirmation of your borrow request.</DialogDescription>
           </UIDialogHeader>
-          <div className="space-y-3 text-sm px-4">
-            <div className="flex justify-between">
-              <span className="text-[#58595B]">Device:</span>
-              <span className="font-medium text-[#25294B]">{quickBorrowReceipt?.deviceName ?? '—'}</span>
+          <div className="space-y-3 text-sm text-[#1F2937] rounded-lg bg-white p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Device</span>
+              <span className="font-medium">{quickBorrowReceipt?.deviceName ?? '—'}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-[#58595B]">Type:</span>
-              <span className="font-medium text-[#25294B]">{quickBorrowReceipt?.deviceType ?? '—'}</span>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Type</span>
+              <span className="font-medium">{quickBorrowReceipt?.deviceType ?? '—'}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-[#58595B]">Asset Tag:</span>
-              <span className="font-medium text-[#25294B]">{quickBorrowReceipt?.deviceId ?? '—'}</span>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Asset Tag</span>
+              <span className="font-medium">{quickBorrowReceipt?.deviceId ?? '—'}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-[#58595B]">Borrowed On:</span>
-              <span className="font-medium text-[#25294B]">
-                {quickBorrowReceipt ? new Date(quickBorrowReceipt.borrowDate).toLocaleDateString('en-US', {
-                  year: 'numeric',
-                  month: '2-digit',
-                  day: '2-digit'
-                }) : '—'}
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Borrowed On</span>
+              <span className="font-medium">
+                {quickBorrowReceipt ? new Date(quickBorrowReceipt.borrowDate).toLocaleString() : '—'}
               </span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-[#58595B]">Return Date:</span>
-              <span className="font-medium text-[#25294B]">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Return Date</span>
+              <span className="font-medium">
                 {quickBorrowReceipt?.expectedReturnDate
-                  ? new Date(quickBorrowReceipt.expectedReturnDate).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: '2-digit',
-                      day: '2-digit'
-                    })
+                  ? new Date(quickBorrowReceipt.expectedReturnDate).toLocaleDateString()
                   : '—'}
               </span>
             </div>
-            <div className="mt-3 pt-3 border-t border-[#808285]/20 flex items-center justify-between">
-              <span className="text-[#58595B] text-xs">Status</span>
-              <Badge 
-                variant="secondary" 
-                className="text-xs"
-                style={(() => {
-                  const status = quickBorrowReceipt?.status || "Pending"
-                  const color = getStatusBadgeColor(status)
-                  return color ? {
-                    backgroundColor: color,
-                    color: "white",
-                    borderColor: color,
-                  } : undefined
-                })()}
-              >
-                {quickBorrowReceipt?.status ? toTitleCase(quickBorrowReceipt.status) : "Pending"}
-              </Badge>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Status</span>
+              <span className="font-semibold text-[#111827]">{quickBorrowReceipt?.status ?? '—'}</span>
             </div>
           </div>
+          {quickBorrowSummaryMode === "result" && (
+            <p className="text-xs text-[#2563EB]">
+              Borrow request saved successfully. Track it from your borrow history.
+            </p>
+          )}
+          {quickBorrowSummaryMode === "preview" ? (
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setQuickBorrowSummaryOpen(false)}>
+                Back
+              </Button>
+              <Button
+                className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+                onClick={confirmQuickBorrow}
+                disabled={quickBorrowSubmitting}
+              >
+                {quickBorrowSubmitting ? 'Submitting…' : 'Confirm Borrow'}
+              </Button>
+            </div>
+          ) : (
+            <div className="flex justify-end">
+              <Button
+                className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+                onClick={() => {
+                  setQuickBorrowSummaryOpen(false)
+                  setQuickBorrowReceipt(null)
+                }}
+              >
+                Close
+              </Button>
+            </div>
+          )}
         </UIDialogContent>
       </UIDialog>
 
@@ -4412,52 +4052,25 @@ const getReturnDateUpperBound = (start: Date | null) => {
       </AlertDialog>
 
       {/* Check-In Confirmation */}
-      <Dialog
-        open={checkInConfirmOpen}
-        onOpenChange={(open) => {
-          setCheckInConfirmOpen(open)
-          if (!open) {
-            setPendingCheckInCandidate(null)
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md space-y-4">
-          <DialogHeader className="space-y-1">
-            <DialogTitle>Check in confirmation</DialogTitle>
-            <DialogDescription>Are you sure you want to check in?</DialogDescription>
-          </DialogHeader>
-          <div className="rounded-lg border border-[#E4E4E7] bg-white p-4 text-sm space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Room</span>
-              <span className="font-medium text-[#25294B]">{checkInRoomName}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Date</span>
-              <span className="font-medium text-[#25294B]">{checkInDate}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Time</span>
-              <span className="font-medium text-[#25294B]">{checkInTime}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Agenda</span>
-              <span className="font-medium text-[#25294B]">{checkInAgenda}</span>
-            </div>
-          </div>
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="outline" onClick={() => setCheckInConfirmOpen(false)} disabled={checkInSubmitting}>
-              Close
-            </Button>
-            <Button
-              className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white disabled:opacity-60"
+      <AlertDialog open={checkInConfirmOpen} onOpenChange={setCheckInConfirmOpen}>
+        <AlertDialogContent className="sm:max-w-md space-y-4">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Check-in confirmation</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark your meeting as attended.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-[#E5E7EB] text-[#1F2937] hover:bg-[#F9FAFB]">No</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-gradient-to-r from-[#8B2A6C] to-[#B02A5C] text-white hover:opacity-90"
               onClick={handleConfirmCheckIn}
-              disabled={checkInSubmitting || !pendingCheckInCandidate}
             >
-              {checkInSubmitting ? "Checking In…" : "Confirm"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+              Yes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Postpone Confirmation */}
       <AlertDialog open={postponeConfirmOpen} onOpenChange={setPostponeConfirmOpen}>
@@ -4647,18 +4260,8 @@ const getReturnDateUpperBound = (start: Date | null) => {
                 <Label>Room Selection</Label>
                 <Select
                   value={bookingForm.room}
-                  onValueChange={(v) => {
-                    if (bookedRoomIds.has(v)) {
-                      toast({
-                        variant: "destructive",
-                        title: "Room not available",
-                        description: "This room is already booked for the selected time.",
-                      })
-                      return
-                    }
-                    setBookingForm({ ...bookingForm, room: v })
-                  }}
-                  disabled={availableRoomsLoading || (allRooms.length === 0 && !availableRoomsLoading)}
+                  onValueChange={(v) => setBookingForm({ ...bookingForm, room: v })}
+                  disabled={availableRoomsLoading || (availableRooms.length === 0 && !availableRoomsLoading)}
                 >
                   <SelectTrigger className={bookingErrors.room ? "border-destructive focus-visible:ring-destructive/40" : undefined}>
                     <SelectValue placeholder="Choose a room" />
@@ -4669,25 +4272,17 @@ const getReturnDateUpperBound = (start: Date | null) => {
                         Loading rooms...
                       </SelectItem>
                     )}
-                    {!availableRoomsLoading && allRooms.length === 0 && (
+                    {!availableRoomsLoading && availableRooms.length === 0 && (
                       <SelectItem value="none" disabled>
-                        No rooms available
+                        No rooms available for this time range
                       </SelectItem>
                     )}
                     {!availableRoomsLoading &&
-                      allRooms.map((room) => {
-                        const isBooked = bookedRoomIds.has(room.id)
-                        return (
-                          <SelectItem 
-                            key={room.id} 
-                            value={room.id}
-                            disabled={isBooked}
-                            className={isBooked ? "opacity-50 cursor-not-allowed" : ""}
-                          >
-                            {room.room_name}{isBooked ? " (Booked)" : ""}
-                          </SelectItem>
-                        )
-                      })}
+                      availableRooms.map((room) => (
+                        <SelectItem key={room.id} value={room.id}>
+                          {room.room_name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
                 {bookingErrors.room && <p className="text-xs text-destructive mt-1">{bookingErrors.room}</p>}
@@ -4787,15 +4382,13 @@ const getReturnDateUpperBound = (start: Date | null) => {
               </div>
               <div className="flex justify-end gap-2">
                 <DialogClose asChild>
-                  <Button variant="outline" disabled={bookingSubmitting}>Cancel</Button>
+                  <Button variant="outline">Cancel</Button>
                 </DialogClose>
                 <Button
-                  type="button"
-                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
                   onClick={handleBookRoomSubmit}
-                  disabled={!bookingFormReady || bookingSubmitting}
                 >
-                  {bookingSubmitting ? "Booking..." : "Book Room"}
+                  Book Room
                 </Button>
               </div>
             </div>
@@ -4814,11 +4407,11 @@ const getReturnDateUpperBound = (start: Date | null) => {
           }}
         >
           <UIDialogContent className="sm:max-w-lg space-y-4 rounded-xl">
-              <UIDialogHeader className="space-y-1 rounded-lg bg-white/80 p-4 shadow-sm border-b border-[#E4E4E7]">
+              <UIDialogHeader className="space-y-1">
                 <UIDialogTitle>Booking Summary</UIDialogTitle>
                 <DialogDescription>Your room booking confirmation</DialogDescription>
               </UIDialogHeader>
-              <div className="space-y-3 text-sm px-4">
+              <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-[#58595B]">Room:</span>
                 <span className="font-medium text-[#25294B]">{summaryRoomName}</span>
@@ -4867,23 +4460,7 @@ const getReturnDateUpperBound = (start: Date | null) => {
                 </div>
                 <div className="mt-3 pt-3 border-t border-[#808285]/20 flex items-center justify-between">
                   <span className="text-[#58595B] text-xs">Status</span>
-                  <Badge 
-                    variant={bookingConflictDetected ? "destructive" : "secondary"} 
-                    className="text-xs"
-                    style={(() => {
-                      const status = bookingSummaryData?.status 
-                        ? bookingSummaryData.status 
-                        : bookingConflictDetected 
-                          ? "Pending" 
-                          : "Booked"
-                      const color = getStatusBadgeColor(status)
-                      return color ? {
-                        backgroundColor: color,
-                        color: "white",
-                        borderColor: color,
-                      } : undefined
-                    })()}
-                  >
+                  <Badge variant={bookingConflictDetected ? "destructive" : "secondary"} className="text-xs">
                   {bookingSummaryData?.status
                     ? toTitleCase(bookingSummaryData.status)
                     : bookingConflictDetected
@@ -4893,7 +4470,7 @@ const getReturnDateUpperBound = (start: Date | null) => {
                 </div>
               </div>
               {bookingSummaryMode === "result" && (
-                <p className="text-xs text-[#2563EB] px-4 pb-4">
+                <p className="text-xs text-[#2563EB]">
                   Booking saved successfully. You can track it from your bookings list.
                 </p>
               )}
@@ -5053,9 +4630,11 @@ const getReturnDateUpperBound = (start: Date | null) => {
               <span className="inline-flex items-center justify-center gap-1 rounded-full border border-[#808285]/30 bg-[#808285]/10 px-3 py-1 text-xs font-medium text-[#808285]">
                 Maintenance: {devicesLoading ? "—" : deviceAvailabilityPanel.filter((device) => deriveDeviceAvailabilityStatus(device) === 'Maintenance').length}
               </span>
-              <span className="inline-flex items-center justify-center gap-1 rounded-full border border-[#2563EB]/30 bg-[#2563EB]/10 px-3 py-1 text-xs font-medium text-[#2563EB]">
-                Assigned: {devicesLoading ? "—" : deviceAvailabilityPanel.filter((device) => deriveDeviceAvailabilityStatus(device) === 'Assigned').length}
-              </span>
+              {deviceAvailabilityPanel.filter((device) => deriveDeviceAvailabilityStatus(device) === 'Pending Borrow').length > 0 && (
+                <span className="inline-flex items-center justify-center gap-1 rounded-full border border-[#2563EB]/30 bg-[#2563EB]/10 px-3 py-1 text-xs font-medium text-[#2563EB]">
+                  Pending: {deviceAvailabilityPanel.filter((device) => deriveDeviceAvailabilityStatus(device) === 'Pending Borrow').length}
+                </span>
+              )}
             </div>
             </UIDialogHeader>
           <div className="rounded-2xl border border-white/60 bg-white/90 p-4 shadow-sm space-y-4">
@@ -5091,34 +4670,10 @@ const getReturnDateUpperBound = (start: Date | null) => {
                   const typeLabel = toTitleCase(device.device_type) || 'Device'
                   const availabilityStatus = deriveDeviceAvailabilityStatus(device)
                   const badgeTone = getAvailabilityTone(availabilityStatus)
-                  const handleDeviceClick = () => {
-                    // Check if device is available for booking
-                    if (availabilityStatus === 'Available') {
-                      // Pre-fill the Book a Device form
-                      setBorrowType(toTitleCase(device.device_type) || '')
-                      setBorrowId(device.id || '')
-                      // Close device availability modal and open Book a Device modal
-                      setDeviceAvailabilityOpen(false)
-                      setBorrowDeviceOpen(true)
-                    } else {
-                      // Show toast if device is not available
-                      toast({
-                        variant: "destructive",
-                        title: "Device not available",
-                        description: `This device is not available for booking. Current status: ${availabilityStatus}`,
-                      })
-                    }
-                  }
-
                   return (
                     <div
                       key={deviceKey}
-                      onClick={handleDeviceClick}
-                      className={`flex flex-col gap-3 rounded-xl border border-[#E4E4E7] bg-white p-3 md:flex-row md:items-center ${
-                        availabilityStatus === 'Available' 
-                          ? 'cursor-pointer hover:bg-[#F5F5F5] hover:border-[#92278F] transition-all' 
-                          : 'cursor-not-allowed opacity-75'
-                      }`}
+                      className="flex flex-col gap-3 rounded-xl border border-[#E4E4E7] bg-white p-3 md:flex-row md:items-center"
                     >
                       <div className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-[#F5F5F5]">
                         <IconComponent className="h-5 w-5 text-[#25294B]" />
@@ -5237,20 +4792,12 @@ const getReturnDateUpperBound = (start: Date | null) => {
             </div>
             <div className="flex justify-between">
               <span className="text-[#58595B]">Status:</span>
-              <Badge 
-                variant="secondary" 
-                className="text-xs"
-                style={checkInSummary?.booking.status ? {
-                  backgroundColor: getStatusBadgeColor(checkInSummary.booking.status) || undefined,
-                  color: getStatusBadgeColor(checkInSummary.booking.status) ? "white" : undefined,
-                  borderColor: getStatusBadgeColor(checkInSummary.booking.status) || undefined,
-                } : undefined}
-              >
+              <Badge variant="secondary" className="text-xs">
                 {checkInSummaryMode === "preview"
                   ? pendingCheckInCandidate
                     ? getBookingStatusLabel(pendingCheckInCandidate.booking as any, new Date())
                     : 'Scheduled'
-                  : toTitleCase(checkInSummary?.booking.status ?? 'Confirmed')}
+                  : toTitleCase(checkInSummary?.booking.status ?? 'Attended')}
               </Badge>
             </div>
           </div>
