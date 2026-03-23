@@ -26,6 +26,16 @@ export {
   type LeaveRequestFilters
 } from './leave-service'
 
+export {
+  AuthService,
+  authService,
+  type AuthUser,
+  type Session,
+  type LoginCredentials,
+  type SignupData,
+  type AuthResponse
+} from './auth-service'
+
 export { 
   PayrollService, 
   payrollService,
@@ -83,9 +93,11 @@ export {
 export {
   ResourcesService,
   resourcesService,
-  type ResourceModel,
-  type ResourceRecord as BaseResourceRecord,
 } from './resources-service'
+export type {
+  ResourceModel,
+  ResourceRecord as BaseResourceRecord,
+} from '@/lib/models/resource-models'
 
 // Legacy services (to be migrated)
 export { notesService as legacyNotesService } from './notes-service'

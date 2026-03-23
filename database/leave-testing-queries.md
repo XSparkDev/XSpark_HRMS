@@ -110,6 +110,69 @@ INSERT INTO leave_balances (
     0.00
 );
 
+-- Maternity Leave (event-based, 120 days per event, start at 0 for testing)
+INSERT INTO leave_balances (
+    employee_id,
+    leave_type_id,
+    cycle_start_date,
+    cycle_end_date,
+    total_accrued,
+    total_used,
+    total_pending,
+    carried_over
+) VALUES (
+    (SELECT id FROM employees WHERE employee_id = 'XSP27/01/001'),
+    (SELECT id FROM leave_types WHERE key = 'maternity'),
+    '2026-01-14',
+    '2027-01-13',  -- 12-month cycle for testing
+    0.00,
+    0.00,
+    0.00,
+    0.00
+);
+
+-- Paternity Leave (event-based, 10 days per event, start at 0 for testing)
+INSERT INTO leave_balances (
+    employee_id,
+    leave_type_id,
+    cycle_start_date,
+    cycle_end_date,
+    total_accrued,
+    total_used,
+    total_pending,
+    carried_over
+) VALUES (
+    (SELECT id FROM employees WHERE employee_id = 'XSP27/01/001'),
+    (SELECT id FROM leave_types WHERE key = 'paternity'),
+    '2026-01-14',
+    '2027-01-13',  -- 12-month cycle for testing
+    0.00,
+    0.00,
+    0.00,
+    0.00
+);
+
+-- "Other" Leave (custom, capped per cycle, start at 0 for testing)
+INSERT INTO leave_balances (
+    employee_id,
+    leave_type_id,
+    cycle_start_date,
+    cycle_end_date,
+    total_accrued,
+    total_used,
+    total_pending,
+    carried_over
+) VALUES (
+    (SELECT id FROM employees WHERE employee_id = 'XSP27/01/001'),
+    (SELECT id FROM leave_types WHERE key = 'other'),
+    '2026-01-14',
+    '2027-01-13',  -- 12-month cycle
+    0.00,
+    0.00,
+    0.00,
+    0.00
+);
+
 -----------------------------------------------------------------------------------------------------
 -----------------------------------------------------------------------------------------------------
 
@@ -443,5 +506,8 @@ ORDER BY lah.accrual_date;
 
 -------------------------------------------------------------------------------------------------------
 ```
+
+
+
 
 

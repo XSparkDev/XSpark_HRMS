@@ -4,6 +4,8 @@ import { documentsService } from "@/lib/services/documents-service"
 import { getCurrentUser } from "@/lib/auth"
 import { getRequestUser } from "@/lib/auth/request-user"
 import { z } from "zod"
+import { logAuditEvent } from "@/lib/crypto"
+import { supabase } from "@/lib/supabase"
 
 // Rate limiter for uploads
 const uploadLimiter = new Map<string, { count: number; resetTime: number }>()
@@ -60,6 +62,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }
 
+   // Set Postgres session variable for audit triggers
+   try {
+     await supabase.rpc("set_config", {
+       setting: "app.current_user_id",
+       value: user.id,
+       is_local: true,
+     })
+   } catch (error) {
+     console.error("Failed to set app.current_user_id for audit logging:", error)
+   }
+
   const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown"
   
   if (!checkRateLimit(ip)) {
@@ -81,6 +94,23 @@ export async function POST(req: NextRequest) {
 
       const validatedDocument = documentSchema.parse(normalizedDocument)
       const document = await documentsService.uploadDocument(validatedDocument)
+
+      // Audit: document created via full payload
+      logAuditEvent(
+        "document_access",
+        {
+          action: "upload",
+          documentId: document.id,
+          employeeId: document.employee_id,
+          uploadedBy: user.id,
+          uploadedByName: user.name,
+          ip,
+          userAgent: req.headers.get("user-agent") || undefined,
+        },
+        user.id,
+        "high",
+      )
+
       return NextResponse.json(document, { status: 201 })
     }
 
@@ -114,11 +144,27 @@ export async function POST(req: NextRequest) {
 
     const document = await documentsService.uploadDocument(documentData)
 
-    return NextResponse.json({ 
+    // Audit: document created via signed upload flow
+    logAuditEvent(
+      "document_access",
+      {
+        action: "upload",
+        documentId: document.id,
+        employeeId: document.employee_id,
+        uploadedBy: user.id,
+        uploadedByName: user.name,
+        ip,
+        userAgent: req.headers.get("user-agent") || undefined,
+      },
+      user.id,
+      "high",
+    )
+
+    return NextResponse.json({
       message: "Upload URL generated successfully",
       uploadUrl: url,
       documentKey: key,
-      documentId: document.id
+      documentId: document.id,
     }, { status: 201 })
 
   } catch (error) {
@@ -181,6 +227,7 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
+    const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown"
     const { searchParams } = new URL(req.url)
     const documentId = searchParams.get("id")
     
@@ -213,6 +260,22 @@ export async function PUT(req: NextRequest) {
       updated_at: new Date(),
     })
 
+    // Audit: document metadata / version updated
+    logAuditEvent(
+      "document_access",
+      {
+        action: "update",
+        documentId: updatedDoc.id,
+        employeeId: existingDoc.employee_id,
+        uploadedBy: updatedDoc.uploaded_by,
+        uploadedByName: updatedDoc.uploaded_by_name,
+        ip,
+        userAgent: req.headers.get("user-agent") || undefined,
+      },
+      user.id,
+      "high",
+    )
+
     return NextResponse.json(updatedDoc, { status: 200 })
 
   } catch (error) {
@@ -238,6 +301,9 @@ export async function DELETE(req: Request) {
   }
 
   try {
+    const ip = (req as any).headers?.get?.("x-forwarded-for") ||
+      (req as any).headers?.get?.("x-real-ip") ||
+      "unknown"
     const { searchParams } = new URL(req.url)
     const documentId = searchParams.get("id")
     const permanent = searchParams.get("permanent") === "true"
@@ -259,9 +325,41 @@ export async function DELETE(req: Request) {
       }
       
       await documentsService.permanentlyDeleteDocument(documentId, user.id)
+
+      // Audit: document permanently deleted
+      logAuditEvent(
+        "document_access",
+        {
+          action: "delete_permanent",
+          documentId,
+          employeeId: existingDoc.employee_id,
+          deletedBy: user.id,
+          deletedByName: user.name,
+          ip,
+          userAgent: (req as any).headers?.get?.("user-agent") || undefined,
+        },
+        user.id,
+        "critical",
+      )
     } else {
       // Soft deletion
       await documentsService.deleteDocument(documentId, user.id, user.role)
+
+      // Audit: document soft deleted
+      logAuditEvent(
+        "document_access",
+        {
+          action: "delete_soft",
+          documentId,
+          employeeId: existingDoc.employee_id,
+          deletedBy: user.id,
+          deletedByName: user.name,
+          ip,
+          userAgent: (req as any).headers?.get?.("user-agent") || undefined,
+        },
+        user.id,
+        "high",
+      )
     }
 
     return NextResponse.json({ message: "Document deleted successfully" }, { status: 200 })

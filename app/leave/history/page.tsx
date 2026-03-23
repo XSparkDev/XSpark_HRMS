@@ -9,68 +9,166 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { getCurrentUser } from "@/lib/auth"
 import { getLeaveTypeDisplayName, getLeaveStatusInfo } from "@/lib/validation/leave"
 
-// Mock leave history data
-const mockLeaveHistory = [
-  {
-    id: "1",
-    leave_type: "annual",
-    reason: "Family vacation",
-    leave_day_from: "2024-12-20",
-    leave_day_to: "2024-12-27",
-    total_days: 6,
-    status: "approved",
-    created_at: "2024-12-01T10:00:00Z",
-    reviewed_at: "2024-12-02T14:30:00Z",
-    approver_comment: "Approved. Enjoy your vacation!"
-  },
-  {
-    id: "2", 
-    leave_type: "sick",
-    reason: "Flu symptoms",
-    leave_day_from: "2024-11-15",
-    leave_day_to: "2024-11-17",
-    total_days: 3,
-    status: "approved",
-    created_at: "2024-11-15T08:00:00Z",
-    reviewed_at: "2024-11-15T09:00:00Z",
-    approver_comment: "Get well soon!"
-  },
-  {
-    id: "3",
-    leave_type: "annual", 
-    reason: "Personal matters",
-    leave_day_from: "2024-10-05",
-    leave_day_to: "2024-10-10",
-    total_days: 4,
-    status: "rejected",
-    created_at: "2024-10-01T10:00:00Z",
-    reviewed_at: "2024-10-02T16:00:00Z",
-    rejection_reason: "Insufficient notice period",
-    approver_comment: "Please submit requests at least 2 weeks in advance."
+interface LeaveRequest {
+  id: string
+  employee_id: string
+  leave_type_id: string
+  leave_type?: string
+  start_date: string
+  end_date: string
+  total_days: number
+  reason?: string
+  status: string
+  created_at: string
+  submitted_at?: string
+  reviewed_at?: string
+  reviewed_by?: string
+  review_notes?: string
+  document_url?: string
+  employees?: {
+    first_name?: string
+    middle_name?: string
+    last_name?: string
+    full_name?: string
+    employee_id?: string
   }
-]
+  leave_types?: {
+    key: string
+    display_name: string
+  }
+}
 
 export default function LeaveHistoryPage() {
   const router = useRouter()
-  const [leaveHistory, setLeaveHistory] = useState<typeof mockLeaveHistory>([])
+  const [leaveHistory, setLeaveHistory] = useState<LeaveRequest[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [selectedRequest, setSelectedRequest] = useState<LeaveRequest | null>(null)
+  const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false)
+  const [employeeUuid, setEmployeeUuid] = useState<string | null>(null)
 
+  const user = getCurrentUser()
+
+  // Fetch employee UUID from /api/auth/me
   useEffect(() => {
-    const user = getCurrentUser()
-    if (!user) {
+    if (!user?.id) {
       router.replace("/login")
       return
     }
 
-    // Mock API call - replace with actual API
-    setTimeout(() => {
-      setLeaveHistory(mockLeaveHistory)
-      setIsLoading(false)
-    }, 1000)
-  }, [router])
+    const fetchEmployeeUuid = async () => {
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        }
+        
+        // Get Bearer token from localStorage
+        try {
+          const storedSession = localStorage.getItem('xspark_session')
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (error) {
+          console.warn('[LeaveHistory] Failed to parse session for Bearer token:', error)
+        }
+
+        const res = await fetch("/api/auth/me", { headers })
+        const json = await res.json()
+        
+        if (res.ok && json.success && json.data?.employee?.id) {
+          setEmployeeUuid(json.data.employee.id)
+        } else {
+          if (res.status !== 401) {
+            console.warn("[LeaveHistory] Failed to fetch employee UUID:", json.error)
+          }
+        }
+      } catch (error) {
+        console.warn("[LeaveHistory] Error fetching employee UUID:", error)
+      }
+    }
+
+    fetchEmployeeUuid()
+  }, [user?.id, router])
+
+  // Fetch leave requests when employee UUID is available
+  useEffect(() => {
+    if (!employeeUuid) return
+
+    const fetchLeaveRequests = async () => {
+      try {
+        setIsLoading(true)
+        
+        // Get auth token from localStorage
+        let authHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+        }
+        const storedSession = localStorage.getItem('xspark_session')
+        if (storedSession) {
+          try {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              authHeaders['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          } catch {}
+        }
+
+        // Fetch all leave requests for this employee
+        const response = await fetch(`/api/leave/requests?employee_id=${employeeUuid}&limit=100`, {
+          headers: authHeaders,
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch leave requests')
+        }
+
+        const json = await response.json()
+        if (json.success && Array.isArray(json.data)) {
+          // Map API response to match our interface
+          const mappedRequests = json.data.map((request: any) => {
+            // Handle both singular and plural response structures from PostgREST
+            const employee = request.employees || request.employee || (Array.isArray(request.employees) ? request.employees[0] : null)
+            const leaveType = request.leave_types || request.leave_type || (Array.isArray(request.leave_types) ? request.leave_types[0] : null)
+            
+            // Get leave type key
+            const leaveTypeKey = leaveType?.key || 'unknown'
+            
+            return {
+              ...request,
+              leave_type: leaveTypeKey,
+              employees: employee,
+              leave_types: leaveType,
+            }
+          })
+          
+          // Sort by created_at descending (newest first)
+          mappedRequests.sort((a: LeaveRequest, b: LeaveRequest) => {
+            const dateA = new Date(a.created_at || a.submitted_at || 0).getTime()
+            const dateB = new Date(b.created_at || b.submitted_at || 0).getTime()
+            return dateB - dateA
+          })
+          
+          setLeaveHistory(mappedRequests)
+        } else {
+          setLeaveHistory([])
+        }
+      } catch (error) {
+        console.error('Error fetching leave requests:', error)
+        setLeaveHistory([])
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchLeaveRequests()
+  }, [employeeUuid])
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -194,7 +292,7 @@ export default function LeaveHistoryPage() {
                   return (
                     <TableRow key={request.id}>
                       <TableCell className="font-medium">
-                        {getLeaveTypeDisplayName(request.leave_type)}
+                        {getLeaveTypeDisplayName(request.leave_type || 'unknown')}
                       </TableCell>
                       <TableCell className="max-w-xs truncate">
                         {request.reason}
@@ -202,7 +300,7 @@ export default function LeaveHistoryPage() {
                       <TableCell>
                         <div className="flex items-center gap-1 text-sm">
                           <CalendarIcon className="h-4 w-4" />
-                          {format(new Date(request.leave_day_from), "MMM dd")} - {format(new Date(request.leave_day_to), "MMM dd, yyyy")}
+                          {format(new Date(request.start_date), "MMM dd")} - {format(new Date(request.end_date), "MMM dd, yyyy")}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -217,15 +315,15 @@ export default function LeaveHistoryPage() {
                         </div>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {format(new Date(request.created_at), "MMM dd, yyyy")}
+                        {format(new Date(request.created_at || request.submitted_at || ''), "MMM dd, yyyy")}
                       </TableCell>
                       <TableCell>
                         <Button 
                           variant="outline" 
                           size="sm"
                           onClick={() => {
-                            // In a real app, this would open a detailed view modal
-                            console.log("View details for request:", request.id)
+                            setSelectedRequest(request)
+                            setIsDetailsDialogOpen(true)
                           }}
                         >
                           View Details
@@ -239,6 +337,95 @@ export default function LeaveHistoryPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Leave Request Details Dialog */}
+      <Dialog open={isDetailsDialogOpen} onOpenChange={setIsDetailsDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Leave Request Details</DialogTitle>
+          </DialogHeader>
+          {selectedRequest && (
+            <ScrollArea className="max-h-[70vh]">
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Leave Type</Label>
+                    <p className="text-sm">{getLeaveTypeDisplayName(selectedRequest.leave_type || 'unknown')}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Status</Label>
+                    <div className="flex items-center gap-2">
+                      {getStatusIcon(selectedRequest.status)}
+                      <Badge variant={getLeaveStatusInfo(selectedRequest.status).variant}>
+                        {getLeaveStatusInfo(selectedRequest.status).name}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Start Date</Label>
+                    <p className="text-sm">{format(new Date(selectedRequest.start_date), "PPP")}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">End Date</Label>
+                    <p className="text-sm">{format(new Date(selectedRequest.end_date), "PPP")}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Duration</Label>
+                    <p className="text-sm">{selectedRequest.total_days} day{selectedRequest.total_days !== 1 ? 's' : ''}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Submitted</Label>
+                    <p className="text-sm">{format(new Date(selectedRequest.created_at || selectedRequest.submitted_at || ''), "PPP 'at' p")}</p>
+                  </div>
+                  {selectedRequest.reviewed_at && (
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Reviewed</Label>
+                      <p className="text-sm">{format(new Date(selectedRequest.reviewed_at), "PPP 'at' p")}</p>
+                    </div>
+                  )}
+                </div>
+                
+                {selectedRequest.reason && (
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground mb-2">Reason for Leave</Label>
+                    <p className="text-sm bg-gray-50 p-3 rounded-lg whitespace-pre-wrap">{selectedRequest.reason}</p>
+                  </div>
+                )}
+                
+                {selectedRequest.review_notes && selectedRequest.status === 'approved' && (
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground mb-2">Approver Comment</Label>
+                    <p className="text-sm bg-blue-50 p-3 rounded-lg whitespace-pre-wrap">{selectedRequest.review_notes}</p>
+                  </div>
+                )}
+                
+                {selectedRequest.review_notes && selectedRequest.status === 'rejected' && (
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground mb-2">Rejection Reason</Label>
+                    <p className="text-sm bg-red-50 p-3 rounded-lg whitespace-pre-wrap">{selectedRequest.review_notes}</p>
+                  </div>
+                )}
+                
+                {selectedRequest.document_url && (
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground mb-2">Supporting Document</Label>
+                    <p className="text-sm">
+                      <a 
+                        href={selectedRequest.document_url} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="text-blue-600 hover:underline"
+                      >
+                        View Document
+                      </a>
+                    </p>
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -115,6 +115,7 @@ export interface CreateEmployeeData {
   sex: 'male' | 'female'
   gender?: 'male' | 'female' | 'other' | 'prefer_not_to_say'
   pronouns?: string
+  employee_id?: string // Optional - will be auto-generated if not provided
   job_title_id?: string
   role_id?: string
   email: string
@@ -260,18 +261,27 @@ export class EmployeeService {
 
   /**
    * Get employee by auth_user_id (Supabase auth)
+   * Uses supabaseAdmin to bypass RLS since this is called from authenticated API routes
    */
   async getByAuthUserId(authUserId: string): Promise<Employee | null> {
     try {
       // PREVIOUS QUERY: .select('*')
       // UPDATED QUERY: .select('*, next_of_kin(*)') to keep NOK data in profile payloads.
-      const { data, error } = await supabase
+      // Use supabaseAdmin to bypass RLS - this is called from authenticated API routes
+      const { data, error } = await supabaseAdmin
         .from('employees')
         .select('*, next_of_kin(*), role:roles(role_name)')
         .eq('auth_user_id', authUserId)
         .single()
 
-      if (error) throw error
+      if (error) {
+        // If no record found, that's okay - return null
+        if (error.code === 'PGRST116') {
+          console.warn(`No employee found for auth_user_id: ${authUserId}`)
+          return null
+        }
+        throw error
+      }
       return data
     } catch (error) {
       console.error('Error fetching employee by auth user ID:', error)
@@ -562,7 +572,7 @@ export class EmployeeService {
    */
   async verifyId(id: string): Promise<boolean> {
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('employees')
         .update({ id_verified: true })
         .eq('id', id)
@@ -580,7 +590,7 @@ export class EmployeeService {
    */
   async verifyBank(id: string): Promise<boolean> {
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('employees')
         .update({ bank_verified: true })
         .eq('id', id)

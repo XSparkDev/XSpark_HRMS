@@ -1240,7 +1240,7 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
               <CardContent className="space-y-4">
                 {Array.isArray(profile?.next_of_kin) && profile?.next_of_kin.length ? (
                   <div className="space-y-4">
-                    {profile.next_of_kin.map((kin: any, index: number) => (
+                    {profile?.next_of_kin.map((kin: any, index: number) => (
                       <div key={kin.id || index} className="rounded-lg border border-gray-200 p-4 space-y-4">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
@@ -1313,10 +1313,10 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
               <CardContent>
                 <div className="flex flex-wrap gap-2">
                   <Badge
-                    variant={profile.id_verified ? "default" : "secondary"}
+                    variant={profile?.id_verified ? "default" : "secondary"}
                     className="flex items-center gap-1"
                   >
-                    {profile.id_verified ? (
+                    {profile?.id_verified ? (
                       <CheckCircle2 className="h-3.5 w-3.5" />
                     ) : (
                       <XCircle className="h-3.5 w-3.5" />
@@ -1324,22 +1324,22 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
                     <span>ID Verified</span>
                   </Badge>
                   <Badge
-                    variant={profile.bank_verified ? "default" : "secondary"}
+                    variant={profile?.bank_verified ? "default" : "secondary"}
                     className="flex items-center gap-1"
                   >
-                    {profile.bank_verified ? (
+                    {profile?.bank_verified ? (
                       <CheckCircle2 className="h-3.5 w-3.5" />
                     ) : (
                       <XCircle className="h-3.5 w-3.5" />
                     )}
                     <span>Bank Verified</span>
                   </Badge>
-                  {profile.nationality !== "South Africa" && (
+                  {profile?.nationality !== "South Africa" && (
                     <Badge
-                      variant={profile.work_permit_verified ? "default" : "secondary"}
+                      variant={profile?.work_permit_verified ? "default" : "secondary"}
                       className="flex items-center gap-1"
                     >
-                      {profile.work_permit_verified ? (
+                      {profile?.work_permit_verified ? (
                         <CheckCircle2 className="h-3.5 w-3.5" />
                       ) : (
                         <XCircle className="h-3.5 w-3.5" />

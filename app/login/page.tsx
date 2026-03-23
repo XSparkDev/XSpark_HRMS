@@ -210,6 +210,19 @@ export default function LoginPage() {
             >
               Admin
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="flex-1"
+              onClick={() => {
+                setEmail("hobixe4894@juhxs.com")
+                setPassword("SecurePass123!")
+                performLogin("hobixe4894@juhxs.com", "SecurePass123!")
+              }}
+              disabled={loading}
+            >
+              Super Admin
+            </Button>
           </div>
         </div>
 

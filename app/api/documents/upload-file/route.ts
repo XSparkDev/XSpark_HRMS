@@ -1,7 +1,30 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getCurrentUser } from "@/lib/auth"
 import { getRequestUser } from "@/lib/auth/request-user"
+import { storageConfig } from "@/lib/supabase"
 import { supabaseAdmin } from "@/lib/supabase-admin"
+
+const DOCUMENTS_BUCKET = storageConfig.buckets.employeeDocuments
+
+/** Ensure the employee-documents bucket exists; create it if missing (idempotent). */
+async function ensureDocumentsBucket(): Promise<void> {
+  const { data: buckets, error: listError } = await supabaseAdmin.storage.listBuckets()
+  if (listError) {
+    console.error("Error listing storage buckets:", listError)
+    throw new Error("Storage unavailable")
+  }
+  const exists = buckets?.some((b: { name: string }) => b.name === DOCUMENTS_BUCKET)
+  if (exists) return
+
+  const { error: createError } = await supabaseAdmin.storage.createBucket(DOCUMENTS_BUCKET, {
+    public: false,
+    allowedMimeTypes: ["application/pdf", "image/jpeg", "image/png"],
+  })
+  if (createError) {
+    console.error("Error creating storage bucket:", createError)
+    throw new Error("Could not create documents bucket")
+  }
+}
 
 type ApiUserContext = {
   id: string
@@ -63,13 +86,16 @@ export async function POST(req: NextRequest) {
     const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_")
     const filePath = `documents/${user.employeeId}/${timestamp}-${sanitizedFileName}`
 
+    // Ensure bucket exists (create if missing)
+    await ensureDocumentsBucket()
+
     // Convert File to ArrayBuffer for Supabase
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
     // Upload to Supabase Storage (using employee-documents bucket)
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-      .from("employee-documents")
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from(DOCUMENTS_BUCKET)
       .upload(filePath, buffer, {
         contentType: file.type,
         upsert: false,
@@ -80,16 +106,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: "Failed to upload file" }, { status: 500 })
     }
 
-    // Get public URL
-    const { data: urlData } = supabaseAdmin.storage
-      .from("employee-documents")
-      .getPublicUrl(filePath)
+    // Generate a signed URL for the private bucket (valid 1 hour for immediate use after upload)
+    const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin.storage
+      .from(DOCUMENTS_BUCKET)
+      .createSignedUrl(filePath, 3600)
 
-    const publicUrl = urlData.publicUrl
+    if (signedUrlError) {
+      console.error("Error creating signed URL:", signedUrlError)
+      return NextResponse.json({ message: "Failed to get file URL" }, { status: 500 })
+    }
+
+    const fileUrl = signedUrlData.signedUrl
 
     return NextResponse.json(
       {
-        fileUrl: publicUrl,
+        fileUrl,
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type,
@@ -102,6 +133,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Internal server error" }, { status: 500 })
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

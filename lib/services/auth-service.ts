@@ -111,12 +111,40 @@ export class AuthService extends BaseService {
         password
       })
 
-      if (error) throw error
+      if (error) {
+        console.error('Supabase auth sign-in error:', {
+          message: error.message,
+          status: error.status,
+          code: error.code,
+          email: email
+        })
+        
+        // Provide more specific error messages
+        if (error.message.includes('Invalid login credentials') || error.message.includes('Invalid login')) {
+          // Check if user exists in auth
+          console.error('Login failed - checking if auth user exists...')
+          throw new Error('Invalid email or password')
+        } else if (error.message.includes('Email not confirmed') || error.message.includes('email_not_confirmed')) {
+          throw new Error('Please confirm your email address before logging in')
+        } else if (error.message.includes('User not found')) {
+          throw new Error('No account found with this email address')
+        } else {
+          throw new Error(`Authentication failed: ${error.message}`)
+        }
+      }
+
+      if (!data.user) {
+        throw new Error('Login succeeded but no user data returned')
+      }
 
       // Get employee record linked to this auth user
       let employee = null
       if (data.user) {
         employee = await employeeService.getByAuthUserId(data.user.id)
+        if (!employee) {
+          console.error(`No employee record found for auth user: ${data.user.id} (email: ${email})`)
+          // Don't throw here - let the API route handle missing employee
+        }
       }
 
       return {
@@ -126,6 +154,10 @@ export class AuthService extends BaseService {
       }
     } catch (error) {
       console.error('Error during login:', error)
+      // Re-throw the error if it's already an Error with a message
+      if (error instanceof Error) {
+        throw error
+      }
       throw new Error('Login failed. Please check your credentials.')
     }
   }

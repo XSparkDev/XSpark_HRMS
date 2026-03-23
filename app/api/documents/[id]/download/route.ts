@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
+import { createSignedDocumentUrl } from "@/lib/documents-signed-url"
 import { documentsService } from "@/lib/services/documents-service"
 import { getCurrentUser } from "@/lib/auth"
 import { getRequestUser } from "@/lib/auth/request-user"
+import { logAuditEvent } from "@/lib/crypto"
 
 type ApiUserContext = {
   id: string
@@ -50,15 +52,30 @@ export async function GET(
       return NextResponse.json({ message: "Document not found or access denied" }, { status: 404 })
     }
 
-    // Get download URL (this would typically be a signed S3 URL)
-    const downloadUrl = await documentsService.downloadDocument(documentId, user.id, user.name)
+    // Generate a fresh signed URL for the private bucket (1 hour)
+    let downloadUrl = await createSignedDocumentUrl(document.file_url, 3600)
+    if (!downloadUrl) {
+      downloadUrl = document.file_url
+    }
 
-    // In a real implementation, you might want to:
-    // 1. Generate a signed S3 URL for direct download
-    // 2. Stream the file content
-    // 3. Set appropriate headers for file download
+    // Audit: document downloaded
+    const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown"
+    logAuditEvent(
+      "document_access",
+      {
+        action: "download",
+        documentId: document.id,
+        employeeId: document.employee_id,
+        downloadedBy: user.id,
+        downloadedByName: user.name,
+        ip,
+        userAgent: req.headers.get("user-agent") || undefined,
+      },
+      user.id,
+      "medium",
+    )
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       downloadUrl,
       fileName: document.name,
       fileType: document.file_type,

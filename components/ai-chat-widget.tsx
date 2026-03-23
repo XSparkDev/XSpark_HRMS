@@ -10,8 +10,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   MessageSquare,
   X,
+  XCircle,
   Minimize2,
   Maximize2,
+  Download,
   Send,
   Paperclip,
   HelpCircle,
@@ -23,6 +25,15 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { searchKnowledgeBase, formatKnowledgeResponse, getCategoryFromQuery } from "@/lib/sa-labour-law-knowledge"
+import { supabase } from "@/lib/supabase"
+import { useToast } from "@/hooks/use-toast"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog"
 
 // Message schema for future AI integration
 export interface ChatMessage {
@@ -59,9 +70,11 @@ interface AIChatWidgetProps {
   hooks?: ChatWidgetHooks
   initialMessages?: ChatMessage[]
   className?: string
+  // Employee identifier used to scope chat sessions per employee
+  employeeId: string
 }
 
-export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatWidgetProps) {
+export function AIChatWidget({ hooks, initialMessages = [], className, employeeId }: AIChatWidgetProps) {
   const [state, setState] = useState<ChatWidgetState>({
     isOpen: false,
     isMaximized: false,
@@ -72,8 +85,146 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
 
   const [inputValue, setInputValue] = useState("")
   const [isMobile, setIsMobile] = useState(false)
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  const [isLoadingSession, setIsLoadingSession] = useState(false)
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
+  const [historySessions, setHistorySessions] = useState<
+    { id: string; title: string; created_at: string; updated_at: string; message_count?: number }[]
+  >([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const { toast } = useToast()
+
+  // Helper: ensure a Supabase chat session exists for this employee
+  const ensureSession = useCallback(
+    async (titleFromFirstMessage?: string): Promise<string | null> => {
+      if (!employeeId) return null
+
+      if (currentSessionId) {
+        return currentSessionId
+      }
+
+      // Create a new session using the first user message as title if provided
+      const title =
+        titleFromFirstMessage && titleFromFirstMessage.trim().length > 0
+          ? titleFromFirstMessage.trim().slice(0, 120)
+          : `Chat started ${new Date().toLocaleString()}`
+
+      const { data, error } = await supabase
+        .from("chat_sessions")
+        .insert({
+          employee_id: employeeId,
+          title,
+        })
+        .select("id")
+        .single()
+
+      if (error || !data || !data.id) {
+        console.error("Failed to create chat session:", error)
+        return null
+      }
+
+      setCurrentSessionId(data.id as string)
+      return data.id as string
+    },
+    [employeeId, currentSessionId]
+  )
+
+  // Helper: persist a single message to Supabase
+  const persistMessage = useCallback(
+    async (msg: ChatMessage, firstUserMessageTextForTitle?: string) => {
+      if (!employeeId) return
+
+      const sessionId = await ensureSession(firstUserMessageTextForTitle)
+      if (!sessionId) return
+
+      const { error } = await supabase.from("chat_messages").insert({
+        session_id: sessionId,
+        sender: msg.sender,
+        text: msg.text,
+        created_at: msg.created_at,
+      })
+
+      if (error) {
+        console.error("Failed to persist chat message:", error)
+      }
+    },
+    [employeeId, ensureSession]
+  )
+
+  // Load latest chat session + messages for this employee on mount / employee change
+  useEffect(() => {
+    if (!employeeId) return
+
+    let isCancelled = false
+
+    const loadLatestSession = async () => {
+      setIsLoadingSession(true)
+      try {
+        const { data: sessions, error: sessionError } = await supabase
+          .from("chat_sessions")
+          .select("id, title, created_at, updated_at")
+          .eq("employee_id", employeeId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+
+        if (sessionError) {
+          console.error("Failed to load chat sessions:", sessionError)
+          return
+        }
+
+        const latestSession = sessions && sessions.length > 0 ? sessions[0] : null
+
+        if (!latestSession) {
+          // No previous session – keep welcome message / empty state
+          setCurrentSessionId(null)
+          return
+        }
+
+        const { data: messages, error: messagesError } = await supabase
+          .from("chat_messages")
+          .select("id, sender, text, created_at")
+          .eq("session_id", latestSession.id)
+          .order("created_at", { ascending: true })
+
+        if (messagesError) {
+          console.error("Failed to load chat messages:", messagesError)
+          return
+        }
+
+        if (isCancelled) return
+
+        const loadedMessages: ChatMessage[] =
+          messages?.map((m: any) => ({
+            id: m.id?.toString() ?? `msg-${m.created_at}`,
+            sender: m.sender,
+            text: m.text,
+            created_at: m.created_at,
+          })) ?? []
+
+        setCurrentSessionId(latestSession.id as string)
+
+        if (loadedMessages.length > 0) {
+          setState(prev => ({
+            ...prev,
+            messages: loadedMessages,
+            unreadCount: 0,
+          }))
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingSession(false)
+        }
+      }
+    }
+
+    loadLatestSession()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [employeeId])
 
   // Check for mobile viewport
   useEffect(() => {
@@ -148,6 +299,9 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
       isTyping: true,
     }))
 
+    // Persist user message (first user message can be used as session title)
+    void persistMessage(userChatMessage, userMessage)
+
     try {
       // Convert messages to API format (role/content)
       const conversationHistory = state.messages
@@ -185,7 +339,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
           errorMessage = errorData.error
         } else if (typeof errorData.message === 'string') {
           errorMessage = errorData.message
-      } else {
+        } else {
           errorMessage = `Failed to get response: ${response.status} ${response.statusText}`
         }
         
@@ -212,6 +366,9 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
         isTyping: false,
       }))
 
+      // Persist AI response
+      void persistMessage(aiResponse)
+
       hooks?.onSend?.(userMessage)
     } catch (error) {
       console.error('Chat error:', error)
@@ -229,8 +386,10 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
         messages: [...prev.messages, errorResponse],
         isTyping: false,
       }))
+
+      void persistMessage(errorResponse)
     }
-  }, [inputValue, state.messages, state.isTyping, hooks])
+  }, [inputValue, state.messages, state.isTyping, hooks, persistMessage])
 
   const handleQuickReply = useCallback((text: string, action?: string) => {
     // Don't set input value, instead directly add a response
@@ -246,6 +405,9 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
       messages: [...prev.messages, userMessage],
       isTyping: true,
     }))
+
+    // Persist quick reply as user message (may be first message, so can set title)
+    void persistMessage(userMessage, text)
 
     // Generate contextual response based on action using knowledge base
     setTimeout(() => {
@@ -327,11 +489,113 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
         messages: [...prev.messages, aiResponse],
         isTyping: false,
       }))
+
+      void persistMessage(aiResponse)
       
       hooks?.onQuickReplySelected?.({ text, action })
     }, 1200)
     
-  }, [hooks])
+  }, [hooks, persistMessage])
+
+  // Clear current chat, mark session inactive, and prepare for a new one
+  const handleClearChat = useCallback(async () => {
+    if (!currentSessionId) return
+
+    try {
+      // Clear messages and show welcome again
+      setCurrentSessionId(null)
+      setState(prev => ({
+        ...prev,
+        messages: [],
+        unreadCount: 0,
+        isTyping: false,
+      }))
+      setInputValue("")
+
+      toast({
+        title: "Chat saved and closed",
+        description: "A new chat will start with your next message.",
+      })
+    } catch (error) {
+      console.error("Error closing chat:", error)
+      toast({
+        title: "Error",
+        description: "Error saving chat. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }, [currentSessionId, toast])
+
+  // Download current chat as a .txt file
+  const handleDownloadChat = useCallback(() => {
+    if (!state.messages.length) return
+
+    const firstUserMessage = state.messages.find(m => m.sender === "user")
+    const rawTitle = firstUserMessage?.text || "Chat"
+
+    const title = rawTitle.slice(0, 50).replace(/[^a-z0-9]/gi, "_") || "Chat"
+
+    // Use current date in YYYY-MM-DD format (example: 2026-01-28)
+    const datePart = new Date().toISOString().split("T")[0]
+    const filename = `${title}_${datePart}.txt`
+
+    let content = ""
+    content += `Chat: ${rawTitle}\n`
+    content += `Date: ${new Date().toLocaleString()}\n`
+    content += `${"=".repeat(18)}\n\n`
+
+    state.messages.forEach(msg => {
+      if (msg.sender === "system") return
+      const time = new Date(msg.created_at).toLocaleTimeString()
+      const role = msg.sender === "user" ? "User" : "Assistant"
+      content += `[${time}] ${role}: ${msg.text}\n\n`
+    })
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }, [state.messages])
+
+  // Load history of closed chats for this employee
+  const loadHistory = useCallback(async () => {
+    if (!employeeId) return
+
+    setIsLoadingHistory(true)
+    try {
+      const { data, error } = await supabase
+        .from("chat_sessions")
+        .select("id, title, created_at, updated_at")
+        .eq("employee_id", employeeId)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Failed to load chat history:", error)
+        toast({
+          title: "Error",
+          description: "Could not load chat history.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setHistorySessions(
+        (data || []).map((s: any) => ({
+          id: s.id,
+          title: s.title || "Untitled chat",
+          created_at: s.created_at,
+          updated_at: s.updated_at,
+        }))
+      )
+    } finally {
+      setIsLoadingHistory(false)
+    }
+  }, [employeeId, toast])
 
   const formatTime = (timestamp: string) => {
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -414,6 +678,29 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
               </div>
               
               <div className="flex items-center gap-1">
+                {/* View History button */}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        onClick={() => {
+                          setIsHistoryOpen(true)
+                          void loadHistory()
+                        }}
+                        aria-label="View chat history"
+                      >
+                        <Clock className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>View history</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -436,6 +723,27 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
                   </Tooltip>
                 </TooltipProvider>
 
+                {/* Download chat transcript */}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={handleDownloadChat}
+                        aria-label="Download chat transcript"
+                        disabled={!state.messages.length}
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Download chat as text</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
                 {!isMobile && (
                   <Button
                     variant="ghost"
@@ -452,6 +760,28 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
                   </Button>
                 )}
 
+                {/* Clear / close current chat session (red X) */}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-600 hover:text-red-700"
+                        onClick={handleClearChat}
+                        aria-label="Clear chat and start new session"
+                        disabled={isLoadingSession}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Clear chat & start new</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
+                {/* Existing close button just hides the widget */}
                 <Button
                   variant="ghost"
                   size="icon"
@@ -625,6 +955,87 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
           </Card>
         </div>
       )}
+
+      {/* History dialog */}
+      <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Past chats</DialogTitle>
+            <DialogDescription>
+              View your previous HR assistant conversations.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {isLoadingHistory && (
+              <p className="text-sm text-muted-foreground">Loading history...</p>
+            )}
+            {!isLoadingHistory && historySessions.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No past chats found yet. Close a chat to save it to history.
+              </p>
+            )}
+            {!isLoadingHistory &&
+              historySessions.map(session => (
+                <button
+                  key={session.id}
+                  type="button"
+                  className="w-full text-left rounded-lg border border-border px-3 py-2 hover:bg-muted transition flex items-center justify-between"
+                  onClick={async () => {
+                    try {
+                      const { data: messages, error } = await supabase
+                        .from("chat_messages")
+                        .select("id, sender, text, created_at")
+                        .eq("session_id", session.id)
+                        .order("created_at", { ascending: true })
+
+                      if (error) {
+                        console.error("Failed to load chat from history:", error)
+                        toast({
+                          title: "Error",
+                          description: "Could not load this conversation.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      const loadedMessages: ChatMessage[] =
+                        messages?.map((m: any) => ({
+                          id: m.id?.toString() ?? `msg-${m.created_at}`,
+                          sender: m.sender,
+                          text: m.text,
+                          created_at: m.created_at,
+                        })) ?? []
+
+                      setState(prev => ({
+                        ...prev,
+                        messages: loadedMessages,
+                        unreadCount: 0,
+                      }))
+                      setCurrentSessionId(session.id)
+                      setIsHistoryOpen(false)
+                    } catch (error) {
+                      console.error("Error loading chat from history:", error)
+                      toast({
+                        title: "Error",
+                        description: "Could not load this conversation.",
+                        variant: "destructive",
+                      })
+                    }
+                  }}
+                >
+                  <div>
+                    <p className="text-sm font-medium line-clamp-1">
+                      {session.title || "Untitled chat"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(session.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                </button>
+              ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

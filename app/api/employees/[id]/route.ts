@@ -6,6 +6,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { employeeService } from '@/lib/services'
+import { getRequestUser } from '@/lib/auth/request-user'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 
 // Validation schemas
@@ -21,6 +24,7 @@ const UpdateEmployeeSchema = z.object({
   sex: z.enum(['male', 'female']).optional(),
   gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']).optional(),
   pronouns: z.string().max(50).optional(),
+  employee_id: z.string().max(20).optional(), // Optional - allows super_admin to change employee ID
   job_title_id: z.string().uuid().optional(),
   role_id: z.string().uuid().optional(),
   email: z.string().email().optional(),
@@ -96,6 +100,60 @@ export async function PUT(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Check authentication and authorization
+    let user = getRequestUser(request)
+    
+    // Fallback to Bearer token authentication
+    if (!user) {
+      const authHeader = request.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7)
+        const supabaseUrl = process.env.SUPABASE_URL!
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        })
+
+        const { data: { user: authUser }, error } = await userClient.auth.getUser(token)
+        if (!error && authUser) {
+          const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('id, role_id, roles(role_name)')
+            .eq('auth_user_id', authUser.id)
+            .single()
+          
+          if (employee) {
+            const roleName = (employee.roles as any)?.role_name?.toLowerCase?.() || 'employee'
+            user = {
+              id: authUser.id,
+              employeeId: employee.id,
+              role: roleName
+            }
+          }
+        }
+      }
+    }
+    
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized'
+      }, { status: 401 })
+    }
+
+    // Only admins/HR can update employees
+    const allowedRoles = ['admin', 'super_admin', 'junior_hr', 'hr_manager', 'hr_admin']
+    if (!allowedRoles.includes(user.role.toLowerCase())) {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Only admins and HR can update employees'
+      }, { status: 403 })
+    }
+
     // Validate employee ID (await params per Next.js guidance)
     const { id } = await context.params
     const employeeId = EmployeeIdSchema.parse(id)
@@ -146,6 +204,60 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Check authentication and authorization
+    let user = getRequestUser(request)
+    
+    // Fallback to Bearer token authentication
+    if (!user) {
+      const authHeader = request.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7)
+        const supabaseUrl = process.env.SUPABASE_URL!
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        })
+
+        const { data: { user: authUser }, error } = await userClient.auth.getUser(token)
+        if (!error && authUser) {
+          const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('id, role_id, roles(role_name)')
+            .eq('auth_user_id', authUser.id)
+            .single()
+          
+          if (employee) {
+            const roleName = (employee.roles as any)?.role_name?.toLowerCase?.() || 'employee'
+            user = {
+              id: authUser.id,
+              employeeId: employee.id,
+              role: roleName
+            }
+          }
+        }
+      }
+    }
+    
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized'
+      }, { status: 401 })
+    }
+
+    // Only admins/HR can delete employees
+    const allowedRoles = ['admin', 'super_admin', 'junior_hr', 'hr_manager', 'hr_admin']
+    if (!allowedRoles.includes(user.role.toLowerCase())) {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Only admins and HR can delete employees'
+      }, { status: 403 })
+    }
+
     // Validate employee ID (await params per Next.js guidance)
     const { id } = await context.params
     const employeeId = EmployeeIdSchema.parse(id)
@@ -200,6 +312,60 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Check authentication and authorization
+    let user = getRequestUser(request)
+    
+    // Fallback to Bearer token authentication
+    if (!user) {
+      const authHeader = request.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7)
+        const supabaseUrl = process.env.SUPABASE_URL!
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        })
+
+        const { data: { user: authUser }, error } = await userClient.auth.getUser(token)
+        if (!error && authUser) {
+          const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('id, role_id, roles(role_name)')
+            .eq('auth_user_id', authUser.id)
+            .single()
+          
+          if (employee) {
+            const roleName = (employee.roles as any)?.role_name?.toLowerCase?.() || 'employee'
+            user = {
+              id: authUser.id,
+              employeeId: employee.id,
+              role: roleName
+            }
+          }
+        }
+      }
+    }
+    
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized'
+      }, { status: 401 })
+    }
+
+    // Only admins/HR can restore employees
+    const allowedRoles = ['admin', 'super_admin', 'junior_hr', 'hr_manager', 'hr_admin']
+    if (!allowedRoles.includes(user.role.toLowerCase())) {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Only admins and HR can restore employees'
+      }, { status: 403 })
+    }
+
     // Validate employee ID (await params per Next.js guidance)
     const { id } = await context.params
     const employeeId = EmployeeIdSchema.parse(id)

@@ -7,8 +7,8 @@
 import { createClient } from '@supabase/supabase-js'
 
 // Environment variables
-const supabaseUrl = process.env.SUPABASE_URL || ''
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || ''
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || ''
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || ''
 const supabaseStorageBucket = process.env.SUPABASE_STORAGE_BUCKET || 'placeholder-bucket'
 
 // Flag to indicate if Supabase is configured
