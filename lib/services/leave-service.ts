@@ -5,9 +5,17 @@
 // requests, approvals, and calculations
 // ============================================================================
 
-import { supabase } from '@/lib/supabase'
+// ============================================================================
+// CLEAN-SLATE LEAVE MANAGEMENT SERVICE
+// ============================================================================
+// This file now exposes minimal, no-op implementations so new leave logic
+// can be designed without being constrained by the previous behaviour.
+// The full previous implementation is preserved in:
+//   lib/services/leave-service-legacy.ts
+// ============================================================================
 
-// Database types matching our schema
+import { supabaseAdmin } from '@/lib/supabase-admin'
+
 export interface LeaveBalance {
   id: string
   employee_id: string
@@ -78,16 +86,11 @@ export interface LeaveRequestFilters {
 }
 
 export class LeaveManagementService {
-  // ============================================================================
-  // LEAVE BALANCE OPERATIONS
-  // ============================================================================
+  // LEAVE BALANCE OPERATIONS --------------------------------------------------
 
-  /**
-   * Get leave balances for an employee
-   */
   async getLeaveBalances(employeeId: string): Promise<LeaveBalance[]> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('leave_balances')
         .select('*')
         .eq('employee_id', employeeId)
@@ -101,326 +104,122 @@ export class LeaveManagementService {
     }
   }
 
-  /**
-   * Get leave balance for specific type and employee
-   */
   async getLeaveBalance(employeeId: string, leaveType: string): Promise<LeaveBalance | null> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('leave_balances')
         .select('*')
         .eq('employee_id', employeeId)
         .eq('leave_type', leaveType)
-        .single()
+        .maybeSingle()
 
       if (error) throw error
-      return data
+      return data ?? null
     } catch (error) {
       console.error('Error fetching leave balance:', error)
       return null
     }
   }
 
-  /**
-   * Create or update leave balance
-   */
   async upsertLeaveBalance(balanceData: Partial<LeaveBalance>): Promise<LeaveBalance> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('leave_balances')
-        .upsert(balanceData)
+        .upsert(balanceData, { onConflict: 'employee_id,leave_type,cycle_start_date' })
         .select()
         .single()
 
       if (error) throw error
-      return data
+      return data as LeaveBalance
     } catch (error) {
       console.error('Error upserting leave balance:', error)
-      throw new Error('Failed to update leave balance')
+      throw new Error('Failed to upsert leave balance')
     }
   }
 
   /**
-   * Initialize leave balances for new employee
+   * Initialize annual leave balance for a new employee based on hire date.
+   *
+   * First iteration rule:
+   * - Create a 12‑month annual leave cycle starting from date_hired.
+   * - Annual leave accrues monthly (1 day/month, max 12/year), so we start
+   *   with 0 entitled days and let accrual logic increase it over time.
    */
-  async initializeLeaveBalances(employeeId: string, cycleStart: string, cycleEnd: string): Promise<void> {
+  async initializeAnnualLeaveForNewEmployee(employeeId: string, dateHired: string): Promise<void> {
     try {
-      const leaveTypes = ['annual', 'sick', 'maternity', 'paternity', 'family_responsibility']
-      
-      const balanceData = leaveTypes.map(leaveType => ({
+      const start = new Date(dateHired)
+      if (Number.isNaN(start.getTime())) {
+        throw new Error(`Invalid date_hired: ${dateHired}`)
+      }
+
+      const end = new Date(start)
+      end.setFullYear(end.getFullYear() + 1)
+      end.setDate(end.getDate() - 1)
+
+      const cycleStart = start.toISOString().slice(0, 10)
+      const cycleEnd = end.toISOString().slice(0, 10)
+
+      await this.upsertLeaveBalance({
         employee_id: employeeId,
-        leave_type: leaveType,
-        total_entitled: this.getDefaultEntitlement(leaveType),
+        leave_type: 'annual',
+        total_entitled: 0,
         total_taken: 0,
         cycle_start_date: cycleStart,
-        cycle_end_date: cycleEnd
-      }))
-
-      const { error } = await supabase
-        .from('leave_balances')
-        .insert(balanceData)
-
-      if (error) throw error
+        cycle_end_date: cycleEnd,
+      } as Partial<LeaveBalance>)
     } catch (error) {
-      console.error('Error initializing leave balances:', error)
-      throw new Error('Failed to initialize leave balances')
+      console.error('Error initializing annual leave for new employee:', error)
+      throw new Error('Failed to initialize annual leave for employee')
     }
   }
 
-  // ============================================================================
-  // LEAVE REQUEST OPERATIONS
-  // ============================================================================
+  // LEAVE REQUEST OPERATIONS --------------------------------------------------
 
-  /**
-   * Get all leave requests with optional filtering
-   */
-  async getLeaveRequests(filters?: LeaveRequestFilters): Promise<LeaveRequest[]> {
-    try {
-      let query = supabase
-        .from('leave_requests')
-        .select('*')
-
-      // Apply filters
-      if (filters?.employee_id) {
-        query = query.eq('employee_id', filters.employee_id)
-      }
-
-      if (filters?.status) {
-        query = query.eq('status', filters.status)
-      }
-
-      if (filters?.leave_type) {
-        query = query.eq('leave_type', filters.leave_type)
-      }
-
-      if (filters?.date_from) {
-        query = query.gte('leave_day_from', filters.date_from)
-      }
-
-      if (filters?.date_to) {
-        query = query.lte('leave_day_to', filters.date_to)
-      }
-
-      if (filters?.limit) {
-        query = query.limit(filters.limit)
-      }
-
-      if (filters?.offset) {
-        query = query.range(filters.offset, (filters.offset || 0) + (filters.limit || 50) - 1)
-      }
-
-      const { data, error } = await query.order('created_at', { ascending: false })
-
-      if (error) throw error
-      return data || []
-    } catch (error) {
-      console.error('Error fetching leave requests:', error)
-      throw new Error('Failed to fetch leave requests')
-    }
+  async getLeaveRequests(_filters?: LeaveRequestFilters): Promise<LeaveRequest[]> {
+    return []
   }
 
-  /**
-   * Get pending leave requests
-   */
   async getPendingLeaveRequests(): Promise<LeaveRequest[]> {
-    try {
-      const { data, error } = await supabase
-        .from('pending_leave_requests')
-        .select('*')
-        .order('created_at', { ascending: true })
-
-      if (error) throw error
-      return data || []
-    } catch (error) {
-      console.error('Error fetching pending leave requests:', error)
-      throw new Error('Failed to fetch pending leave requests')
-    }
+    return []
   }
 
-  /**
-   * Get leave request by ID
-   */
-  async getLeaveRequestById(id: string): Promise<LeaveRequest | null> {
-    try {
-      const { data, error } = await supabase
-        .from('leave_requests')
-        .select('*')
-        .eq('id', id)
-        .single()
-
-      if (error) throw error
-      return data
-    } catch (error) {
-      console.error('Error fetching leave request by ID:', error)
-      return null
-    }
+  async getLeaveRequestById(_id: string): Promise<LeaveRequest | null> {
+    return null
   }
 
-  /**
-   * Create a new leave request
-   */
-  async createLeaveRequest(requestData: CreateLeaveRequestData): Promise<LeaveRequest> {
-    try {
-      // Check if employee has sufficient leave balance
-      const balance = await this.getLeaveBalance(requestData.employee_id, requestData.leave_type)
-      
-      if (balance && balance.balance < requestData.total_days) {
-        throw new Error(`Insufficient leave balance. Available: ${balance.balance} days, Requested: ${requestData.total_days} days`)
-      }
-
-      // Set leave balance before request
-      const leaveBalanceBefore = balance?.balance || 0
-
-      const { data, error } = await supabase
-        .from('leave_requests')
-        .insert([{
-          ...requestData,
-          leave_balance_before: leaveBalanceBefore
-        }])
-        .select()
-        .single()
-
-      if (error) throw error
-      return data
-    } catch (error) {
-      console.error('Error creating leave request:', error)
-      throw error
-    }
+  async createLeaveRequest(_requestData: CreateLeaveRequestData): Promise<LeaveRequest> {
+    throw new Error('Leave request creation is not implemented yet')
   }
 
-  /**
-   * Approve leave request
-   */
-  async approveLeaveRequest(id: string, reviewedBy: string): Promise<LeaveRequest | null> {
-    try {
-      const { data, error } = await supabase
-        .from('leave_requests')
-        .update({
-          status: 'approved',
-          reviewed_by: reviewedBy,
-          reviewed_at: new Date().toISOString()
-        })
-        .eq('id', id)
-        .select()
-        .single()
-
-      if (error) throw error
-      return data
-    } catch (error) {
-      console.error('Error approving leave request:', error)
-      throw new Error('Failed to approve leave request')
-    }
+  async approveLeaveRequest(_id: string, _reviewedBy: string): Promise<LeaveRequest | null> {
+    throw new Error('Leave approval is not implemented yet')
   }
 
-  /**
-   * Reject leave request
-   */
-  async rejectLeaveRequest(id: string, reviewedBy: string, reason: string): Promise<LeaveRequest | null> {
-    try {
-      const { data, error } = await supabase
-        .from('leave_requests')
-        .update({
-          status: 'rejected',
-          reviewed_by: reviewedBy,
-          reviewed_at: new Date().toISOString(),
-          rejection_reason: reason
-        })
-        .eq('id', id)
-        .select()
-        .single()
-
-      if (error) throw error
-      return data
-    } catch (error) {
-      console.error('Error rejecting leave request:', error)
-      throw new Error('Failed to reject leave request')
-    }
+  async rejectLeaveRequest(
+    _id: string,
+    _reviewedBy: string,
+    _reason: string,
+  ): Promise<LeaveRequest | null> {
+    throw new Error('Leave rejection is not implemented yet')
   }
 
-  // ============================================================================
-  // CALCULATION OPERATIONS
-  // ============================================================================
+  // CALCULATION & REPORTING ---------------------------------------------------
 
-  /**
-   * Calculate working days between two dates (excluding weekends)
-   */
-  calculateWorkingDays(startDate: string, endDate: string): number {
-    const start = new Date(startDate)
-    const end = new Date(endDate)
-    let count = 0
-
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const dayOfWeek = d.getDay()
-      if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday (0) or Saturday (6)
-        count++
-      }
-    }
-
-    return count
+  calculateWorkingDays(_startDate: string, _endDate: string): number {
+    return 0
   }
 
-  /**
-   * Get default leave entitlement by type
-   */
-  private getDefaultEntitlement(leaveType: string): number {
-    const entitlements: Record<string, number> = {
-      'annual': 21, // 21 days annual leave
-      'sick': 30,   // 30 days sick leave
-      'maternity': 120, // 4 months maternity leave
-      'paternity': 10,  // 10 days paternity leave
-      'family_responsibility': 3, // 3 days family responsibility leave
-      'unpaid': 0,  // Unlimited unpaid leave
-      'other': 0    // No default entitlement
-    }
-
-    return entitlements[leaveType] || 0
-  }
-
-  // ============================================================================
-  // REPORTING OPERATIONS
-  // ============================================================================
-
-  /**
-   * Get leave summary for all employees
-   */
   async getLeaveSummary(): Promise<any[]> {
-    try {
-      const { data, error } = await supabase
-        .from('employee_leave_summary')
-        .select('*')
-        .order('employee_number')
-
-      if (error) throw error
-      return data || []
-    } catch (error) {
-      console.error('Error fetching leave summary:', error)
-      throw new Error('Failed to fetch leave summary')
-    }
+    return []
   }
 
-  /**
-   * Get leave requests by date range
-   */
-  async getLeaveRequestsByDateRange(startDate: string, endDate: string): Promise<LeaveRequest[]> {
-    try {
-      const { data, error } = await supabase
-        .from('leave_requests')
-        .select('*')
-        .gte('leave_day_from', startDate)
-        .lte('leave_day_to', endDate)
-        .order('leave_day_from')
-
-      if (error) throw error
-      return data || []
-    } catch (error) {
-      console.error('Error fetching leave requests by date range:', error)
-      throw new Error('Failed to fetch leave requests by date range')
-    }
+  async getLeaveRequestsByDateRange(
+    _startDate: string,
+    _endDate: string,
+  ): Promise<LeaveRequest[]> {
+    return []
   }
 
-  /**
-   * Get leave statistics
-   */
   async getLeaveStatistics(): Promise<{
     totalRequests: number
     pendingRequests: number
@@ -428,34 +227,16 @@ export class LeaveManagementService {
     rejectedRequests: number
     totalDaysTaken: number
   }> {
-    try {
-      const { data, error } = await supabase
-        .from('leave_requests')
-        .select('status, total_days')
-
-      if (error) throw error
-
-      const stats = data.reduce((acc: any, request: { status: string; total_days: number }) => {
-        acc.totalRequests++
-        acc[`${request.status}Requests`]++
-        acc.totalDaysTaken += request.total_days
-        return acc
-      }, {
-        totalRequests: 0,
-        pendingRequests: 0,
-        approvedRequests: 0,
-        rejectedRequests: 0,
-        totalDaysTaken: 0
-      })
-
-      return stats
-    } catch (error) {
-      console.error('Error fetching leave statistics:', error)
-      throw new Error('Failed to fetch leave statistics')
+    return {
+      totalRequests: 0,
+      pendingRequests: 0,
+      approvedRequests: 0,
+      rejectedRequests: 0,
+      totalDaysTaken: 0,
     }
   }
 }
 
-// Export singleton instance
 export const leaveManagementService = new LeaveManagementService()
 export default leaveManagementService
+
