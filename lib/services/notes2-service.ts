@@ -111,7 +111,7 @@ class Notes2Service {
 
       // Fetch creator roles for each note
       const notesWithRoles = await Promise.all(
-        (notes ?? []).map(async (note) => {
+        (notes ?? []).map(async (note: Notes2Record) => {
           const { data: employee } = await supabaseAdmin
             .from("employees")
             .select("role:roles(role_name)")
@@ -153,7 +153,7 @@ class Notes2Service {
 
       // Fetch creator roles for each note
       const notesWithRoles = await Promise.all(
-        (notes ?? []).map(async (note) => {
+        (notes ?? []).map(async (note: Notes2Record) => {
           const { data: employee } = await supabaseAdmin
             .from("employees")
             .select("role:roles(role_name)")
@@ -282,11 +282,13 @@ class Notes2Service {
           visibility: baseNote.visibility,
           created_at: baseNote.created_at,
           updated_at: baseNote.updated_at,
+          reminder_at: baseNote.reminder_at ?? null,
+          reminder_enabled: baseNote.reminder_enabled ?? false,
           creator_role: creatorRole,
           // Add recipient info as metadata (we'll need to extend the type)
           recipient_names: recipientNames, // This will be passed through
           recipient_count: recipientNames.length,
-          note_ids: noteGroup.map(n => n.id), // Store all note IDs for deletion
+          note_ids: noteGroup.map((n: Notes2Record) => n.id), // Store all note IDs for deletion
         }
 
         groupedRecords.push(groupedRecord)
@@ -322,7 +324,7 @@ class Notes2Service {
 
       // Fetch creator roles for each note
       const notesWithRoles = await Promise.all(
-        (notes ?? []).map(async (note) => {
+        (notes ?? []).map(async (note: Notes2Record) => {
           const { data: employee } = await supabaseAdmin
             .from("employees")
             .select("role:roles(role_name)")
@@ -363,7 +365,7 @@ class Notes2Service {
 
       // Fetch creator roles for each note
       const notesWithRoles = await Promise.all(
-        (notes ?? []).map(async (note) => {
+        (notes ?? []).map(async (note: Notes2Record) => {
           const { data: employee } = await supabaseAdmin
             .from("employees")
             .select("role:roles(role_name)")
@@ -402,7 +404,7 @@ class Notes2Service {
 
       // Fetch creator roles for each note
       const notesWithRoles = await Promise.all(
-        (notes ?? []).map(async (note) => {
+        (notes ?? []).map(async (note: Notes2Record) => {
           const { data: employee } = await supabaseAdmin
             .from("employees")
             .select("role:roles(role_name)")
@@ -439,7 +441,7 @@ class Notes2Service {
 
       // Fetch creator roles for each note
       const notesWithRoles = await Promise.all(
-        (notes ?? []).map(async (note) => {
+        (notes ?? []).map(async (note: Notes2Record) => {
           const { data: employee } = await supabaseAdmin
             .from("employees")
             .select("role:roles(role_name)")
@@ -652,7 +654,7 @@ class Notes2Service {
 
       // Fetch creator roles for each note
       const notesWithRoles = await Promise.all(
-        (notes ?? []).map(async (note) => {
+        (notes ?? []).map(async (note: Notes2Record) => {
           const { data: employee } = await supabaseAdmin
             .from("employees")
             .select("role:roles(role_name)")
@@ -874,8 +876,9 @@ class Notes2Service {
         authUserId,
         total: allReminderNotes?.length ?? 0,
         queryError: allNotesError,
-        distinctEmployeeIds: Array.from(new Set(allReminderNotes?.map(n => n.employee_id) ?? [])),
-        notes: allReminderNotes?.map(n => {
+        distinctEmployeeIds: Array.from(new Set(allReminderNotes?.map((n: Notes2Record) => n.employee_id) ?? [])),
+        notes: allReminderNotes?.map((n: Notes2Record) => {
+          if (!n.reminder_at) return { id: n.id, title: n.title, reminder_at: null, error: 'No reminder date' }
           const reminderDate = new Date(n.reminder_at)
           const nowDate = new Date(nowISO)
           const threeDaysDate = new Date(threeDaysFromNowISO)
@@ -927,7 +930,8 @@ class Notes2Service {
 
       // Debug: Check if any notes are being filtered out
       if (allReminderNotes && allReminderNotes.length > 0) {
-        const filteredOut = allReminderNotes.filter(note => {
+        const filteredOut = allReminderNotes.filter((note: Notes2Record) => {
+          if (!note.reminder_at) return true // Filter out notes without reminder dates
           const reminderDate = new Date(note.reminder_at)
           const nowDate = new Date(nowISO)
           const threeDaysDate = new Date(threeDaysFromNowISO)
@@ -936,7 +940,8 @@ class Notes2Service {
           return isInPast || isTooFarFuture
         })
         
-        const filteredIn = allReminderNotes.filter(note => {
+        const filteredIn = allReminderNotes.filter((note: Notes2Record) => {
+          if (!note.reminder_at) return false // Filter out notes without reminder dates
           const reminderDate = new Date(note.reminder_at)
           const nowDate = new Date(nowISO)
           const threeDaysDate = new Date(threeDaysFromNowISO)
@@ -947,7 +952,8 @@ class Notes2Service {
           totalNotes: allReminderNotes.length,
           filteredIn: filteredIn.length,
           filteredOut: filteredOut.length,
-          filteredOutDetails: filteredOut.map(n => {
+          filteredOutDetails: filteredOut.map((n: Notes2Record) => {
+            if (!n.reminder_at) return { id: n.id, title: n.title, reminder_at: null, error: 'No reminder date' }
             const reminderDate = new Date(n.reminder_at)
             const nowDate = new Date(nowISO)
             const threeDaysDate = new Date(threeDaysFromNowISO)
@@ -975,7 +981,8 @@ class Notes2Service {
               },
             }
           }),
-          filteredInDetails: filteredIn.map(n => {
+          filteredInDetails: filteredIn.map((n: Notes2Record) => {
+            if (!n.reminder_at) return { id: n.id, title: n.title, reminder_at: null, error: 'No reminder date' }
             const reminderDate = new Date(n.reminder_at)
             const hoursUntil = (reminderDate.getTime() - now.getTime()) / (1000 * 60 * 60)
             const daysUntil = hoursUntil / 24
@@ -997,8 +1004,9 @@ class Notes2Service {
           to: threeDaysFromNowISO,
         },
         notesFound: notes?.length ?? 0,
-        distinctEmployeeIds: Array.from(new Set(notes?.map(n => n.employee_id) ?? [])),
-        reminderDates: notes?.map(n => {
+        distinctEmployeeIds: Array.from(new Set(notes?.map((n: Notes2Record) => n.employee_id) ?? [])),
+        reminderDates: notes?.map((n: Notes2Record) => {
+          if (!n.reminder_at) return { id: n.id, title: n.title, reminder_at: null, hoursUntil: null, daysUntil: null }
           const reminderDate = new Date(n.reminder_at)
           const hoursUntil = (reminderDate.getTime() - now.getTime()) / (1000 * 60 * 60)
           const daysUntil = hoursUntil / 24
@@ -1011,7 +1019,7 @@ class Notes2Service {
             daysUntil: Math.round(daysUntil * 100) / 100,
           }
         }) ?? [],
-        fullNotes: notes?.map(n => ({
+        fullNotes: notes?.map((n: Notes2Record) => ({
           id: n.id,
           title: n.title,
           content: n.content?.substring(0, 50),
@@ -1026,7 +1034,7 @@ class Notes2Service {
 
       // Fetch creator roles for each note
       const notesWithRoles = await Promise.all(
-        (notes ?? []).map(async (note) => {
+        (notes ?? []).map(async (note: Notes2Record) => {
           const { data: employee } = await supabaseAdmin
             .from("employees")
             .select("role:roles(role_name)")

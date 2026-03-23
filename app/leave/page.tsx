@@ -4,8 +4,8 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { format, addDays, isWeekend, eachDayOfInterval } from "date-fns"
-import { CalendarIcon, RocketIcon, Clock, User, FileText, CheckCircle2, AlertCircle } from "lucide-react"
+import { format, addDays, isWeekend, eachDayOfInterval, isWithinInterval, startOfDay } from "date-fns"
+import { CalendarIcon, RocketIcon, Clock, User, FileText, CheckCircle2, AlertCircle, XCircle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -18,8 +18,17 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Calendar } from "@/components/ui/calendar"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/hooks/use-toast"
 import { AnimatePresence, motion } from "framer-motion"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 import { 
   leaveRequestSchema, 
@@ -28,9 +37,11 @@ import {
   calculateWorkingDays,
   getLeaveTypeDisplayName,
   validateLeaveRequest,
-  checkLeaveEligibility
+  checkLeaveEligibility,
+  getLeaveStatusInfo
 } from "@/lib/validation/leave"
 import { getCurrentUser } from "@/lib/auth"
+import { isEmployeeFullyVerified } from "@/lib/employee-verification"
 
 // Mock employee profile data - replace with actual API call
 const mockEmployeeProfile = {
@@ -58,10 +69,54 @@ const mockEmployeeProfile = {
 export default function LeaveRequestPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const user = getCurrentUser()
   const [employeeProfile, setEmployeeProfile] = useState<typeof mockEmployeeProfile | null>(null)
+  const [leaveBalances, setLeaveBalances] = useState<any[]>([])
+  const [availableBalances, setAvailableBalances] = useState<Record<string, number>>({})
+  const [blockedLeaveDates, setBlockedLeaveDates] = useState<Array<{ start: Date; end: Date }>>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  
+  // History tab state
+  const [leaveHistory, setLeaveHistory] = useState<any[]>([])
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false)
+  const [selectedRequest, setSelectedRequest] = useState<any | null>(null)
+  const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState("request")
+
+  useEffect(() => {
+    if (user?.role !== "employee") return
+
+    const enforceVerificationAccess = async () => {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        const storedSession = localStorage.getItem("xspark_session")
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            headers.Authorization = `Bearer ${sessionParsed.access_token}`
+          }
+        }
+
+        const res = await fetch("/api/auth/me", { headers })
+        const json = await res.json().catch(() => ({}))
+        const profile = json?.data?.employee
+        if (!isEmployeeFullyVerified(profile)) {
+          toast({
+            title: "Verification required",
+            description: "Complete your profile verification to access Leave Requests.",
+            variant: "destructive",
+          })
+          router.replace("/dashboard")
+        }
+      } catch {
+        router.replace("/dashboard")
+      }
+    }
+
+    enforceVerificationAccess()
+  }, [router, toast, user?.role])
 
   const form = useForm<LeaveRequestFormData>({
     resolver: zodResolver(leaveRequestSchema),
@@ -162,8 +217,7 @@ export default function LeaveRequestPage() {
           setValue("email", employee.email || "")
           setValue("direct_superior", "") // Not available in current schema
 
-          // Set employee profile for leave balance calculations
-          setEmployeeProfile({
+          const profile = {
             id: employee.id,
             first_name: employee.first_name,
             middle_name: employee.middle_name || "",
@@ -175,15 +229,86 @@ export default function LeaveRequestPage() {
             direct_superior: "",
             email: employee.email || "",
             date_hired: employee.date_hired ? new Date(employee.date_hired) : new Date(),
-            leave_balances: [
-              { type: "annual", balance: 15 },
-              { type: "sick", balance: 30 },
-              { type: "family_responsibility", balance: 3 },
-              { type: "maternity", balance: 120 },
-              { type: "paternity", balance: 10 },
-              { type: "unpaid", balance: 999 },
-            ],
+            leave_balances: [],
+          }
+
+          // Set employee profile
+          setEmployeeProfile(profile)
+
+          // Fetch live leave balances from Supabase-backed API
+          try {
+            const balancesRes = await fetch(`/api/leave/balances?employee_id=${employee.id}`)
+            if (balancesRes.ok) {
+              const balancesJson = await balancesRes.json()
+              if (balancesJson?.success && Array.isArray(balancesJson.data)) {
+                setLeaveBalances(balancesJson.data)
+              }
+            }
+          } catch (balanceError) {
+            console.error('Error fetching leave balances:', balanceError)
+          }
+
+          // Fetch available balances for all leave types
+          const leaveTypes = ['annual', 'sick', 'family_responsibility', 'maternity', 'paternity', 'unpaid', 'other']
+          const balancePromises = leaveTypes.map(async (leaveType) => {
+            try {
+              const res = await fetch(
+                `/api/leave/requests/balances/available?employee_id=${employee.id}&leave_type=${leaveType}`
+              )
+              if (res.ok) {
+                const json = await res.json()
+                if (json.success && json.data?.available_balance !== undefined) {
+                  return { leaveType, balance: json.data.available_balance }
+                }
+              }
+            } catch (error) {
+              console.error(`Error fetching available balance for ${leaveType}:`, error)
+            }
+            return { leaveType, balance: 0 }
           })
+
+          const balanceResults = await Promise.all(balancePromises)
+          const balancesMap: Record<string, number> = {}
+          balanceResults.forEach(({ leaveType, balance }) => {
+            balancesMap[leaveType] = balance
+          })
+          setAvailableBalances(balancesMap)
+
+          // Fetch leave requests to block dates (pending and approved only, not rejected)
+          try {
+            const requestsRes = await fetch(`/api/leave/requests?employee_id=${employee.id}`, {
+              headers: {
+                'Content-Type': 'application/json',
+                ...authHeaders
+              }
+            })
+            if (requestsRes.ok) {
+              const requestsData = await requestsRes.json()
+              if (requestsData?.success && Array.isArray(requestsData.data)) {
+                // Filter for pending and approved requests only (exclude rejected/cancelled)
+                const activeRequests = requestsData.data.filter((req: any) => 
+                  req.status === 'pending' || req.status === 'approved'
+                )
+                
+                // Extract date ranges
+                const blockedRanges = activeRequests.map((req: any) => {
+                  const startDate = req.start_date || req.leave_day_from
+                  const endDate = req.end_date || req.leave_day_to
+                  if (startDate && endDate) {
+                    return {
+                      start: startOfDay(new Date(startDate)),
+                      end: startOfDay(new Date(endDate))
+                    }
+                  }
+                  return null
+                }).filter((range: any) => range !== null) as Array<{ start: Date; end: Date }>
+                
+                setBlockedLeaveDates(blockedRanges)
+              }
+            }
+          } catch (error) {
+            console.error('Error fetching leave requests for date blocking:', error)
+          }
         } else {
           router.replace("/login")
         }
@@ -203,17 +328,51 @@ export default function LeaveRequestPage() {
     fetchEmployeeData()
   }, [router, setValue, toast])
 
+  // Function to calculate working days using API (or fallback)
+  const calculateTotalDays = async (startDate: Date, endDate: Date): Promise<number> => {
+    try {
+      // Format dates as YYYY-MM-DD strings
+      const startStr = format(startDate, 'yyyy-MM-dd')
+      const endStr = format(endDate, 'yyyy-MM-dd')
+
+      // Try to calculate via API using the service's calculateWorkingDays
+      // Since we can't call the service directly from client, we'll use a fallback
+      // The API will recalculate anyway, so we use a simple calculation here
+      // The actual calculation happens server-side in the API
+      const days = calculateWorkingDays(startDate, endDate)
+      return days
+    } catch (error) {
+      console.error('Error calculating working days:', error)
+      // Fallback to simple date difference
+      return calculateWorkingDays(startDate, endDate)
+    }
+  }
+
   useEffect(() => {
     if (leaveDayFrom && leaveDayTo) {
-      const days = calculateWorkingDays(leaveDayFrom, leaveDayTo)
-      setValue("total_days", days)
-      trigger("total_days")
+      // Calculate total days asynchronously
+      calculateTotalDays(leaveDayFrom, leaveDayTo).then((days) => {
+        setValue("total_days", days)
+        trigger("total_days")
+      })
     } else {
       setValue("total_days", 0)
     }
   }, [leaveDayFrom, leaveDayTo, setValue, trigger])
 
   const getLeaveBalance = (type: string) => {
+    // Prefer available balance from API (most accurate - includes pending deductions)
+    if (availableBalances[type] !== undefined) {
+      return availableBalances[type]
+    }
+
+    // Fallback to live balances from API
+    const apiBalance = leaveBalances.find((b) => b.leave_type === type)
+    if (apiBalance && typeof apiBalance.balance === "number") {
+      return apiBalance.balance
+    }
+
+    // Final fallback to local calculation (currently minimal)
     return calculateLeaveBalance(employeeProfile?.id || "", type, employeeProfile?.date_hired)
   }
 
@@ -231,6 +390,21 @@ export default function LeaveRequestPage() {
     setIsSubmitting(true)
     
     try {
+      // Validate required fields
+      if (!employeeProfile?.id) {
+        throw new Error("Employee information not loaded. Please refresh the page.")
+      }
+
+      if (!data.leave_day_from || !data.leave_day_to) {
+        throw new Error("Please select both start and end dates.")
+      }
+
+      // Calculate total days if not already set
+      let totalDays = data.total_days ?? 0
+      if (totalDays === 0 && data.leave_day_from && data.leave_day_to) {
+        totalDays = await calculateTotalDays(data.leave_day_from, data.leave_day_to)
+      }
+
       // Check leave eligibility
       const eligibility = checkLeaveEligibility(data.leave_type, employeeProfile?.date_hired)
       if (!eligibility.eligible) {
@@ -245,7 +419,7 @@ export default function LeaveRequestPage() {
 
       // Validate leave balance
       const currentBalance = getLeaveBalance(data.leave_type)
-      if (data.total_days > currentBalance && data.leave_type !== "unpaid") {
+      if (totalDays > currentBalance && data.leave_type !== "unpaid") {
         toast({
           title: "Leave Request Failed",
           description: `Insufficient leave balance for ${getLeaveTypeDisplayName(data.leave_type)}. Available: ${currentBalance} days.`,
@@ -255,32 +429,65 @@ export default function LeaveRequestPage() {
         return
       }
 
-      // Set balance before/after
-      setValue("leave_balance_before", currentBalance)
-      setValue("leave_balance_after", currentBalance - data.total_days)
+      // Format dates as YYYY-MM-DD strings
+      const startDate = format(data.leave_day_from!, 'yyyy-MM-dd')
+      const endDate = format(data.leave_day_to!, 'yyyy-MM-dd')
+
+      // Prepare payload for API
+      const payload = {
+        employee_id: employeeProfile.id, // Current user's employee UUID
+        leave_type: data.leave_type, // Key from leave_types table
+        start_date: startDate, // YYYY-MM-DD format
+        end_date: endDate, // YYYY-MM-DD format
+        total_days: totalDays, // Calculated working days
+        reason: data.reason || undefined,
+        document_url: data.supporting_document_url || undefined,
+        document_required: false, // Can be enhanced later
+        submitted_by: employeeProfile.id, // Current user's employee UUID
+      }
+
+      // Get auth token from localStorage
+      let authHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      const storedSession = localStorage.getItem('xspark_session')
+      if (storedSession) {
+        try {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            authHeaders['Authorization'] = `Bearer ${sessionParsed.access_token}`
+          }
+        } catch {}
+      }
 
       // Submit to API
-      const response = await fetch("/api/leave", {
+      const response = await fetch("/api/leave/requests", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(data),
+        headers: authHeaders,
+        body: JSON.stringify(payload),
       })
 
       if (!response.ok) {
         const errorData = await response.json()
-        throw new Error(errorData.message || "Failed to submit leave request.")
+        throw new Error(errorData.error || errorData.message || "Failed to submit leave request.")
       }
+
+      const responseData = await response.json()
 
       toast({
         title: "Leave Request Submitted",
-        description: "Your leave request has been successfully submitted for approval.",
+        description: responseData.message || "Your leave request has been successfully submitted for approval.",
       })
       
       setShowConfirmation(true)
       
+      // Refresh history after successful submission
+      if (employeeProfile?.id) {
+        fetchLeaveHistory(employeeProfile.id)
+      }
+      
     } catch (error: any) {
+      console.error('Error submitting leave request:', error)
       toast({
         title: "Error",
         description: error.message || "An unexpected error occurred.",
@@ -288,6 +495,87 @@ export default function LeaveRequestPage() {
       })
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  // Fetch leave history
+  const fetchLeaveHistory = async (employeeId: string) => {
+    try {
+      setIsHistoryLoading(true)
+      
+      // Get auth token from localStorage
+      let authHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+      }
+      const storedSession = localStorage.getItem('xspark_session')
+      if (storedSession) {
+        try {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            authHeaders['Authorization'] = `Bearer ${sessionParsed.access_token}`
+          }
+        } catch {}
+      }
+
+      // Fetch all leave requests for this employee
+      const response = await fetch(`/api/leave/requests?employee_id=${employeeId}&limit=100`, {
+        headers: authHeaders,
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch leave requests')
+      }
+
+      const json = await response.json()
+      if (json.success && Array.isArray(json.data)) {
+        // Map API response
+        const mappedRequests = json.data.map((request: any) => {
+          const leaveType = request.leave_types || request.leave_type || (Array.isArray(request.leave_types) ? request.leave_types[0] : null)
+          const leaveTypeKey = leaveType?.key || 'unknown'
+          
+          return {
+            ...request,
+            leave_type: leaveTypeKey,
+            leave_types: leaveType,
+          }
+        })
+        
+        // Sort by created_at descending (newest first)
+        mappedRequests.sort((a: any, b: any) => {
+          const dateA = new Date(a.created_at || a.submitted_at || 0).getTime()
+          const dateB = new Date(b.created_at || b.submitted_at || 0).getTime()
+          return dateB - dateA
+        })
+        
+        setLeaveHistory(mappedRequests)
+      } else {
+        setLeaveHistory([])
+      }
+    } catch (error) {
+      console.error('Error fetching leave history:', error)
+      setLeaveHistory([])
+    } finally {
+      setIsHistoryLoading(false)
+    }
+  }
+
+  // Fetch history when employee profile is loaded
+  useEffect(() => {
+    if (employeeProfile?.id) {
+      fetchLeaveHistory(employeeProfile.id)
+    }
+  }, [employeeProfile?.id])
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "approved":
+        return <CheckCircle2 className="h-4 w-4 text-green-600" />
+      case "rejected":
+        return <XCircle className="h-4 w-4 text-red-600" />
+      case "pending":
+        return <Clock className="h-4 w-4 text-yellow-600" />
+      default:
+        return <Clock className="h-4 w-4 text-gray-600" />
     }
   }
 
@@ -299,53 +587,32 @@ export default function LeaveRequestPage() {
     )
   }
 
-  if (showConfirmation) {
-    return (
-      <div className="container mx-auto p-6 space-y-6">
-        <Card className="max-w-2xl mx-auto">
-          <CardContent className="p-8 text-center space-y-6">
-            <div className="flex justify-center">
-              <div className="h-16 w-16 rounded-full bg-green-100 flex items-center justify-center">
-                <CheckCircle2 className="h-8 w-8 text-green-600" />
-              </div>
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-navy mb-2">Leave Request Submitted!</h2>
-              <p className="text-muted-foreground">
-                Your leave request has been successfully submitted and is pending approval.
-              </p>
-            </div>
-            <div className="space-y-4">
-              <Button 
-                onClick={() => router.push("/dashboard")} 
-                className="w-full"
-              >
-                Return to Dashboard
-              </Button>
-              <Button 
-                variant="outline" 
-                onClick={() => router.push("/leave/history")} 
-                className="w-full"
-              >
-                View My Leave History
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-2xl font-bold text-navy flex items-center gap-2">
-            <RocketIcon className="h-6 w-6" />
-            Leave Request Form
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-navy">Leave Requests</h1>
+          <p className="text-muted-foreground mt-1">
+            Submit new leave requests and view your leave history
+          </p>
+        </div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="request">New Request</TabsTrigger>
+          <TabsTrigger value="history">Leave History</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="request" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-2xl font-bold text-navy flex items-center gap-2">
+                <RocketIcon className="h-6 w-6" />
+                Leave Request Form
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               
@@ -526,7 +793,27 @@ export default function LeaveRequestPage() {
                                 setValue("leave_day_to", toDate ?? undefined, { shouldValidate: true })
                                 trigger(["leave_day_from", "leave_day_to"])
                               }}
-                              disabled={(date) => date < addDays(new Date(), -1)}
+                              disabled={(date) => {
+                                // Disable past dates
+                                if (date < addDays(new Date(), -1)) return true
+                                
+                                // Disable dates that are in blocked leave request ranges
+                                const dateToCheck = startOfDay(date)
+                                return blockedLeaveDates.some(range => 
+                                  isWithinInterval(dateToCheck, { start: range.start, end: range.end })
+                                )
+                              }}
+                              modifiers={{
+                                blocked: (date) => {
+                                  const dateToCheck = startOfDay(date)
+                                  return blockedLeaveDates.some(range => 
+                                    isWithinInterval(dateToCheck, { start: range.start, end: range.end })
+                                  )
+                                }
+                              }}
+                              modifiersClassNames={{
+                                blocked: "bg-red-100 text-red-600 hover:bg-red-200 cursor-not-allowed opacity-60"
+                              }}
                               initialFocus
                             />
                           </PopoverContent>
@@ -624,9 +911,9 @@ export default function LeaveRequestPage() {
               </AnimatePresence>
 
               {/* Leave Balance Warning */}
-              {leaveType !== "unpaid" && leaveDayFrom && leaveDayTo && (
+              {leaveType && leaveType !== "unpaid" && leaveDayFrom && leaveDayTo && (
                 <AnimatePresence>
-                  {form.watch("total_days") > getLeaveBalance(leaveType) && (
+                  {((form.watch("total_days") ?? 0) > getLeaveBalance(leaveType)) && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
@@ -639,7 +926,7 @@ export default function LeaveRequestPage() {
                         <span className="font-medium">Insufficient Leave Balance</span>
                       </div>
                       <p className="text-red-700 mt-1">
-                        You are requesting {form.watch("total_days")} days but only have {getLeaveBalance(leaveType)} days available for {getLeaveTypeDisplayName(leaveType)}.
+                        You are requesting {form.watch("total_days") ?? 0} days but only have {getLeaveBalance(leaveType)} days available for {getLeaveTypeDisplayName(leaveType)}.
                       </p>
                     </motion.div>
                   )}
@@ -718,6 +1005,269 @@ export default function LeaveRequestPage() {
           </Form>
         </CardContent>
       </Card>
+
+      {/* Confirmation Popup */}
+      <Dialog open={showConfirmation} onOpenChange={setShowConfirmation}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-center">Leave Request Submitted!</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 text-center">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-full bg-green-100 flex items-center justify-center">
+                <CheckCircle2 className="h-8 w-8 text-green-600" />
+              </div>
+            </div>
+            <p className="text-muted-foreground">
+              Your leave request has been successfully submitted and is pending approval.
+            </p>
+            <div className="space-y-3">
+              <Button
+                className="w-full"
+                onClick={() => {
+                  setShowConfirmation(false)
+                  router.push("/dashboard")
+                }}
+              >
+                Return to Dashboard
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setShowConfirmation(false)
+                  setActiveTab("history")
+                }}
+              >
+                View My Leave History
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+        </TabsContent>
+
+        <TabsContent value="history" className="mt-6">
+          {/* Leave Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  <span className="font-semibold">Approved</span>
+                </div>
+                <div className="text-2xl font-bold mt-2">
+                  {leaveHistory.filter(req => req.status === "approved").length}
+                </div>
+                <p className="text-sm text-muted-foreground">Total approved requests</p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-yellow-600" />
+                  <span className="font-semibold">Pending</span>
+                </div>
+                <div className="text-2xl font-bold mt-2">
+                  {leaveHistory.filter(req => req.status === "pending").length}
+                </div>
+                <p className="text-sm text-muted-foreground">Awaiting approval</p>
+              </CardContent>
+            </Card>
+            
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-2">
+                  <XCircle className="h-5 w-5 text-red-600" />
+                  <span className="font-semibold">Rejected</span>
+                </div>
+                <div className="text-2xl font-bold mt-2">
+                  {leaveHistory.filter(req => req.status === "rejected").length}
+                </div>
+                <p className="text-sm text-muted-foreground">Total rejected requests</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Leave History Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Leave Requests
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {isHistoryLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                </div>
+              ) : leaveHistory.length === 0 ? (
+                <div className="text-center py-8">
+                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-muted-foreground mb-2">
+                    No Leave Requests Found
+                  </h3>
+                  <p className="text-muted-foreground mb-4">
+                    You haven't submitted any leave requests yet.
+                  </p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Leave Type</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Dates</TableHead>
+                      <TableHead>Duration</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Submitted</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {leaveHistory.map((request) => {
+                      const statusInfo = getLeaveStatusInfo(request.status)
+                      return (
+                        <TableRow key={request.id}>
+                          <TableCell className="font-medium">
+                            {getLeaveTypeDisplayName(request.leave_type)}
+                          </TableCell>
+                          <TableCell className="max-w-xs truncate">
+                            {request.reason || '-'}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1 text-sm">
+                              <CalendarIcon className="h-4 w-4" />
+                              {format(new Date(request.start_date), "MMM dd")} - {format(new Date(request.end_date), "MMM dd, yyyy")}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {request.total_days} day{request.total_days !== 1 ? 's' : ''}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              {getStatusIcon(request.status)}
+                              <Badge variant={statusInfo.variant}>
+                                {statusInfo.name}
+                              </Badge>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {format(new Date(request.created_at || request.submitted_at || ''), "MMM dd, yyyy")}
+                          </TableCell>
+                          <TableCell>
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => {
+                                setSelectedRequest(request)
+                                setIsDetailsDialogOpen(true)
+                              }}
+                            >
+                              View Details
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Leave Request Details Dialog */}
+          <Dialog open={isDetailsDialogOpen} onOpenChange={setIsDetailsDialogOpen}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Leave Request Details</DialogTitle>
+              </DialogHeader>
+              {selectedRequest && (
+                <ScrollArea className="max-h-[70vh]">
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground">Leave Type</Label>
+                        <p className="text-sm">{getLeaveTypeDisplayName(selectedRequest.leave_type || 'unknown')}</p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground">Status</Label>
+                        <div className="flex items-center gap-2">
+                          {getStatusIcon(selectedRequest.status)}
+                          <Badge variant={getLeaveStatusInfo(selectedRequest.status).variant}>
+                            {getLeaveStatusInfo(selectedRequest.status).name}
+                          </Badge>
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground">Start Date</Label>
+                        <p className="text-sm">{format(new Date(selectedRequest.start_date), "PPP")}</p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground">End Date</Label>
+                        <p className="text-sm">{format(new Date(selectedRequest.end_date), "PPP")}</p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground">Duration</Label>
+                        <p className="text-sm">{selectedRequest.total_days} day{selectedRequest.total_days !== 1 ? 's' : ''}</p>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground">Submitted</Label>
+                        <p className="text-sm">{format(new Date(selectedRequest.created_at || selectedRequest.submitted_at || ''), "PPP 'at' p")}</p>
+                      </div>
+                      {selectedRequest.reviewed_at && (
+                        <div>
+                          <Label className="text-sm font-medium text-muted-foreground">Reviewed</Label>
+                          <p className="text-sm">{format(new Date(selectedRequest.reviewed_at), "PPP 'at' p")}</p>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {selectedRequest.reason && (
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground mb-2">Reason for Leave</Label>
+                        <p className="text-sm bg-gray-50 p-3 rounded-lg whitespace-pre-wrap">{selectedRequest.reason}</p>
+                      </div>
+                    )}
+                    
+                    {selectedRequest.review_notes && selectedRequest.status === 'approved' && (
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground mb-2">Approver Comment</Label>
+                        <p className="text-sm bg-blue-50 p-3 rounded-lg whitespace-pre-wrap">{selectedRequest.review_notes}</p>
+                      </div>
+                    )}
+                    
+                    {selectedRequest.review_notes && selectedRequest.status === 'rejected' && (
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground mb-2">Rejection Reason</Label>
+                        <p className="text-sm bg-red-50 p-3 rounded-lg whitespace-pre-wrap">{selectedRequest.review_notes}</p>
+                      </div>
+                    )}
+                    
+                    {selectedRequest.document_url && (
+                      <div>
+                        <Label className="text-sm font-medium text-muted-foreground mb-2">Supporting Document</Label>
+                        <p className="text-sm">
+                          <a 
+                            href={selectedRequest.document_url} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-blue-600 hover:underline"
+                          >
+                            View Document
+                          </a>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </ScrollArea>
+              )}
+            </DialogContent>
+          </Dialog>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

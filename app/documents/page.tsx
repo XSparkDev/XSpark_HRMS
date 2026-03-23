@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import { format, subDays } from "date-fns"
 import {
   AlertCircle,
@@ -30,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 import { getCurrentUser, type User } from "@/lib/auth"
+import { isEmployeeFullyVerified } from "@/lib/employee-verification"
 import { documentsService, setDocumentsRequestHeaders } from "@/lib/services/documents-service"
 import { cn } from "@/lib/utils"
 import {
@@ -94,6 +96,7 @@ type SendDocumentRequest = {
 }
 
 export default function DocumentsPage() {
+  const router = useRouter()
   const user = getCurrentUser()
   const { toast } = useToast()
   const normalizedRole = user?.role?.toLowerCase() ?? "employee"
@@ -143,6 +146,39 @@ export default function DocumentsPage() {
   const [adminFilters, setAdminFilters] = useState({ search: "", type: "all", dateFrom: "", dateTo: "" })
   const [employeeFilterForTab, setEmployeeFilterForTab] = useState("all")
   const [isSendingDocument, setIsSendingDocument] = useState(false)
+
+  useEffect(() => {
+    if (user?.role !== "employee") return
+
+    const enforceVerificationAccess = async () => {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        const storedSession = localStorage.getItem("xspark_session")
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            headers.Authorization = `Bearer ${sessionParsed.access_token}`
+          }
+        }
+
+        const res = await fetch("/api/auth/me", { headers })
+        const json = await res.json().catch(() => ({}))
+        const profile = json?.data?.employee
+        if (!isEmployeeFullyVerified(profile)) {
+          toast({
+            title: "Verification required",
+            description: "Complete your profile verification to access Documents.",
+            variant: "destructive",
+          })
+          router.replace("/dashboard")
+        }
+      } catch {
+        router.replace("/dashboard")
+      }
+    }
+
+    enforceVerificationAccess()
+  }, [router, toast, user?.role])
 
   useEffect(() => {
     let isMounted = true
@@ -378,15 +414,17 @@ export default function DocumentsPage() {
     if (!user?.id) return
     
     try {
-      let downloadUrl = doc.file_url
-      
-      // If no file_url, try to get it from the API
-      if (!downloadUrl || downloadUrl.startsWith('blob:')) {
+      // Prefer API so we get a fresh signed URL for the private bucket
+      let downloadUrl: string | null = null
+      if (doc.id) {
         try {
           downloadUrl = await documentsService.downloadDocument(doc.id, user.id, user.name ?? "User")
         } catch (error) {
           console.error("[Documents] Failed to get download URL from API", error)
         }
+      }
+      if (!downloadUrl) {
+        downloadUrl = doc.file_url?.startsWith("blob:") ? null : doc.file_url
       }
       
       if (!downloadUrl) {
@@ -1080,9 +1118,45 @@ interface DocumentPreviewProps {
 
 function DocumentPreview({ document, isAdminView, onDownload }: DocumentPreviewProps) {
   const [previewError, setPreviewError] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [urlLoading, setUrlLoading] = useState(true)
   const isImage = document.file_type.startsWith("image/")
   const isPdf = document.file_type === "application/pdf"
-  const previewUrl = document.file_url
+
+  // Fetch a signed URL for private bucket (preview and download use signed URLs)
+  useEffect(() => {
+    if (!document.id) {
+      setPreviewUrl(document.file_url)
+      setUrlLoading(false)
+      return
+    }
+    let cancelled = false
+    setUrlLoading(true)
+    setPreviewError(false)
+    fetch(`/api/documents/${document.id}/signed-url`, { credentials: "include" })
+      .then((res) => {
+        if (cancelled) return
+        if (!res.ok) throw new Error("Failed to get preview URL")
+        return res.json()
+      })
+      .then((data: { url?: string }) => {
+        if (cancelled) return
+        setPreviewUrl(data?.url ?? document.file_url)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreviewUrl(document.file_url)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setUrlLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [document.id, document.file_url])
+
+  const displayUrl = previewUrl || document.file_url
 
   return (
     <div className="space-y-4">
@@ -1094,10 +1168,14 @@ function DocumentPreview({ document, isAdminView, onDownload }: DocumentPreviewP
         {isAdminView && <span>Employee: {document.employee_name}</span>}
       </div>
       <div className="rounded-lg border bg-muted/20 p-4">
-        {previewUrl && !previewError ? (
+        {urlLoading ? (
+          <div className="flex h-[420px] items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : displayUrl && !previewError ? (
           isImage ? (
             <img 
-              src={previewUrl} 
+              src={displayUrl} 
               alt={document.name} 
               className="mx-auto max-h-[420px] object-contain"
               onError={() => setPreviewError(true)}
@@ -1105,7 +1183,7 @@ function DocumentPreview({ document, isAdminView, onDownload }: DocumentPreviewP
           ) : isPdf ? (
             <iframe 
               title={document.name} 
-              src={previewUrl} 
+              src={displayUrl} 
               className="h-[420px] w-full rounded-lg"
               onError={() => setPreviewError(true)}
             />

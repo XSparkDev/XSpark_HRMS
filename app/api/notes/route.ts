@@ -11,6 +11,18 @@ import {
 import { getCurrentUser } from "@/lib/auth"
 import { getRequestUser } from "@/lib/auth/request-user"
 
+// Helper functions for permissions
+function canDeleteNote(note: EmployeeNote, userId: string, userRole: string): boolean {
+  // Only author or HR/Admin/SuperAdmin can delete
+  return note.author_id === userId || 
+         ["hr_admin", "admin", "super_admin", "hr_manager", "junior_hr"].includes(userRole)
+}
+
+function canCreatePublicNote(userRole: string): boolean {
+  // Only HR roles and admins can create public notes
+  return ["hr_admin", "admin", "super_admin", "hr_manager", "junior_hr"].includes(userRole)
+}
+
 const visibilityEnum = z.enum(["public", "personal"]) as unknown as z.ZodEnum<["public", "personal"]>
 
 const createNoteSchema = z.object({
@@ -92,22 +104,20 @@ export async function PATCH(
   { params }: { params: { noteId: string } }
 ) {
   try {
-    const user = getCurrentUser(request)
+    const user = getRequestUser(request)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     const noteId = params.noteId
-    const noteIndex = notesDB.findIndex(note => note.note_id === noteId)
+    const existingNote = await getEmployeeNoteById(noteId)
     
-    if (noteIndex === -1) {
+    if (!existingNote) {
       return NextResponse.json({ error: "Note not found" }, { status: 404 })
     }
 
-    const existingNote = notesDB[noteIndex]
-
     // Permission check
-    if (!canDeleteNote(existingNote, user.id, user.role)) {
+    if (!canDeleteNote(existingNote, user.id, user.role || "")) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
@@ -115,32 +125,34 @@ export async function PATCH(
     const validatedData = updateNoteSchema.parse(body)
 
     // Permission check for public notes
-    if (validatedData.visibility === "public" && !canCreatePublicNote(user.role)) {
+    if (validatedData.visibility === "public" && !canCreatePublicNote(user.role || "")) {
       return NextResponse.json({ 
         error: "Employees cannot create public notes" 
       }, { status: 403 })
     }
 
-    // Update note
-    const updatedNote = {
-      ...existingNote,
-      ...validatedData,
-      updated_at: new Date().toISOString(),
+    // Map visibility to is_confidential
+    const updateData: Parameters<typeof updateEmployeeNote>[1] = {
+      title: validatedData.title,
+      content: validatedData.content,
+      alert_level: validatedData.alert_level,
+      is_confidential: validatedData.visibility === "personal",
+      pinned: validatedData.pinned,
+      tags: validatedData.tags,
+      reminder_enabled: validatedData.reminder_enabled,
+      reminder_at: validatedData.reminder_at,
     }
 
-    notesDB[noteIndex] = updatedNote
+    // Remove undefined values
+    Object.keys(updateData).forEach(key => {
+      if (updateData[key as keyof typeof updateData] === undefined) {
+        delete updateData[key as keyof typeof updateData]
+      }
+    })
 
-    // Log update
-    logAuditAction(
-      noteId, 
-      user.id, 
-      user.role, 
-      existingNote.visibility !== updatedNote.visibility ? "visibility_change" : "edit",
-      existingNote,
-      updatedNote
-    )
+    const updatedNote = await updateEmployeeNote(noteId, updateData)
 
-    return NextResponse.json(updatedNote)
+    return NextResponse.json(mapNoteToResponse(updatedNote))
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ error: "Validation error", details: error.errors }, { status: 400 })
@@ -150,44 +162,31 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/notes/[noteId] - Soft delete note
+// DELETE /api/notes/[noteId] - Delete note
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { noteId: string } }
 ) {
   try {
-    const user = getCurrentUser(request)
+    const user = getRequestUser(request)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
     const noteId = params.noteId
-    const noteIndex = notesDB.findIndex(note => note.note_id === noteId)
+    const existingNote = await getEmployeeNoteById(noteId)
     
-    if (noteIndex === -1) {
+    if (!existingNote) {
       return NextResponse.json({ error: "Note not found" }, { status: 404 })
     }
 
-    const existingNote = notesDB[noteIndex]
-
     // Permission check
-    if (!canDeleteNote(existingNote, user.id, user.role)) {
+    if (!canDeleteNote(existingNote, user.id, user.role || "")) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
-    // Soft delete
-    const deletedNote = {
-      ...existingNote,
-      status: "deleted" as const,
-      deleted_by: user.id,
-      deleted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }
-
-    notesDB[noteIndex] = deletedNote
-
-    // Log deletion
-    logAuditAction(noteId, user.id, user.role, "delete", existingNote, null)
+    // Delete note
+    await deleteEmployeeNote(noteId)
 
     return NextResponse.json({ message: "Note deleted successfully" })
   } catch (error) {
@@ -199,41 +198,43 @@ export async function DELETE(
 // GET /api/notes/dashboard - Get high alert notes for dashboard
 export async function GET_DASHBOARD(request: NextRequest) {
   try {
-    const user = getCurrentUser(request)
+    const user = getRequestUser(request)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Global high alerts: alert_level='high' AND visibility='public' AND status='active'
-    const globalHighAlerts = notesDB.filter(note => 
+    // Get all notes for the employee
+    const allNotes = await getEmployeeNotesByEmployee(user.employeeId)
+
+    // Global high alerts: alert_level='high' AND visibility='public' (is_confidential=false)
+    const globalHighAlerts = allNotes.filter(note => 
       note.alert_level === "high" && 
-      note.visibility === "public" && 
-      note.status === "active"
+      !note.is_confidential
     )
 
-    // Personal high alerts: alert_level='high' AND visibility='personal' AND author_id = current_user.id AND status='active'
-    const personalHighAlerts = notesDB.filter(note => 
+    // Personal high alerts: alert_level='high' AND visibility='personal' (is_confidential=true) AND author_id = current_user.id
+    const personalHighAlerts = allNotes.filter(note => 
       note.alert_level === "high" && 
-      note.visibility === "personal" && 
-      note.author_id === user.id && 
-      note.status === "active"
+      note.is_confidential &&
+      note.author_id === user.id
     )
 
     // HR/Admin exception: can see personal high alerts for employees
-    let hrAdminPersonalHighAlerts: typeof notesDB = []
-    if (["hr_admin", "admin", "super_admin"].includes(user.role)) {
-      hrAdminPersonalHighAlerts = notesDB.filter(note => 
+    let hrAdminPersonalHighAlerts: EmployeeNote[] = []
+    if (["hr_admin", "admin", "super_admin"].includes(user.role || "")) {
+      // For HR/Admin, we'd need to fetch all employee notes, but for now we'll use the employee's notes
+      // In a full implementation, you'd query all notes from the database
+      hrAdminPersonalHighAlerts = allNotes.filter(note => 
         note.alert_level === "high" && 
-        note.visibility === "personal" && 
-        note.status === "active" &&
+        note.is_confidential &&
         note.author_id !== user.id // Don't duplicate user's own notes
       )
     }
 
-    // Combine and dedupe by note_id
+    // Combine and dedupe by id
     const allHighAlerts = [...globalHighAlerts, ...personalHighAlerts, ...hrAdminPersonalHighAlerts]
     const uniqueHighAlerts = allHighAlerts.filter((note, index, self) => 
-      index === self.findIndex(n => n.note_id === note.note_id)
+      index === self.findIndex(n => n.id === note.id)
     )
 
     // Sort by created_at DESC and limit to 25
@@ -242,7 +243,7 @@ export async function GET_DASHBOARD(request: NextRequest) {
       .slice(0, 25)
 
     return NextResponse.json({
-      notes: sortedHighAlerts,
+      notes: sortedHighAlerts.map(mapNoteToResponse),
       total: sortedHighAlerts.length,
     })
   } catch (error) {

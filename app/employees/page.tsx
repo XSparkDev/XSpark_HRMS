@@ -50,6 +50,7 @@ export default function EmployeeManagementPage() {
   const itemsPerPage = 10
   const user = getCurrentUser()
   const { toast } = useToast()
+  const canVerifyEmployees = user?.role === "admin" || user?.role === "super_admin"
   const hasFetchedRef = useRef(false)
 
   // Build headers for API requests (same pattern as notes page)
@@ -452,6 +453,104 @@ export default function EmployeeManagementPage() {
     setIsViewModalOpen(true)
   }
 
+  const handleVerifyEmployee = async (employee: EmployeeProfile) => {
+    if (employee.id_verified) {
+      toast({
+        title: "Already verified",
+        description: `${employee.first_name} ${employee.last_name}'s ID is already verified.`,
+      })
+      return
+    }
+
+    if (!confirm(`Verify ID for ${employee.first_name} ${employee.last_name}?`)) return
+
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...buildHeaders(user),
+      }
+
+      try {
+        const storedSession = localStorage.getItem("xspark_session")
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+        }
+      } catch (error) {
+        console.warn("[Employees][VERIFY ID] Failed to parse session for Bearer token:", error)
+      }
+
+      const res = await fetch(`/api/employees/${employee.id}/verify-id`, { method: "POST", headers })
+      const json = await res.json().catch(() => ({}))
+
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || "Failed to verify employee ID")
+      }
+
+      toast({
+        title: "Employee ID verified",
+        description: `${employee.first_name} ${employee.last_name} has been verified.`,
+      })
+      fetchEmployees()
+    } catch (error) {
+      console.error("[Employees][VERIFY ID] error:", error)
+      toast({
+        title: "Verification failed",
+        description: error instanceof Error ? error.message : "An error occurred while verifying the employee.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleVerifyBank = async (employee: EmployeeProfile) => {
+    if (employee.bank_verified) {
+      toast({
+        title: "Already verified",
+        description: `${employee.first_name} ${employee.last_name}'s bank details are already verified.`,
+      })
+      return
+    }
+
+    if (!confirm(`Verify bank details for ${employee.first_name} ${employee.last_name}?`)) return
+
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...buildHeaders(user),
+      }
+
+      try {
+        const storedSession = localStorage.getItem("xspark_session")
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+        }
+      } catch (error) {
+        console.warn("[Employees][VERIFY BANK] Failed to parse session for Bearer token:", error)
+      }
+
+      const res = await fetch(`/api/employees/${employee.id}/verify-bank`, { method: "POST", headers })
+      const json = await res.json().catch(() => ({}))
+
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || "Failed to verify bank details")
+      }
+
+      toast({
+        title: "Bank verified",
+        description: `${employee.first_name} ${employee.last_name}'s bank details have been verified.`,
+      })
+      fetchEmployees()
+    } catch (error) {
+      console.error("[Employees][VERIFY BANK] error:", error)
+      toast({
+        title: "Verification failed",
+        description: error instanceof Error ? error.message : "An error occurred while verifying bank details.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const generateEmployeeId = () => {
     const now = new Date()
     const year = now.getFullYear().toString().slice(-2)
@@ -539,17 +638,18 @@ export default function EmployeeManagementPage() {
                     </Button>
                   </div>
                 </TabsContent>
-                <TabsContent value="manual" className="pt-4">
-                  <EmployeeForm 
-                    onSubmit={() => {
-                      // simulate creation
-                      console.log('createEmployeePayload', '...payload from form')
-                      setIsCreateModalOpen(false)
-                      setIsAppointmentConfirmOpen(true)
-                    }}
-                    employeeId={generateEmployeeId()}
-                  />
-                </TabsContent>
+            <TabsContent value="manual" className="pt-4">
+              <EmployeeForm 
+                onSubmit={async () => {
+                  // Refresh list after successful creation
+                  await fetchEmployees()
+                  await fetchPastEmployees()
+                  // Close modal; skip appointment-letter flow for now
+                  setIsCreateModalOpen(false)
+                }}
+                employeeId={generateEmployeeId()}
+              />
+            </TabsContent>
               </Tabs>
             </DialogContent>
           </Dialog>
@@ -626,7 +726,9 @@ export default function EmployeeManagementPage() {
               <TableBody>
                 {filteredEmployees.map((employee, index) => {
                   // Check if employee is fully verified (all three verifications must be true)
-                  const isFullyVerified = employee.id_verified && employee.bank_verified && employee.work_permit_verified
+                  // "Verification status" is considered verified when ID + bank are verified.
+                  // Work permit verification is tracked separately.
+                  const isFullyVerified = employee.id_verified && employee.bank_verified
                   
                   return (
                     <TableRow 
@@ -736,6 +838,24 @@ export default function EmployeeManagementPage() {
                                 <Edit className="h-4 w-4 mr-2" />
                                 Edit
                               </DropdownMenuItem>
+                              {canVerifyEmployees && (
+                                <>
+                                  <DropdownMenuItem
+                                    onClick={() => handleVerifyEmployee(employee)}
+                                    disabled={employee.id_verified}
+                                    className="cursor-pointer px-3 py-2.5 text-sm rounded-md hover:bg-muted focus:bg-muted"
+                                  >
+                                    Verify employee
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => handleVerifyBank(employee)}
+                                    disabled={employee.bank_verified}
+                                    className="cursor-pointer px-3 py-2.5 text-sm rounded-md hover:bg-muted focus:bg-muted"
+                                  >
+                                    Verify bank
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                               <DropdownMenuSeparator className="my-1.5" />
                               <DropdownMenuItem
                                 onClick={() => handleDeleteEmployee(employee)}
@@ -1107,6 +1227,12 @@ function EmployeeForm({
   isEdit?: boolean
   employeeId?: string
 }) {
+  const user = getCurrentUser()
+  const isSuperAdmin = user?.role === 'super_admin'
+  const isAdminOrSuperAdmin = user?.role === 'admin' || user?.role === 'super_admin'
+  const [roles, setRoles] = useState<Array<{ id: string; role_name: string; description: string | null }>>([])
+  const [loadingRoles, setLoadingRoles] = useState(false)
+
   const [formData, setFormData] = useState({
     first_name: employee?.first_name || "",
     middle_name: employee?.middle_name || "",
@@ -1124,7 +1250,33 @@ function EmployeeForm({
     job_title_id: employee?.job_title_id || "",
     tax_number: employee?.tax_number || "",
     pronouns: employee?.pronouns || "",
+    date_hired: employee?.date_hired || "",
+    employment_type: "full_time",
+    work_location: "",
+    employee_id: employee?.employee_ID || employeeId || "",
+    role_id: (employee as any)?.role_id || "",
+    ...(isEdit ? {} : { is_active: true }),
   })
+
+  // Fetch roles on mount if admin or super_admin
+  useEffect(() => {
+    if (isAdminOrSuperAdmin) {
+      setLoadingRoles(true)
+      fetch('/api/roles')
+        .then(res => res.json())
+        .then(json => {
+          if (json.success && Array.isArray(json.data)) {
+            setRoles(json.data)
+          }
+        })
+        .catch(err => {
+          console.error('Error fetching roles:', err)
+        })
+        .finally(() => {
+          setLoadingRoles(false)
+        })
+    }
+  }, [isAdminOrSuperAdmin])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1140,14 +1292,37 @@ function EmployeeForm({
           updates.gender = "prefer_not_to_say"
         }
 
+        // Include employee_id if super_admin changed it
+        if (isSuperAdmin && formData.employee_id && formData.employee_id !== employee?.employee_ID) {
+          updates.employee_id = formData.employee_id
+        }
+
+        // Include role_id if admin or super_admin changed it
+        if (isAdminOrSuperAdmin && formData.role_id && formData.role_id !== (employee as any)?.role_id) {
+          updates.role_id = formData.role_id
+        }
+
         // Remove empty-string fields so validation doesn't see ''
         Object.keys(updates).forEach((key) => {
           if (updates[key] === "") delete updates[key]
         })
 
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        try {
+          const storedSession = localStorage.getItem('xspark_session')
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (err) {
+          console.warn('[Employees][UPDATE] Failed to parse session for Bearer token:', err)
+        }
+
         const res = await fetch('/api/employees', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ id: employee.id, ...updates })
         })
 
@@ -1156,8 +1331,117 @@ function EmployeeForm({
           throw new Error(json?.error || 'Failed to update employee')
         }
       } else {
-        // Creation path not requested here
-        console.log('Create employee payload:', formData)
+        // Creation path: send data to /api/employees
+        if (!formData.first_name || !formData.last_name || !formData.dob) {
+          throw new Error('Please complete the required personal details.')
+        }
+        if (!formData.email) {
+          throw new Error('Email address is required.')
+        }
+        if (!formData.phone) {
+          throw new Error('Phone number is required.')
+        }
+        if (!formData.address) {
+          throw new Error('Address is required.')
+        }
+        if (!formData.date_hired) {
+          throw new Error('Please select the Date of Joining.')
+        }
+
+        // Basic client-side validation for SA ID number: must be exactly 13 characters.
+        if (formData.id_number && formData.id_number.length !== 13) {
+          throw new Error('ID Number must be exactly 13 digits.')
+        }
+
+        // Normalise dates to YYYY-MM-DD to satisfy API regex
+        const normalizeDate = (value: string) => {
+          if (!value) return value
+          const d = new Date(value)
+          if (Number.isNaN(d.getTime())) return value
+          return d.toISOString().slice(0, 10)
+        }
+
+        const payload: any = {
+          first_name: formData.first_name,
+          middle_name: formData.middle_name || undefined,
+          last_name: formData.last_name,
+          preferred_name: formData.preferred_name || undefined,
+          id_number: formData.id_number || undefined,
+          dob: normalizeDate(formData.dob),
+          sex: formData.sex,
+          gender: (() => {
+            const genderValue = formData.gender as string | undefined
+            if (!genderValue) return undefined
+            // Normalize "prefer not to say" to "prefer_not_to_say"
+            if (genderValue === "prefer not to say" || genderValue === "prefer_not_to_say") {
+              return "prefer_not_to_say"
+            }
+            return genderValue as "male" | "female" | "other" | "prefer_not_to_say" | undefined
+          })(),
+          pronouns: formData.pronouns || undefined,
+          email: formData.email,
+          phone: formData.phone,
+          alternative_phone: formData.alternative_phone || undefined,
+          address: formData.address,
+          tax_number: formData.tax_number || undefined,
+          nationality: formData.nationality || "South Africa",
+            is_active: (formData as any).is_active ?? true,
+          employment_status: "probation",
+          date_hired: normalizeDate(formData.date_hired),
+          profile_picture_url: undefined,
+          documents: [],
+          // Default password for now (until onboarding flow is ready)
+          password: "SecurePass123!",
+        }
+
+        // Add employee_id if super_admin provided one
+        if (isSuperAdmin && formData.employee_id) {
+          payload.employee_id = formData.employee_id
+        }
+
+        // Add role_id if admin or super_admin selected one
+        if (isAdminOrSuperAdmin && formData.role_id) {
+          payload.role_id = formData.role_id
+        }
+
+        Object.keys(payload).forEach((key) => {
+          if (payload[key] === undefined) delete payload[key]
+        })
+
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        try {
+          const storedSession = localStorage.getItem('xspark_session')
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (err) {
+          console.warn('[Employees][CREATE] Failed to parse session for Bearer token:', err)
+        }
+
+        const res = await fetch('/api/employees', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        })
+
+        const json = await res.json().catch(() => ({}))
+
+        if (!res.ok || !json?.success) {
+          // Log full response so we can see Zod validation errors from the API
+          console.error("[Employees][CREATE] API error:", json)
+
+          const details =
+            json?.details && Array.isArray(json.details)
+              ? `\nDetails: ${json.details
+                  .map((d: any) => `${d.path?.join(".")}: ${d.message}`)
+                  .join(" | ")}`
+              : ""
+
+          throw new Error((json?.error || "Failed to create employee") + details)
+        }
       }
 
       onSubmit()
@@ -1222,8 +1506,12 @@ function EmployeeForm({
               value={formData.id_number}
               onChange={(e) => setFormData({...formData, id_number: e.target.value})}
               className="uniform-input"
+              maxLength={13}
               required={!isEdit}
             />
+            <p className="mt-1 text-xs text-muted-foreground">
+              South African ID: exactly 13 digits (no spaces).
+            </p>
           </div>
           <div>
             <Label htmlFor="dob">Date of Birth *</Label>
@@ -1237,6 +1525,25 @@ function EmployeeForm({
               className="uniform-input"
             />
           </div>
+          {isAdminOrSuperAdmin && !isEdit && (
+            <div>
+              <Label htmlFor="is_active">Active Employee *</Label>
+              <Select
+                value={String((formData as any).is_active ?? true)}
+                onValueChange={(value) => {
+                  setFormData({ ...formData, is_active: value === "true" })
+                }}
+              >
+                <SelectTrigger className="uniform-input">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="true">Active</SelectItem>
+                  <SelectItem value="false">Inactive (Past)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div>
             <Label htmlFor="sex">Sex *</Label>
             <Select value={formData.sex} onValueChange={(value) => setFormData({...formData, sex: value as 'male' | 'female'})}>
@@ -1334,11 +1641,45 @@ function EmployeeForm({
             <Label htmlFor="employee_id">Employee ID</Label>
             <Input
               id="employee_id"
-              value={employeeId || employee?.employee_ID || ""}
-              readOnly
-              className="bg-muted uniform-input"
+              value={formData.employee_id}
+              onChange={(e) => setFormData({...formData, employee_id: e.target.value})}
+              readOnly={!isSuperAdmin}
+              className={isSuperAdmin ? "uniform-input" : "bg-muted uniform-input"}
+              placeholder={isSuperAdmin ? (isEdit ? "Enter employee ID" : "Leave empty for auto-generation") : ""}
             />
+            {isSuperAdmin && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isEdit ? "You can change the employee ID" : "Leave empty to auto-generate, or enter custom ID (e.g., XSP26/02/081)"}
+              </p>
+            )}
           </div>
+          {isAdminOrSuperAdmin && (
+            <div>
+              <Label htmlFor="role_id">Role {!isEdit && "*"}</Label>
+              <Select 
+                value={formData.role_id} 
+                onValueChange={(value) => setFormData({...formData, role_id: value})}
+                disabled={loadingRoles && !isEdit}
+              >
+                <SelectTrigger className="uniform-input">
+                  <SelectValue placeholder={loadingRoles && !isEdit ? "Loading roles..." : "Select role"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {roles.map((role) => (
+                    <SelectItem key={role.id} value={role.id}>
+                      {role.role_name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                      {role.description && ` - ${role.description}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!formData.role_id && !isEdit && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Select a role for this employee
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <Label htmlFor="job_title">Job Title *</Label>
             <Select value={formData.job_title_id} onValueChange={(value) => setFormData({...formData, job_title_id: value})}>
@@ -1379,11 +1720,21 @@ function EmployeeForm({
           {/* New fields to meet requirements */}
           <div>
             <Label htmlFor="date_joining">Date of Joining *</Label>
-            <Input id="date_joining" type="date" className="uniform-input" required />
+            <Input
+              id="date_joining"
+              type="date"
+              className="uniform-input"
+              required
+              value={formData.date_hired}
+              onChange={(e) => setFormData({ ...formData, date_hired: e.target.value })}
+            />
           </div>
           <div>
             <Label>Employment Type *</Label>
-            <Select defaultValue="full_time">
+            <Select
+              value={formData.employment_type}
+              onValueChange={(value) => setFormData({ ...formData, employment_type: value })}
+            >
               <SelectTrigger className="uniform-input">
                 <SelectValue />
               </SelectTrigger>
@@ -1397,7 +1748,13 @@ function EmployeeForm({
           </div>
           <div className="md:col-span-2">
             <Label htmlFor="work_location">Work Location *</Label>
-            <Input id="work_location" className="uniform-input" required />
+            <Input
+              id="work_location"
+              className="uniform-input"
+              required
+              value={formData.work_location}
+              onChange={(e) => setFormData({ ...formData, work_location: e.target.value })}
+            />
           </div>
         </div>
       </div>

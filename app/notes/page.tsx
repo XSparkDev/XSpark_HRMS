@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useMemo, useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { format } from "date-fns"
 import { AlertTriangle, Loader2, MessageSquare, Notebook, Plus, StickyNote, PenSquare, Trash2, Clock, Calendar, Search, X } from "lucide-react"
 
@@ -12,13 +13,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Calendar as DatePicker } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useToast } from "@/hooks/use-toast"
 import { getCurrentUser, type User } from "@/lib/auth"
 import { cn } from "@/lib/utils"
+import { isEmployeeFullyVerified } from "@/lib/employee-verification"
 
 type AlertLevel = "high" | "medium" | "low"
 
@@ -84,8 +85,42 @@ const buildHeaders = (user: User | null, employeeUuid: string | null) => {
 
 export default function NotesPage() {
   const { toast } = useToast()
+  const router = useRouter()
   const user = useMemo(() => getCurrentUser(), [])
   const [employeeUuid, setEmployeeUuid] = useState<string | null>(null) // Store actual employee UUID
+
+  useEffect(() => {
+    if (user?.role !== "employee") return
+
+    const enforceVerificationAccess = async () => {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        const storedSession = localStorage.getItem("xspark_session")
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            headers.Authorization = `Bearer ${sessionParsed.access_token}`
+          }
+        }
+
+        const res = await fetch("/api/auth/me", { headers })
+        const json = await res.json().catch(() => ({}))
+        const profile = json?.data?.employee
+        if (!isEmployeeFullyVerified(profile)) {
+          toast({
+            title: "Verification required",
+            description: "Complete your profile verification to access Notes.",
+            variant: "destructive",
+          })
+          router.replace("/dashboard")
+        }
+      } catch {
+        router.replace("/dashboard")
+      }
+    }
+
+    enforceVerificationAccess()
+  }, [router, toast, user?.role])
 
   // Fetch employee UUID from /api/auth/me using Bearer token
   // This is optional - if it fails, the API routes will fetch it when needed
@@ -575,6 +610,8 @@ export default function NotesPage() {
             target_employee_id: note.target_employee_id ?? null,
             visibility: (note.visibility ?? "private") as "private" | "public",
             creator_role: note.creator_role ?? user.role ?? null,
+            reminder_at: note.reminder_at ?? null,
+            reminder_enabled: note.reminder_enabled ?? false,
           }))
           setForYouNotes((prev) => sortNotes([...formattedNotes, ...prev]))
         }
@@ -1032,15 +1069,36 @@ export default function NotesPage() {
         </Button>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "personal" | "public" | "for_you" | "scheduled")} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="personal">Personal</TabsTrigger>
-          <TabsTrigger value="public">Public</TabsTrigger>
-          <TabsTrigger value="for_you">
-            {isEmployee ? "For You" : "Sent to Employees"}
-          </TabsTrigger>
-          <TabsTrigger value="scheduled">Schedule Notes</TabsTrigger>
-        </TabsList>
+      <div className="space-y-4">
+        {/* Note Type Selector - Card with Dropdown */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col gap-4">
+              {/* Note Type Dropdown */}
+              <div className="w-full">
+                <Label htmlFor="note-type-select" className="text-sm font-medium mb-2 block">
+                  Note Type
+                </Label>
+                <Select
+                  value={activeTab}
+                  onValueChange={(value) => setActiveTab(value as "personal" | "public" | "for_you" | "scheduled")}
+                >
+                  <SelectTrigger id="note-type-select" className="w-full">
+                    <SelectValue placeholder="Select note type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="personal">Personal</SelectItem>
+                    <SelectItem value="public">Public</SelectItem>
+                    <SelectItem value="for_you">
+                      {isEmployee ? "For You" : "Sent to Employees"}
+                    </SelectItem>
+                    <SelectItem value="scheduled">Schedule Notes</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         
         {/* Filter Section */}
         <Card>
@@ -1117,36 +1175,46 @@ export default function NotesPage() {
             </div>
           </CardContent>
         </Card>
-        <TabsContent value="personal">
-          {renderNotesPane(
-            personalNotes,
-            personalLoading,
-            "You have not created any notes yet.",
-            "personal",
-          )}
-        </TabsContent>
-        <TabsContent value="public">
-          {renderNotesPane(publicNotes, publicLoading, "No public notes have been shared yet.", "public")}
-        </TabsContent>
-        <TabsContent value="for_you">
-          {renderNotesPane(
-            forYouNotes,
-            forYouLoading,
-            isEmployee 
-              ? "No notes have been sent to you yet." 
-              : "You have not sent any notes to specific employees yet.",
-            "for_you",
-          )}
-        </TabsContent>
-        <TabsContent value="scheduled">
-          {renderNotesPane(
-            scheduledNotes,
-            scheduledLoading,
-            "You have no scheduled notes with reminders.",
-            "scheduled",
-          )}
-        </TabsContent>
-      </Tabs>
+
+        {/* Notes Content - Show based on activeTab */}
+        {activeTab === "personal" && (
+          <div>
+            {renderNotesPane(
+              personalNotes,
+              personalLoading,
+              "You have not created any notes yet.",
+              "personal",
+            )}
+          </div>
+        )}
+        {activeTab === "public" && (
+          <div>
+            {renderNotesPane(publicNotes, publicLoading, "No public notes have been shared yet.", "public")}
+          </div>
+        )}
+        {activeTab === "for_you" && (
+          <div>
+            {renderNotesPane(
+              forYouNotes,
+              forYouLoading,
+              isEmployee 
+                ? "No notes have been sent to you yet." 
+                : "You have not sent any notes to specific employees yet.",
+              "for_you",
+            )}
+          </div>
+        )}
+        {activeTab === "scheduled" && (
+          <div>
+            {renderNotesPane(
+              scheduledNotes,
+              scheduledLoading,
+              "You have no scheduled notes with reminders.",
+              "scheduled",
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Create Note Dialog */}
       <Dialog
@@ -1162,12 +1230,27 @@ export default function NotesPage() {
           <DialogHeader>
             <DialogTitle>Create Note</DialogTitle>
           </DialogHeader>
-          <Tabs value={createNoteTab} onValueChange={(value) => setCreateNoteTab(value as "personal" | "public")} className="space-y-4">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="personal">Personal</TabsTrigger>
-              <TabsTrigger value="public">Public</TabsTrigger>
-            </TabsList>
-            <TabsContent value="personal" className="space-y-4">
+          <div className="space-y-4">
+            {/* Note Type Selector */}
+            <div className="space-y-2">
+              <Label htmlFor="create-note-type">Note Type</Label>
+              <Select
+                value={createNoteTab}
+                onValueChange={(value) => setCreateNoteTab(value as "personal" | "public")}
+              >
+                <SelectTrigger id="create-note-type" className="w-full">
+                  <SelectValue placeholder="Select note type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="personal">Personal</SelectItem>
+                  <SelectItem value="public">Public</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Personal Note Form */}
+            {createNoteTab === "personal" && (
+              <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="title">Title</Label>
                 <Input
@@ -1273,9 +1356,13 @@ export default function NotesPage() {
                   </div>
                 )}
               </div>
-            </TabsContent>
-            <TabsContent value="public" className="space-y-4">
-              {!canManagePublic ? (
+            </div>
+            )}
+
+            {/* Public Note Form */}
+            {createNoteTab === "public" && (
+              <div className="space-y-4">
+                {!canManagePublic ? (
                 <div className="text-sm text-muted-foreground p-4 border rounded-lg">
                   You don't have permission to create public notes.
                 </div>
@@ -1463,8 +1550,9 @@ export default function NotesPage() {
                   )}
                 </>
               )}
-            </TabsContent>
-          </Tabs>
+              </div>
+            )}
+          </div>
           <div className="flex justify-end gap-2 pt-4">
             <Button
               variant="outline"

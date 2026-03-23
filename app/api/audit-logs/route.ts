@@ -1,110 +1,145 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase-admin'
+// ============================================================================
+// AUDIT LOGS API ROUTE - Read-only access for Super Admins
+// ============================================================================
+// Auth pattern copied from /api/employees GET handler
+// ============================================================================
 
-/**
- * GET /api/audit-logs
- *
- * Returns audit log entries from the `audit_logs` table for use in the
- * Activity / Audit Log view.
- */
+import { NextRequest, NextResponse } from 'next/server'
+import { getRequestUser } from '@/lib/auth/request-user'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { createClient } from '@supabase/supabase-js'
+
+// ============================================================================
+// GET /api/audit-logs - Get audit log entries with optional filtering
+// ============================================================================
 export async function GET(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams
-    const limit = parseInt(searchParams.get('limit') || '50', 10)
-    const offset = parseInt(searchParams.get('offset') || '0', 10)
+    console.log(
+      "[AuditLogs] incoming headers:",
+      Object.fromEntries(request.headers.entries()),
+    )
 
-    const { data, error } = await supabaseAdmin
-      .from('audit_logs')
-      .select(
-        `
-        id,
-        employee_name,
-        employee_number,
-        action,
-        action_type,
-        severity,
-        target_table,
-        target_record_id,
-        description,
-        created_at
-      `
-      )
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1)
+    // Try custom headers first (for notes API consistency)
+    let user = getRequestUser(request)
+    
+    // Fallback to Bearer token authentication (like /api/auth/me)
+    if (!user) {
+      const authHeader = request.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7)
+        const supabaseUrl = process.env.SUPABASE_URL!
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        })
 
-    if (error) {
-      console.error('[audit-logs] query error:', error)
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Failed to load audit logs',
-          details: error.message,
-        },
-        { status: 500 },
-      )
+        const { data: { user: authUser }, error } = await userClient.auth.getUser(token)
+        if (!error && authUser) {
+          // Get employee record to get employee ID and role
+          const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('id, role_id, roles(role_name)')
+            .eq('auth_user_id', authUser.id)
+            .single()
+          
+          if (employee) {
+            const roleName = (employee.roles as any)?.role_name?.toLowerCase?.() || 'employee'
+            user = {
+              id: authUser.id,
+              employeeId: employee.id,
+              role: roleName
+            }
+          }
+        }
+      }
+    }
+    
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized'
+      }, { status: 401 })
     }
 
-    const logs = data || []
+    // Only super admin can access audit logs
+    if (user.role.toLowerCase() !== 'super_admin') {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Only Super Admin can access audit logs'
+      }, { status: 403 })
+    }
 
-    const activities = logs.map((log: any) => {
-      const actor = log.employee_name || log.employee_number || 'System'
-      const target =
-        log.target_table && log.target_record_id
-          ? `${log.target_table} · ${log.target_record_id}`
-          : log.target_table || ''
+    console.log("[AuditLogs] user from auth:", JSON.stringify(user))
+    console.log("[AuditLogs] Authenticated as:", user.role, user.employeeId)
 
-      const baseTitle =
-        log.action_type ||
-        (typeof log.action === 'string'
-          ? log.action.replace(/_/g, ' ').toLowerCase()
-          : 'Activity')
+    const { searchParams } = new URL(request.url)
+    const page = Math.max(parseInt(searchParams.get("page") || "1", 10), 1)
+    const limit = Math.max(parseInt(searchParams.get("limit") || "20", 10), 1)
+    const search = searchParams.get("search")?.trim() || ""
+    const action = searchParams.get("action")?.trim() || ""
+    const targetTable = searchParams.get("target_table")?.trim() || ""
+    console.log("[AuditLogs] Querying with:", { page, limit, search, action, targetTable })
+    const from = (page - 1) * limit
+    const to = from + limit - 1
 
-      const title =
-        baseTitle.charAt(0).toUpperCase() + baseTitle.slice(1)
+    const { data: schemaTest } = await supabaseAdmin
+      .from("audit_logs")
+      .select("id")
+      .limit(1)
+    console.log("[AuditLogs] public schema test:", schemaTest)
 
-      const pieces = []
-      if (actor) pieces.push(actor)
-      if (target) pieces.push(target)
+    const { data: appSchemaTest } = await supabaseAdmin
+      .schema("app")
+      .from("audit_logs")
+      .select("id")
+      .limit(1)
+    console.log("[AuditLogs] app schema test:", appSchemaTest)
 
-      const fallbackDescription = pieces.length
-        ? pieces.join(' • ')
-        : undefined
+    const selectFields =
+      "id, employee_name, employee_number, action, action_type, severity, target_table, description, created_at, published_by_system"
 
-      return {
-        id: String(log.id),
-        employee_name: log.employee_name,
-        employee_number: log.employee_number,
-        action: log.action,
-        action_type: log.action_type,
-        severity: log.severity || 'low',
-        target_table: log.target_table,
-        target_record_id: log.target_record_id,
-        created_at: log.created_at,
-        title,
-        description: log.description || fallbackDescription || 'Audit log entry',
-      }
-    })
+    // Prefer app schema if available; fall back to public.
+    let query = supabaseAdmin
+      .schema("app")
+      .from("audit_logs")
+      .select(selectFields, { count: "exact" })
+      .order("created_at", { ascending: false })
+
+    if (search) query = query.ilike("employee_name", `%${search}%`)
+    if (action) query = query.eq("action", action)
+    if (targetTable) query = query.eq("target_table", targetTable)
+
+    let { data, error, count } = await query.range(from, to)
+
+    if (error) {
+      console.warn("[AuditLogs] app schema query failed, falling back to public:", error)
+      let publicQuery = supabaseAdmin
+        .from("audit_logs")
+        .select(selectFields, { count: "exact" })
+        .order("created_at", { ascending: false })
+      if (search) publicQuery = publicQuery.ilike("employee_name", `%${search}%`)
+      if (action) publicQuery = publicQuery.eq("action", action)
+      if (targetTable) publicQuery = publicQuery.eq("target_table", targetTable)
+      ;({ data, error, count } = await publicQuery.range(from, to))
+    }
+
+    if (error) {
+      console.error("[AuditLogs] DB error:", error)
+      return NextResponse.json({ message: "Failed to load audit logs" }, { status: 500 })
+    }
 
     return NextResponse.json({
-      success: true,
-      data: activities,
-      meta: {
-        total: activities.length,
-        limit,
-        offset,
-      },
+      data: data ?? [],
+      count: count ?? 0,
+      page,
     })
   } catch (error) {
-    console.error('[audit-logs] GET failed', error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch audit logs',
-      },
-      { status: 500 },
-    )
+    console.error("[AuditLogs] Unexpected error:", error)
+    return NextResponse.json({ message: "Internal server error" }, { status: 500 })
   }
 }
-
-
 

@@ -40,6 +40,7 @@ import {
   StickyNote,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { isEmployeeFullyVerified } from "@/lib/employee-verification"
 
 interface DashboardLayoutProps {
   children: ReactNode
@@ -51,6 +52,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [displayName, setDisplayName] = useState<string>("")
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [employeeId, setEmployeeId] = useState<string>("")
+  const [isEmployeeVerified, setIsEmployeeVerified] = useState(true)
 
   useEffect(() => {
     const currentUser = getCurrentUser()
@@ -82,6 +85,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           const legalName = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim()
           const dn = legalName || profile.preferred_name || currentUser?.name || ''
           setDisplayName(dn)
+          // Set employee ID for AI chat widget
+          if (profile.id) {
+            setEmployeeId(profile.id)
+          }
+          setIsEmployeeVerified(isEmployeeFullyVerified(profile))
         } else if (currentUser?.name) {
           setDisplayName(currentUser.name)
         }
@@ -120,8 +128,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: "Switch System", href: "/system-selector", icon: Settings, permission: "*" },
   ]
 
+  const restrictedForUnverifiedEmployees = new Set(["Notes", "Leave Requests", "Documents"])
+  const isUnverifiedRegularEmployee = user.role === "employee" && !isEmployeeVerified
+
   const filteredNavigation = navigation.filter((item) => {
     if (item.adminOnly && user.role !== "super_admin") return false
+    if (isUnverifiedRegularEmployee && restrictedForUnverifiedEmployees.has(item.name)) return false
     if (item.permission === "*") return true
     return hasPermission(user, item.permission)
   })
@@ -158,10 +170,26 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="flex-1" />
 
           {/* Notifications */}
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="h-5 w-5" />
-            <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-[#E31E24]" />
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative"
+                aria-label="View notifications"
+              >
+                <Bell className="h-5 w-5" />
+                <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-[#E31E24]" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <div className="p-3 text-sm text-muted-foreground">
+                No new notifications yet.
+              </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* User Menu */}
           <DropdownMenu>
@@ -247,7 +275,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </div>
 
       {/* AI Chat Widget */}
-      <AIChatWidget />
+      {employeeId && <AIChatWidget employeeId={employeeId} />}
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (

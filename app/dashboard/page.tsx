@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar as DatePicker } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
-import { addDays, format } from "date-fns"
+import { addDays, format, formatDistanceToNow } from "date-fns"
 import { calculateLeaveBalance, calculateWorkingDays, getLeaveTypeDisplayName } from "@/lib/validation/leave"
 import {
   Calendar,
@@ -31,10 +31,12 @@ import {
   TrendingUp,
   Upload,
   MessageSquare,
+  XCircle,
 } from "lucide-react"
 import { SuperAdminDashboard } from "@/components/dashboard/super-admin-dashboard"
 import { AdminDashboard } from "@/components/dashboard/admin-dashboard"
 import { JuniorHRDashboard } from "@/components/dashboard/junior-hr-dashboard"
+import { isEmployeeFullyVerified } from "@/lib/employee-verification"
 
 // Lazy load heavy components
 const Notes2HighAlert = dynamic(
@@ -60,6 +62,10 @@ export default function DashboardPage() {
   const [showLeaveModal, setShowLeaveModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [preferredName, setPreferredName] = useState<string | null>(null)
+  const [availableBalances, setAvailableBalances] = useState<Record<string, number>>({})
+  const [leaveBalances, setLeaveBalances] = useState<Record<string, { available: number; total: number }>>({})
+  const [leaveRequests, setLeaveRequests] = useState<any[]>([])
+  const [showVerificationPopup, setShowVerificationPopup] = useState(false)
 
   // Leave modal local state
   const [leaveType, setLeaveType] = useState("annual")
@@ -114,6 +120,9 @@ export default function DashboardPage() {
         if (profile?.preferred_name) {
           setPreferredName(profile.preferred_name as string)
         }
+        if (user?.role === "employee") {
+          setShowVerificationPopup(!isEmployeeFullyVerified(profile))
+        }
       } catch (error) {
         console.warn("Failed to load preferred name for dashboard banner:", error)
       }
@@ -124,10 +133,162 @@ export default function DashboardPage() {
     }
   }, [])
 
+  // Fetch employee UUID from /api/auth/me (only for employees)
+  useEffect(() => {
+    if (!user?.id) return
+    // Only fetch leave data for employees - admins/HR may not have employee records
+    if (!isEmployee) return
+
+    const fetchEmployeeData = async () => {
+      try {
+        // Get employee UUID from /api/auth/me
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        try {
+          const storedSession = localStorage.getItem("xspark_session")
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (error) {
+          console.warn("Failed to parse session:", error)
+        }
+
+        const meRes = await fetch("/api/auth/me", { headers })
+        
+        if (!meRes.ok) {
+          console.warn("Failed to fetch user data:", meRes.status, meRes.statusText)
+          return
+        }
+        
+        const meData = await meRes.json()
+        
+        if (!meData?.success) {
+          console.warn("API returned unsuccessful response:", meData?.error || "Unknown error")
+          return
+        }
+        
+        const employeeId = meData?.data?.employee?.id
+
+        if (!employeeId) {
+          // Employee record might not exist yet (e.g., admin users without employee records)
+          // This is not necessarily an error, so we'll just skip fetching leave data
+          console.warn("Employee ID not found - user may not have an employee record yet")
+          return
+        }
+
+        // Fetch total entitlements from /api/leave/balances (for total accrued + carried over)
+        const balancesRes = await fetch(`/api/leave/balances?employee_id=${employeeId}`)
+        let totalEntitlements: Record<string, number> = {}
+        
+        if (balancesRes.ok) {
+          const balancesData = await balancesRes.json()
+          if (balancesData?.success && Array.isArray(balancesData.data)) {
+            // Process balances to get total entitlement (total_accrued + carried_over)
+            balancesData.data.forEach((balance: any) => {
+              const leaveTypeKey = balance.leave_types?.key
+              if (leaveTypeKey) {
+                const total = (balance.total_accrued || 0) + (balance.carried_over || 0)
+                totalEntitlements[leaveTypeKey] = Math.max(0, total)
+              }
+            })
+          }
+        }
+
+        // Apply sensible default entitlements for employees who don't yet have records
+        // These defaults are only used when the API doesn't return a value for that type.
+        const defaultEntitlements: Record<string, number> = {
+          annual: 15,                 // typical minimum per year
+          sick: 30,                   // 30 days in a 36‑month cycle
+          family_responsibility: 3,   // 3 days per year
+        }
+        const totalEntitlementsWithDefaults: Record<string, number> = {
+          ...defaultEntitlements,
+          ...totalEntitlements,
+        }
+
+        // Fetch available balances for all leave types (same as leave request form)
+        const leaveTypes = ['annual', 'sick', 'family_responsibility', 'maternity', 'paternity', 'unpaid', 'other']
+        const balancePromises = leaveTypes.map(async (leaveType) => {
+          try {
+            const res = await fetch(
+              `/api/leave/requests/balances/available?employee_id=${employeeId}&leave_type=${leaveType}`
+            )
+            if (res.ok) {
+              const json = await res.json()
+              if (json.success && json.data?.available_balance !== undefined) {
+                return { 
+                  leaveType, 
+                  available: json.data.available_balance,
+                  total: totalEntitlementsWithDefaults[leaveType] || 0
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`Error fetching available balance for ${leaveType}:`, error)
+          }
+          return { 
+            leaveType, 
+            // If the API couldn't provide an available balance, assume the employee
+            // still has their full entitlement available for that leave type.
+            available: totalEntitlementsWithDefaults[leaveType] || 0,
+            total: totalEntitlementsWithDefaults[leaveType] || 0
+          }
+        })
+
+        const balanceResults = await Promise.all(balancePromises)
+        const balancesMap: Record<string, number> = {}
+        const balancesByType: Record<string, { available: number; total: number }> = {}
+        
+        balanceResults.forEach(({ leaveType, available, total }) => {
+          balancesMap[leaveType] = available
+          balancesByType[leaveType] = {
+            available: Math.max(0, available),
+            total: Math.max(0, total),
+          }
+        })
+        
+        setAvailableBalances(balancesMap)
+        setLeaveBalances(balancesByType)
+
+        // Fetch recent leave requests for notifications
+        try {
+          const requestsRes = await fetch(`/api/leave/requests?employee_id=${employeeId}&limit=5`, { headers })
+          if (requestsRes.ok) {
+            const requestsData = await requestsRes.json()
+            console.log('Leave requests response:', requestsData)
+            if (requestsData?.success && Array.isArray(requestsData.data)) {
+              console.log('Setting leave requests:', requestsData.data.length, 'requests')
+              setLeaveRequests(requestsData.data)
+            } else {
+              console.warn('Leave requests response format unexpected:', requestsData)
+              setLeaveRequests([])
+            }
+          } else {
+            console.error('Failed to fetch leave requests:', requestsRes.status, requestsRes.statusText)
+            const errorData = await requestsRes.json().catch(() => ({}))
+            console.error('Error details:', errorData)
+            setLeaveRequests([])
+          }
+        } catch (error) {
+          console.error('Error fetching leave requests:', error)
+          setLeaveRequests([])
+        }
+      } catch (error) {
+        console.error('Error fetching leave balances:', error)
+      }
+    }
+
+    fetchEmployeeData()
+  }, [user?.id])
+
   // Helper: progress bar color based on remaining percentage
-  const getRemainingColorClass = (used: number, total: number) => {
-    const remaining = total - used
-    const remainingPct = (remaining / total) * 100
+  // Format: USED / TOTAL, so REMAINING = TOTAL - USED
+  // Green: 67-100% remaining, Orange: 34-66% remaining, Red: 0-33% remaining
+  const getRemainingColorClass = (available: number, total: number) => {
+    const remaining = available // available = total - used, so remaining = available
+    const remainingPct = total > 0 ? (remaining / total) * 100 : 0
 
     if (remainingPct >= 67) return "[&>div]:bg-green-500"
     if (remainingPct >= 34) return "[&>div]:bg-orange-500"
@@ -173,14 +334,30 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-3xl font-bold text-navy">12</span>
-                      <span className="text-muted-foreground">/ 15 days</span>
-                    </div>
-                    <Progress
-                      value={80}
-                      className={cn("h-2", getRemainingColorClass(12, 15))}
-                    />
+                    {leaveBalances.annual ? (
+                      <>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl font-bold text-navy">
+                            {Math.round(leaveBalances.annual.total - leaveBalances.annual.available)}
+                          </span>
+                          <span className="text-muted-foreground">
+                            / {Math.round(leaveBalances.annual.total)} days
+                          </span>
+                        </div>
+                        <Progress
+                          value={leaveBalances.annual.total > 0 ? ((leaveBalances.annual.total - leaveBalances.annual.available) / leaveBalances.annual.total) * 100 : 0}
+                          className={cn("h-2", getRemainingColorClass(leaveBalances.annual.available, leaveBalances.annual.total))}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl font-bold text-navy">0</span>
+                          <span className="text-muted-foreground">/ 0 days</span>
+                        </div>
+                        <Progress value={0} className="h-2" />
+                      </>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -191,14 +368,30 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-3xl font-bold text-navy">8</span>
-                      <span className="text-muted-foreground">/ 10 days</span>
-                    </div>
-                    <Progress
-                      value={80}
-                      className={cn("h-2", getRemainingColorClass(8, 10))}
-                    />
+                    {leaveBalances.sick ? (
+                      <>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl font-bold text-navy">
+                            {Math.round(leaveBalances.sick.total - leaveBalances.sick.available)}
+                          </span>
+                          <span className="text-muted-foreground">
+                            / {Math.round(leaveBalances.sick.total)} days
+                          </span>
+                        </div>
+                        <Progress
+                          value={leaveBalances.sick.total > 0 ? ((leaveBalances.sick.total - leaveBalances.sick.available) / leaveBalances.sick.total) * 100 : 0}
+                          className={cn("h-2", getRemainingColorClass(leaveBalances.sick.available, leaveBalances.sick.total))}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl font-bold text-navy">0</span>
+                          <span className="text-muted-foreground">/ 0 days</span>
+                        </div>
+                        <Progress value={0} className="h-2" />
+                      </>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -209,14 +402,30 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-3xl font-bold text-navy">3</span>
-                      <span className="text-muted-foreground">/ 3 days</span>
-                    </div>
-                    <Progress
-                      value={100}
-                      className={cn("h-2", getRemainingColorClass(3, 3))}
-                    />
+                    {leaveBalances.family_responsibility ? (
+                      <>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl font-bold text-navy">
+                            {Math.round(leaveBalances.family_responsibility.total - leaveBalances.family_responsibility.available)}
+                          </span>
+                          <span className="text-muted-foreground">
+                            / {Math.round(leaveBalances.family_responsibility.total)} days
+                          </span>
+                        </div>
+                        <Progress
+                          value={leaveBalances.family_responsibility.total > 0 ? ((leaveBalances.family_responsibility.total - leaveBalances.family_responsibility.available) / leaveBalances.family_responsibility.total) * 100 : 0}
+                          className={cn("h-2", getRemainingColorClass(leaveBalances.family_responsibility.available, leaveBalances.family_responsibility.total))}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl font-bold text-navy">0</span>
+                          <span className="text-muted-foreground">/ 0 days</span>
+                        </div>
+                        <Progress value={0} className="h-2" />
+                      </>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -235,39 +444,77 @@ export default function DashboardPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Recent Notifications</CardTitle>
-                <CardDescription>Stay updated with important information</CardDescription>
+                <CardDescription>Your leave request history</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {[
-                    {
-                      type: "success",
-                      message: "Your leave request for Dec 20-22 has been approved",
-                      time: "2 hours ago",
-                    },
-                    { type: "info", message: "New payslip available for November 2024", time: "1 day ago" },
-                    {
-                      type: "warning",
-                      message: "Please update your emergency contact information",
-                      time: "3 days ago",
-                    },
-                  ].map((notification, i) => (
-                    <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                      {notification.type === "success" && (
-                        <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
-                      )}
-                      {notification.type === "info" && (
-                        <FileText className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" />
-                      )}
-                      {notification.type === "warning" && (
-                        <AlertCircle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
-                      )}
-                      <div className="flex-1">
-                        <p className="text-sm">{notification.message}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{notification.time}</p>
-                      </div>
-                    </div>
-                  ))}
+                  {leaveRequests.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">No leave requests yet</p>
+                  ) : (
+                    leaveRequests.map((request) => {
+                      // Handle different response structures
+                      const leaveTypeKey = request.leave_types?.key || request.leave_type?.key || request.leave_type || 'unknown'
+                      const leaveTypeName = getLeaveTypeDisplayName(leaveTypeKey)
+                      const startDate = request.start_date || request.leave_day_from
+                      const endDate = request.end_date || request.leave_day_to
+                      const status = request.status || 'pending'
+                      
+                      // Format date range
+                      let dateRange = ""
+                      if (startDate && endDate) {
+                        try {
+                          const start = format(new Date(startDate), "MMM d")
+                          const end = format(new Date(endDate), "MMM d, yyyy")
+                          dateRange = `${start} - ${end}`
+                        } catch (e) {
+                          dateRange = "Invalid dates"
+                        }
+                      } else {
+                        dateRange = "Date range not available"
+                      }
+
+                      // Format time ago
+                      let timeAgo = ""
+                      try {
+                        const createdAt = request.created_at || request.submitted_at
+                        if (createdAt) {
+                          timeAgo = formatDistanceToNow(new Date(createdAt), { addSuffix: true })
+                        }
+                      } catch (e) {
+                        timeAgo = ""
+                      }
+
+                      // Determine icon and message based on status
+                      let icon, message, iconColor
+                      if (status === 'approved') {
+                        icon = CheckCircle2
+                        iconColor = "text-green-500"
+                        message = `Your ${leaveTypeName} request for ${dateRange} has been approved`
+                      } else if (status === 'rejected' || status === 'cancelled') {
+                        icon = XCircle
+                        iconColor = "text-red-500"
+                        message = `Your ${leaveTypeName} request for ${dateRange} has been ${status === 'cancelled' ? 'cancelled' : 'rejected'}`
+                      } else {
+                        icon = AlertCircle
+                        iconColor = "text-amber-500"
+                        message = `Your ${leaveTypeName} request for ${dateRange} is pending approval`
+                      }
+
+                      const IconComponent = icon
+
+                      return (
+                        <div key={request.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                          <IconComponent className={`h-5 w-5 ${iconColor} flex-shrink-0 mt-0.5`} />
+                          <div className="flex-1">
+                            <p className="text-sm">{message}</p>
+                            {timeAgo && (
+                              <p className="text-xs text-muted-foreground mt-1">{timeAgo}</p>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -327,9 +574,13 @@ export default function DashboardPage() {
                 <div className="flex flex-col space-y-1.5">
                   <Label>Available Balance ({getLeaveTypeDisplayName(leaveType)})</Label>
                   <div className="flex items-center gap-2">
-                    <Input value={calculateLeaveBalance(employeeIdForBalance, leaveType, undefined)} readOnly className="bg-gray-100" />
-                    <Badge variant={calculateLeaveBalance(employeeIdForBalance, leaveType, undefined) > 0 ? "default" : "destructive"}>
-                      {calculateLeaveBalance(employeeIdForBalance, leaveType, undefined) > 0 ? "Available" : "No Balance"}
+                    <Input 
+                      value={availableBalances[leaveType] !== undefined ? availableBalances[leaveType].toFixed(2) : calculateLeaveBalance(employeeIdForBalance, leaveType, undefined)} 
+                      readOnly 
+                      className="bg-gray-100" 
+                    />
+                    <Badge variant={(availableBalances[leaveType] !== undefined ? availableBalances[leaveType] : calculateLeaveBalance(employeeIdForBalance, leaveType, undefined)) > 0 ? "default" : "destructive"}>
+                      {(availableBalances[leaveType] !== undefined ? availableBalances[leaveType] : calculateLeaveBalance(employeeIdForBalance, leaveType, undefined)) > 0 ? "Available" : "No Balance"}
                     </Badge>
                   </div>
                 </div>
@@ -453,6 +704,34 @@ export default function DashboardPage() {
                 </div>
               </>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showVerificationPopup} onOpenChange={setShowVerificationPopup}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Complete your verification</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              Your profile is not fully verified yet. Please complete the required verification steps to unlock Notes,
+              Leave Requests, and Documents.
+            </p>
+            <p>Go to your profile and ensure your ID, bank, and work permit verification are completed.</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowVerificationPopup(false)}>
+              Remind me later
+            </Button>
+            <Button
+              onClick={() => {
+                setShowVerificationPopup(false)
+                router.push("/profile")
+              }}
+            >
+              Request verification
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

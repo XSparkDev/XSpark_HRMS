@@ -93,7 +93,7 @@ const buildUserFromRecord = (record: Record<string, unknown> | null | undefined)
       (record.role as string | undefined) ??
         (userMetadata?.role as string | undefined) ??
         (record.role_name as string | undefined) ??
-        (record.app_metadata as Record<string, unknown> | undefined)?.role
+        (toStringOrUndefined((record.app_metadata as Record<string, unknown> | undefined)?.role))
     )
 
   const employeeId =
@@ -289,7 +289,8 @@ export function getRoleDisplayName(role: UserRole): string {
 }
 
 const roleRoutes: Record<UserRole, string> = {
-  employee: "/ams-dashboard",
+  // Default all users to the main HR dashboard; AMS can be accessed via switcher
+  employee: "/dashboard",
   supervisor: "/ams-supervisor",
   junior_hr: "/dashboard",
   hr_manager: "/dashboard",

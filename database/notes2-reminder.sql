@@ -17,3 +17,18 @@ WHERE reminder_enabled = TRUE
   AND reminder_at >= NOW() 
   AND reminder_at <= NOW() + INTERVAL '3 days';
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
