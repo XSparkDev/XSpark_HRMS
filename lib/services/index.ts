@@ -94,6 +94,14 @@ export {
   ResourcesService,
   resourcesService,
 } from './resources-service'
+
+// HRMS domain services
+export { incidentsService } from './incidents-service'
+export { maintenanceService } from './maintenance-service'
+export { bookingsService } from './bookings-service'
+export { devicesService } from './devices-service'
+export { borrowService } from './borrow-service'
+
 export type {
   ResourceModel,
   ResourceRecord as BaseResourceRecord,
