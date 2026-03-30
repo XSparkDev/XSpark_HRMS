@@ -7,9 +7,12 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
-  generator: 'v0.app',
+  title: 'X Spark HRMS',
+  description: 'X Spark HRMS',
+  generator: 'X Spark',
+  icons: {
+    icon: '/favicon.png',
+  },
 }
 
 export default function RootLayout({
