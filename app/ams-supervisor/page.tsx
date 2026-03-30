@@ -13,7 +13,15 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { RoomAvailabilityModal } from "@/components/room-availability-modal"
+import { ApprovalQRScannerModal } from "@/components/approval-qr-scanner-modal"
+import { BorrowRequestsTable } from "@/components/borrow-requests-table"
 import { getCurrentUser } from "@/lib/auth"
 import { supabase } from "@/lib/supabase"
 import { BORROW_REQUESTS_UPDATED_EVENT } from "@/lib/storage/device-history"
@@ -22,7 +30,6 @@ import { supervisorDashboardService, type DeviceStats as ServiceDeviceStats } fr
 import {
   CheckCircle2,
   ClipboardList,
-  Eye,
   Laptop,
   Monitor,
   RefreshCw,
@@ -31,6 +38,9 @@ import {
   QrCode,
   X,
   Package,
+  MoreVertical,
+  Eye,
+  Trash2,
   Building2,
   Calendar as CalendarIcon,
   Clock,
@@ -54,10 +64,12 @@ type BorrowRequest = {
   employeeName: string
   employeeId: string
   deviceName: string
+  deviceId?: string
   assetTag: string
   borrowDate: string
   purpose: string
   status: string
+  createdAt?: string
 }
 
 type ReturnRequest = {
@@ -65,10 +77,12 @@ type ReturnRequest = {
   employeeName: string
   employeeId: string
   deviceName: string
+  deviceId?: string
   assetTag?: string
   returnDate: string
   deviceCondition: string
   status: string
+  createdAt?: string
 }
 
 type MaintenanceTicket = {
@@ -199,6 +213,7 @@ export default function SupervisorDashboardPage() {
   const [assignedDevicesCount, setAssignedDevicesCount] = useState(0)
   const [resourceCount, setResourceCount] = useState(0)
   const [borrowRequests, setBorrowRequests] = useState<BorrowRequest[]>([])
+  const [activeBorrows, setActiveBorrows] = useState<BorrowRequest[]>([])
   const [returnRequests, setReturnRequests] = useState<ReturnRequest[]>([])
   const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([])
   const [pendingBorrowDevices, setPendingBorrowDevices] = useState<Array<{
@@ -259,6 +274,7 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     agenda: "",
   })
   const [bookingErrors, setBookingErrors] = useState<Record<string, string>>({})
+  const [bookingSubmitting, setBookingSubmitting] = useState(false)
   const [availableRooms, setAvailableRooms] = useState<any[]>([])
   const [availableRoomsLoading, setAvailableRoomsLoading] = useState(false)
   const [devices, setDevices] = useState<any[]>([])
@@ -272,6 +288,26 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
   const [scanError, setScanError] = useState<string | null>(null)
   
+  // QR Scanner Approval Modal state
+  const [showApprovalQRScanner, setShowApprovalQRScanner] = useState(false)
+  const [pendingApprovalRequest, setPendingApprovalRequest] = useState<{
+    type: "borrow" | "return"
+    id: string
+    deviceId: string
+    assetTag?: string | null
+    deviceName?: string
+    employeeName?: string
+  } | null>(null)
+  
+  // Rejection reason modal state
+  const [showRejectModal, setShowRejectModal] = useState(false)
+  const [pendingRejectRequest, setPendingRejectRequest] = useState<{
+    id: string
+    type: "borrow" | "return"
+  } | null>(null)
+  const [rejectionReason, setRejectionReason] = useState("")
+  const [rejecting, setRejecting] = useState(false)
+  
   // Device availability popup states
   const [showDeviceAvailability, setShowDeviceAvailability] = useState(false)
   const [availableDevicesList, setAvailableDevicesList] = useState<any[]>([])
@@ -279,6 +315,7 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
   
   // Approve borrow requests table state
   const [showBorrowRequestsTable, setShowBorrowRequestsTable] = useState(false)
+  const [showActiveBorrowsTable, setShowActiveBorrowsTable] = useState(false)
   
   // Approve returns popup state
   const [showReturnsTable, setShowReturnsTable] = useState(false)
@@ -289,11 +326,33 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     setDatabaseError(null)
     try {
       // Fetch from database using the service
-      const [borrowData, returnData, pendingDevices] = await Promise.all([
-        supervisorDashboardService.getPendingBorrowRequests(),
-        supervisorDashboardService.getPendingReturnRequests(),
-        supervisorDashboardService.getDevicesWithPendingBorrowStatus(),
+      // Force refresh to bypass cache and get latest data
+      console.log('[SupervisorDashboard] Loading borrow data...')
+      const [borrowData, activeBorrowsData, returnData, pendingDevices] = await Promise.all([
+        supervisorDashboardService.getPendingBorrowRequests(true).catch((err) => {
+          console.error('[SupervisorDashboard] Error fetching pending borrows:', err)
+          return []
+        }),
+        supervisorDashboardService.getActiveBorrows(true).catch((err) => {
+          console.error('[SupervisorDashboard] Error fetching active borrows:', err)
+          return []
+        }), // Get active borrows (approved but not returned)
+        supervisorDashboardService.getPendingReturnRequests().catch((err) => {
+          console.error('[SupervisorDashboard] Error fetching return requests:', err)
+          return []
+        }),
+        supervisorDashboardService.getDevicesWithPendingBorrowStatus().catch((err) => {
+          console.error('[SupervisorDashboard] Error fetching pending devices:', err)
+          return []
+        }),
       ])
+      
+      console.log('[SupervisorDashboard] Borrow data loaded:', {
+        pendingBorrows: borrowData.length,
+        activeBorrows: activeBorrowsData.length,
+        returnRequests: returnData.length,
+        pendingDevices: pendingDevices.length,
+      })
       
       // Transform to match existing type structure
       setBorrowRequests(
@@ -302,22 +361,47 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
           employeeName: item.employee_name,
           employeeId: item.employee_id,
           deviceName: item.device_name,
+          deviceId: item.device_id,
           assetTag: item.asset_tag,
           borrowDate: item.borrow_date,
           purpose: item.purpose,
           status: item.status,
+          createdAt: item.created_at,
         }))
       )
+
+      // Set active borrows (approved but not returned)
+      console.log('[SupervisorDashboard] Active borrows data received:', {
+        count: activeBorrowsData.length,
+        sample: activeBorrowsData.slice(0, 2)
+      })
       
-      setReturnRequests(
-        returnData.map((item) => ({
+      setActiveBorrows(
+        activeBorrowsData.map((item) => ({
           id: item.id,
           employeeName: item.employee_name,
           employeeId: item.employee_id,
           deviceName: item.device_name,
+          deviceId: item.device_id,
+          assetTag: item.asset_tag,
+          borrowDate: item.borrow_date,
+          purpose: item.purpose,
+          status: item.status || 'approved',
+        }))
+      )
+      
+      setReturnRequests(
+        returnData.map((item: any) => ({
+          id: item.id,
+          employeeName: item.employee_name,
+          employeeId: item.employee_id,
+          deviceName: item.device_name,
+          deviceId: item.device_id,
+          assetTag: item.asset_tag,
           returnDate: item.return_date,
           deviceCondition: item.device_condition,
           status: item.status,
+          createdAt: item.created_at,
         }))
       )
       
@@ -390,7 +474,13 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
   const fetchDeviceStats = useCallback(async () => {
     try {
       setDatabaseError(null)
-      const devicesResponse = await fetch("/api/devices?limit=1000&offset=0", { cache: "no-store" })
+      const devicesResponse = await fetch("/api/devices?limit=1000&offset=0", {
+        cache: "no-store",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+        },
+      })
       const devicesJson = await devicesResponse.json().catch(() => ({}))
       if (!devicesResponse.ok || devicesJson.success === false) {
         throw new Error(devicesJson?.error || "Failed to fetch devices")
@@ -436,7 +526,10 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
       const response = await fetch("/api/resources?limit=1&offset=0", { cache: "no-store" })
       const json = await response.json().catch(() => ({}))
       if (!response.ok || json.success === false) {
-        throw new Error(json?.error || "Failed to fetch resources")
+        // Silently fail and set count to 0 instead of showing error
+        console.warn("Failed to fetch resources:", json?.error || "Unknown error")
+        setResourceCount(0)
+        return
       }
       const totalResources = typeof json.meta?.count === "number"
         ? json.meta.count
@@ -445,15 +538,11 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
         : 0
       setResourceCount(totalResources)
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to fetch resources"
-      console.error("Failed to fetch resources summary", error)
-      toast({
-        variant: "destructive",
-        title: "Unable to load resources",
-        description: errorMessage,
-      })
+      // Silently fail and set count to 0 instead of showing error toast
+      console.warn("Failed to fetch resources summary", error)
+      setResourceCount(0)
     }
-  }, [toast])
+  }, [])
 
   const fetchRoomBookings = useCallback(async () => {
     if (!userIdentifier) {
@@ -489,10 +578,29 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
           meetingAgenda: item.meeting_agenda || item.meetingAgenda,
           checkedInAt: item.checked_in_at || item.checkedInAt || null,
         }))
+        console.log('[Supervisor] Fetched room bookings:', {
+          count: bookings.length,
+          userIdentifier,
+          bookings: bookings.map(b => ({
+            id: b.id,
+            room: b.room,
+            date: b.date,
+            startTime: b.startTime,
+            endTime: b.endTime,
+            status: b.status,
+          })),
+        })
         setRoomBookings(bookings)
+      } else {
+        console.warn('[Supervisor] Failed to fetch room bookings:', {
+          responseOk: response.ok,
+          jsonSuccess: json.success,
+          error: json.error,
+          data: json.data,
+        })
       }
     } catch (error) {
-      console.error("Failed to fetch room bookings", error)
+      console.error("[Supervisor] Failed to fetch room bookings", error)
     } finally {
       setRoomBookingsLoading(false)
     }
@@ -570,9 +678,17 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
 
     // Legacy event listeners for backward compatibility
     const storageHandler = () => loadBorrowData()
+    const handleRoomBookingsUpdate = () => {
+      // Clear localStorage cache and refresh room bookings (consistent with employee dashboard)
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(ROOM_BOOKINGS_STORAGE_KEY)
+      }
+      fetchRoomBookings()
+    }
+    
     window.addEventListener("storage", storageHandler)
     window.addEventListener(BORROW_REQUESTS_UPDATED_EVENT, storageHandler as EventListener)
-    window.addEventListener(ROOM_BOOKINGS_UPDATED_EVENT, () => fetchRoomBookings())
+    window.addEventListener(ROOM_BOOKINGS_UPDATED_EVENT, handleRoomBookingsUpdate)
 
     // Polling fallback (less frequent now that we have real-time)
     const interval = setInterval(() => {
@@ -591,18 +707,17 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
       // Cleanup event listeners
       window.removeEventListener("storage", storageHandler)
       window.removeEventListener(BORROW_REQUESTS_UPDATED_EVENT, storageHandler as EventListener)
-      window.removeEventListener(ROOM_BOOKINGS_UPDATED_EVENT, () => fetchRoomBookings())
+      window.removeEventListener(ROOM_BOOKINGS_UPDATED_EVENT, handleRoomBookingsUpdate)
       clearInterval(interval)
     }
   }, [fetchDeviceStats, fetchResourceCount, loadBorrowData, fetchRoomBookings, loadMaintenanceTickets])
 
   // Combine borrow requests with devices that have pending borrow status
   const allPendingBorrowItems = useMemo(() => {
-    const requests = borrowRequests.filter((r) => 
-      r.status === "Pending" || 
-      r.status === "Pending Approval" || 
-      r.status === "Awaiting Approval"
-    )
+    // Include ALL borrow requests - the service already filters for pending ones
+    // The service queries for: status containing 'pending', approval_status='pending_approval', or is_borrowed=false
+    // So we trust the service's filtering and include all returned requests
+    const requests = borrowRequests
     
     // Add devices with pending borrow status that don't have a borrow request
     const deviceRequests = pendingBorrowDevices.map((device) => {
@@ -645,23 +760,76 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
   }).length
 
   const upcomingCheckInBooking = useMemo(() => {
-    if (!userIdentifier) return null
+    if (!userIdentifier) {
+      console.log('[Supervisor] No userIdentifier for upcomingCheckInBooking')
+      return null
+    }
     const now = new Date()
+    // Note: The API already filters bookings by userIdentifier (resolved to UUID via resolveBookedByIdentifier),
+    // so all roomBookings returned are for this user. We don't need to filter by employeeId again.
     const candidates = roomBookings
-      .filter((booking) => booking.employeeId === userIdentifier)
       .map((booking) => {
         const { startDate, endDate } = parseBookingTimeWindow(booking)
-        if (!startDate || !endDate) return null
+        if (!startDate || !endDate) {
+          console.log('[Supervisor] Booking has invalid time window:', {
+            bookingId: booking.id,
+            date: booking.date,
+            startTime: booking.startTime,
+            endTime: booking.endTime,
+            time: booking.time,
+          })
+          return null
+        }
         const minutes = minutesUntilStart(booking, now)
-        if (minutes === null || minutes > 60) return null
-        if (now > endDate) return null
+        if (minutes === null || minutes > 60) {
+          console.log('[Supervisor] Booking outside check-in window:', {
+            bookingId: booking.id,
+            minutes,
+            startDate: startDate.toISOString(),
+            now: now.toISOString(),
+          })
+          return null
+        }
+        if (now > endDate) {
+          console.log('[Supervisor] Booking has ended:', {
+            bookingId: booking.id,
+            endDate: endDate.toISOString(),
+            now: now.toISOString(),
+          })
+          return null
+        }
+        
+        // Remove meetings that have been checked in (immediately remove from card after check-in)
+        const hasCheckedIn = Boolean(booking.checkedInAt || (booking as any).checked_in_at)
+        if (hasCheckedIn) {
+          console.log('[Supervisor] Booking has been checked in:', {
+            bookingId: booking.id,
+            checkedInAt: booking.checkedInAt || (booking as any).checked_in_at,
+          })
+          return null
+        }
         
         // Remove check-in button when meeting is in progress (even if not checked in)
         const isInProgress = now >= startDate && now <= endDate
-        if (isInProgress) return null
+        if (isInProgress) {
+          console.log('[Supervisor] Booking is in progress:', {
+            bookingId: booking.id,
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+            now: now.toISOString(),
+          })
+          return null
+        }
         
         const statusLabel = getBookingStatusLabel(booking, now)
-        if (["Cancelled", "Attended"].includes(statusLabel)) return null
+        if (["Cancelled", "Attended"].includes(statusLabel)) {
+          console.log('[Supervisor] Booking is cancelled or attended:', {
+            bookingId: booking.id,
+            statusLabel,
+            checkedInAt: booking.checkedInAt,
+          })
+          return null
+        }
         return {
           booking,
           minutes,
@@ -685,7 +853,17 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
       )
       .sort((a, b) => (a?.minutes ?? 0) - (b?.minutes ?? 0))
 
-    return candidates[0] ?? null
+    const result = candidates[0] ?? null
+    console.log('[Supervisor] upcomingCheckInBooking result:', {
+      totalBookings: roomBookings.length,
+      candidatesCount: candidates.length,
+      result: result ? {
+        bookingId: result.booking.id,
+        minutes: result.minutes,
+        startDate: result.startDate.toISOString(),
+      } : null,
+    })
+    return result
   }, [roomBookings, userIdentifier])
 
   const scheduleItems = useMemo(() => {
@@ -901,6 +1079,12 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
       accent: "#58595B",
     },
     {
+      label: "Active Borrows",
+      value: activeBorrows.length,
+      Icon: Package,
+      accent: "#92278F",
+    },
+    {
       label: "Under Maintenance",
       value: deviceStats.maintenance,
       Icon: Wrench,
@@ -1021,8 +1205,9 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
           setShowDeviceAvailability(true)
           setAvailableDevicesLoading(true)
           try {
-            // Fetch ALL devices from the API (no availability filter)
-            const response = await fetch("/api/devices?limit=200&offset=0", {
+            // Fetch ALL devices from the API and sync their statuses
+            // syncStatus=true will update device statuses in the database based on their actual state
+            const response = await fetch("/api/devices?limit=200&offset=0&syncStatus=true", {
               cache: "no-store",
               credentials: "include",
               headers: {
@@ -1032,6 +1217,10 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
             const json = await response.json()
             if (response.ok && json.success && Array.isArray(json.data)) {
               setAvailableDevicesList(json.data)
+              toast({
+                title: "Device availability updated",
+                description: "Device statuses have been synced with their current state.",
+              })
             } else {
               throw new Error(json?.error || "Failed to fetch devices")
             }
@@ -1055,12 +1244,25 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
           break
         }
         case "approve-borrow-requests": {
+          // Clear cache to ensure fresh data
+          supervisorDashboardService.clearCache('pending-borrow-requests')
+          supervisorDashboardService.clearCache('devices-pending-borrow')
+          supervisorDashboardService.clearCache('active-borrows')
+          // Open the dialog - component will handle fetching
           setShowBorrowRequestsTable(true)
-          await loadBorrowData()
           break
         }
         case "approve-returns": {
           setShowReturnsTable(true)
+          await loadBorrowData()
+          break
+        }
+        case "view-active-borrows": {
+          // Clear cache to ensure fresh data
+          supervisorDashboardService.clearCache('active-borrows')
+          setShowActiveBorrowsTable(true)
+          // Force refresh with a small delay to ensure cache is cleared
+          await new Promise(resolve => setTimeout(resolve, 100))
           await loadBorrowData()
           break
         }
@@ -1275,6 +1477,12 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     return errors
   }, [isPastDate, compareTimes])
 
+  // Check if booking form is ready (no validation errors)
+  const bookingFormReady = useMemo(() => {
+    const errors = validateBooking(bookingForm)
+    return Object.keys(errors).length === 0
+  }, [bookingForm, validateBooking])
+
   const handleBookingDateChange = useCallback((value: string) => {
     const nextForm = { ...bookingForm, date: value }
     setBookingForm(nextForm)
@@ -1297,6 +1505,8 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
   }, [bookingForm, validateBooking])
 
   const handleBookRoomSubmit = useCallback(async () => {
+    if (bookingSubmitting) return
+
     const errors = validateBooking(bookingForm)
     setBookingErrors(errors)
 
@@ -1318,6 +1528,7 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
       return
     }
 
+    setBookingSubmitting(true)
     try {
       const payload = {
         room_id: bookingForm.room,
@@ -1336,6 +1547,17 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
       })
 
       const json = await response.json()
+      
+      if (response.status === 409) {
+        const errorMessage = json?.error || "Room unavailable"
+        toast({
+          variant: "destructive",
+          title: errorMessage.includes("already have a booking") ? "Time slot unavailable" : "Room unavailable",
+          description: errorMessage, // Show detailed error message from backend
+        })
+        return
+      }
+      
       if (!response.ok || json.success === false) {
         throw new Error(json.error || "Failed to book room")
       }
@@ -1362,8 +1584,10 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
         title: "Failed to book room",
         description: error instanceof Error ? error.message : "Please try again.",
       })
+    } finally {
+      setBookingSubmitting(false)
     }
-  }, [bookingForm, userIdentifier, toast, fetchRoomBookings, validateBooking])
+  }, [bookingForm, userIdentifier, toast, fetchRoomBookings, validateBooking, bookingSubmitting])
 
   const quickActions: QuickAction[] = [
     {
@@ -1415,15 +1639,90 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
       accent: "#25294B",
     },
     {
-      key: "view-actions",
-      label: "View Actions",
-      description: "Open the action log for recent updates.",
-      icon: Eye,
-      background: "from-white via-[#EEF4FF] to-[#FDEBFF]",
-      accent: "#3B4370",
-      href: "/ams-actions",
+      key: "view-active-borrows",
+      label: "View Active Borrows",
+      description: "View all currently active device borrows.",
+      icon: Package,
+      background: "from-[#F8E8FF] via-[#F2F8FF] to-[#E8F1FF]",
+      accent: "#92278F",
     },
   ]
+
+  // Handler to open QR scanner modal for approval
+  const handleOpenApprovalQRScanner = useCallback(
+    (request: BorrowRequest | ReturnRequest, type: "borrow" | "return") => {
+      const deviceId = type === "borrow" 
+        ? (request as BorrowRequest).deviceId || (request as BorrowRequest).assetTag || "" 
+        : (request as ReturnRequest).deviceId || (request as ReturnRequest).assetTag || ""
+      
+      setPendingApprovalRequest({
+        type,
+        id: request.id,
+        deviceId,
+        assetTag: type === "borrow" 
+          ? (request as BorrowRequest).assetTag 
+          : (request as ReturnRequest).assetTag,
+        deviceName: request.deviceName,
+        employeeName: request.employeeName,
+      })
+      setShowApprovalQRScanner(true)
+    },
+    [],
+  )
+
+  // Handler for successful QR scan - actually approve the request
+  const handleQRScanSuccess = useCallback(
+    async (scannedCode: string) => {
+      if (!pendingApprovalRequest) return
+
+      try {
+        if (pendingApprovalRequest.type === "borrow") {
+          // Approve borrow request (this will also update device status)
+          await supervisorDashboardService.approveBorrowRequest(pendingApprovalRequest.id)
+          toast({ 
+            title: "Request approved", 
+            description: "Borrow request approved and device status updated to 'borrowed'." 
+          })
+        } else {
+          await supervisorDashboardService.approveReturnRequest(pendingApprovalRequest.id)
+          toast({ title: "Return approved", description: "Return request approved successfully." })
+        }
+        
+        // Close modal
+        setShowApprovalQRScanner(false)
+        setPendingApprovalRequest(null)
+        
+        // Refresh data after approval
+        await loadBorrowData()
+        await fetchDeviceStats()
+        if (showDeviceAvailability) {
+          // Refresh available devices list
+          try {
+            const response = await fetch("/api/devices?status=available&limit=1000", { cache: "no-store" })
+            const result = await response.json()
+            if (result.success && Array.isArray(result.data)) {
+              setAvailableDevicesList(result.data)
+            } else {
+              setAvailableDevicesList([])
+            }
+          } catch (error) {
+            console.error("Failed to fetch available devices:", error)
+            setAvailableDevicesList([])
+          }
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Failed to approve request"
+        toast({
+          variant: "destructive",
+          title: "Approval failed",
+          description: errorMessage,
+        })
+      }
+    },
+    [pendingApprovalRequest, loadBorrowData, fetchDeviceStats, toast, showDeviceAvailability],
+  )
+
+  // OLD refreshBorrowRequests function removed - now handled by BorrowRequestsTable component
 
   const handleApprove = useCallback(
     async (id: string, type: "borrow" | "return") => {
@@ -1445,7 +1744,11 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
         if (showDeviceAvailability) {
           // Refresh available devices list
           try {
-            const response = await fetch("/api/devices?status=available&limit=1000", { cache: "no-store" })
+            const response = await fetch("/api/devices?status=available&limit=1000", {
+              cache: "no-store",
+              credentials: "include",
+              headers: { Accept: "application/json" },
+            })
             const result = await response.json()
             if (result.success && Array.isArray(result.data)) {
               setAvailableDevicesList(result.data)
@@ -1531,16 +1834,38 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     resetApprovalScannerState()
   }, [handleApprove, qrCodeValue, resetApprovalScannerState, selectedApprovalRequest, toast])
 
+  const handleOpenRejectModal = useCallback(
+    (id: string, type: "borrow" | "return") => {
+      setPendingRejectRequest({ id, type })
+      setRejectionReason("")
+      setShowRejectModal(true)
+    },
+    [],
+  )
+
   const handleReject = useCallback(
-    async (id: string, type: "borrow" | "return") => {
+    async (id: string, type: "borrow" | "return", reason: string) => {
+      if (!reason || !reason.trim()) {
+        toast({
+          variant: "destructive",
+          title: "Rejection reason required",
+          description: "Please provide a reason for rejecting this request.",
+        })
+        return
+      }
+
+      setRejecting(true)
       try {
       if (type === "borrow") {
-          await supervisorDashboardService.rejectBorrowRequest(id, "Rejected by supervisor")
+          await supervisorDashboardService.rejectBorrowRequest(id, reason.trim())
       } else {
-          await supervisorDashboardService.rejectReturnRequest(id, "Rejected by supervisor")
+          await supervisorDashboardService.rejectReturnRequest(id, reason.trim())
       }
       toast({ title: "Request rejected", description: "The request has been rejected." })
         await loadBorrowData()
+        setShowRejectModal(false)
+        setPendingRejectRequest(null)
+        setRejectionReason("")
       setIsDialogOpen(false)
       setSelectedRequest(null)
       } catch (error) {
@@ -1550,9 +1875,51 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
           title: "Rejection failed",
           description: errorMessage,
         })
+      } finally {
+        setRejecting(false)
       }
     },
     [loadBorrowData, toast],
+  )
+
+  const handleConfirmReject = useCallback(() => {
+    if (!pendingRejectRequest) return
+    if (!rejectionReason || !rejectionReason.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Rejection reason required",
+        description: "Please provide a reason for rejecting this request.",
+      })
+      return
+    }
+    handleReject(pendingRejectRequest.id, pendingRejectRequest.type, rejectionReason)
+  }, [pendingRejectRequest, rejectionReason, handleReject, toast])
+
+  const handleDeleteRequest = useCallback(
+    async (id: string, type: "borrow" | "return") => {
+      if (!confirm("Are you sure you want to delete this request? This action cannot be undone.")) {
+        return
+      }
+
+      try {
+        if (type === "borrow") {
+          await supervisorDashboardService.deleteBorrowRequest(id)
+        } else {
+          await supervisorDashboardService.deleteReturnRequest(id)
+        }
+        toast({ title: "Request deleted", description: "The request has been deleted successfully." })
+        await loadBorrowData()
+        await fetchDeviceStats()
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Failed to delete request"
+        toast({
+          variant: "destructive",
+          title: "Deletion failed",
+          description: errorMessage,
+        })
+      }
+    },
+    [loadBorrowData, fetchDeviceStats, toast],
   )
 
   const handleRequestClick = useCallback((request: BorrowRequest) => {
@@ -1560,38 +1927,6 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
     setIsDialogOpen(true)
   }, [])
 
-  const handleQrScannerClick = useCallback(() => {
-    toast({
-      title: "QR Scanner Not Available",
-      description: "Not available for now",
-      action: (
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="default"
-            onClick={() => {
-              if (selectedRequest) {
-                handleApprove(selectedRequest.id, "borrow")
-              }
-            }}
-          >
-            Accept
-          </Button>
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() => {
-              if (selectedRequest) {
-                handleReject(selectedRequest.id, "borrow")
-              }
-            }}
-          >
-            Reject
-          </Button>
-        </div>
-      ),
-    })
-  }, [selectedRequest, handleApprove, handleReject, toast])
 
   if (!user || user.role !== "supervisor") {
     return null
@@ -1950,13 +2285,13 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
           </CardContent>
         </Card>
 
-        {/* Borrow Request Details Dialog */}
+        {/* Borrow Request Details Dialog - Read Only */}
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
               <DialogTitle className="text-[#25294B]">Borrow Request Details</DialogTitle>
               <DialogDescription className="text-[#58595B]">
-                Full details of the borrow request
+                View details of the borrow request (Read-only)
               </DialogDescription>
             </DialogHeader>
             {selectedRequest && (
@@ -1965,24 +2300,12 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                 <div className="p-4 bg-muted rounded-lg space-y-3">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <Label className="text-sm font-semibold text-muted-foreground">Employee Name</Label>
-                      <p className="text-sm font-medium">{selectedRequest.employeeName}</p>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-semibold text-muted-foreground">Employee ID</Label>
-                      <p className="text-sm font-medium">{selectedRequest.employeeId}</p>
-                    </div>
-                    <div>
                       <Label className="text-sm font-semibold text-muted-foreground">Device Name</Label>
                       <p className="text-sm font-medium">{selectedRequest.deviceName}</p>
                     </div>
                     <div>
-                      <Label className="text-sm font-semibold text-muted-foreground">Asset Tag</Label>
-                      <p className="text-sm font-medium">{selectedRequest.assetTag || "—"}</p>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-semibold text-muted-foreground">Requested Date</Label>
-                      <p className="text-sm font-medium">{new Date(selectedRequest.borrowDate).toLocaleDateString()}</p>
+                      <Label className="text-sm font-semibold text-muted-foreground">Device ID</Label>
+                      <p className="text-sm font-medium font-mono">{selectedRequest.deviceId || selectedRequest.assetTag || "—"}</p>
                     </div>
                     <div>
                       <Label className="text-sm font-semibold text-muted-foreground">Status</Label>
@@ -1990,71 +2313,24 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                         {selectedRequest.status}
                       </Badge>
                     </div>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-semibold text-muted-foreground">Purpose</Label>
-                    <p className="text-sm mt-1">{selectedRequest.purpose || "—"}</p>
-                  </div>
-                </div>
-
-                {/* QR Scanner Section */}
-                <div className="space-y-2">
-                  <Label htmlFor="qrScanner">QR Scanner</Label>
-                  <div className="relative">
-                    <div className="flex items-center gap-2 p-4 border-2 border-dashed border-muted rounded-lg bg-muted/50 opacity-60">
-                      <QrCode className="h-6 w-6 text-muted-foreground" />
-                      <span className="text-sm text-muted-foreground">QR Scanner (Disabled)</span>
+                    <div>
+                      <Label className="text-sm font-semibold text-muted-foreground">Borrower Name</Label>
+                      <p className="text-sm font-medium">{selectedRequest.employeeName}</p>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="absolute right-2 top-2 opacity-60 cursor-pointer"
-                      onClick={handleQrScannerClick}
-                    >
-                      <QrCode className="h-4 w-4 mr-1" />
-                      Scan
-                    </Button>
+                    <div>
+                      <Label className="text-sm font-semibold text-muted-foreground">Borrow Date</Label>
+                      <p className="text-sm font-medium">{new Date(selectedRequest.borrowDate).toLocaleDateString()}</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">Click the scan button to use QR scanner</p>
+                  {selectedRequest.purpose && (
+                    <div>
+                      <Label className="text-sm font-semibold text-muted-foreground">Purpose</Label>
+                      <p className="text-sm mt-1">{selectedRequest.purpose}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-                Close
-              </Button>
-              {selectedRequest && (
-                <>
-                  <Button
-                    variant="default"
-                    className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
-                    onClick={() => {
-                      handleSelectRequestForApproval(selectedRequest)
-                      setIsDialogOpen(false)
-                    }}
-                  >
-                    Approve with QR Scan
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      handleApprove(selectedRequest.id, "borrow")
-                    }}
-                  >
-                    Approve Without Scan
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => {
-                      handleReject(selectedRequest.id, "borrow")
-                    }}
-                  >
-                    Reject
-                  </Button>
-                </>
-              )}
-            </div>
           </DialogContent>
         </Dialog>
 
@@ -2122,12 +2398,28 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                   <Label>Borrow Date</Label>
                   <Input
                     type="date"
+                    min={new Date().toISOString().split("T")[0]}
                     value={borrowForm.date}
-                    readOnly
-                    disabled
-                    className="bg-muted/60 text-muted-foreground cursor-not-allowed"
+                    onChange={(e) => {
+                      const value = e.target.value
+                      // Check for weekends
+                      if (value) {
+                        const date = new Date(value)
+                        const day = date.getDay()
+                        if (day === 0 || day === 6) {
+                          toast({
+                            variant: "destructive",
+                            title: "Invalid borrow date",
+                            description: "Borrow date cannot fall on a weekend.",
+                          })
+                          return
+                        }
+                      }
+                      setBorrowForm({ ...borrowForm, date: value })
+                    }}
+                    className="text-sm"
                   />
-                  <p className="text-xs text-muted-foreground">Borrow date is captured automatically.</p>
+                  <p className="text-xs text-muted-foreground">Select a date (weekdays only, today or future).</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Return Date</Label>
@@ -2289,13 +2581,15 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
               </div>
               <div className="flex justify-end gap-2">
                 <DialogClose asChild>
-                  <Button variant="outline">Cancel</Button>
+                  <Button variant="outline" disabled={bookingSubmitting}>Cancel</Button>
                 </DialogClose>
                 <Button
-                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+                  type="button"
+                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90 active:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={handleBookRoomSubmit}
+                  disabled={!bookingFormReady || bookingSubmitting}
                 >
-                  Book Room
+                  {bookingSubmitting ? "Booking..." : "Book Room"}
                 </Button>
               </div>
             </div>
@@ -2500,7 +2794,7 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                     variant="destructive"
                     onClick={() => {
                       if (selectedApprovalRequest) {
-                        handleReject(selectedApprovalRequest.id, "borrow")
+                        handleOpenRejectModal(selectedApprovalRequest.id, "borrow")
                         setShowApprovalDetails(false)
                         setSelectedApprovalRequest(null)
                       }
@@ -2558,23 +2852,55 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {availableDevicesList.map((device) => (
-                        <TableRow key={device.id || device.device_id} className="hover:bg-[#92278F]/5">
-                          <TableCell className="font-medium text-[#25294B]">
-                            {device.asset_tag || device.device_id || "—"}
-                          </TableCell>
-                          <TableCell className="text-[#58595B]">
-                            {toTitleCase(device.device_type)}
-                          </TableCell>
-                          <TableCell className="text-[#58595B]">{device.brand || "—"}</TableCell>
-                          <TableCell className="text-[#58595B]">{device.model || "—"}</TableCell>
-                          <TableCell>
-                            <Badge className="bg-green-100 text-green-800 border-green-200">
-                              {device.status || "Available"}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {availableDevicesList.map((device) => {
+                        const handleDeviceClick = () => {
+                          // Check if device is available
+                          const deviceStatus = device.status || "Available"
+                          if (deviceStatus === "Available") {
+                            // Pre-fill the Book a Device form
+                            const deviceIdentifier = device.asset_tag || device.device_id || device.id
+                            setBorrowForm({
+                              ...borrowForm,
+                              type: toTitleCase(device.device_type) || "",
+                              name: deviceIdentifier || "",
+                            })
+                            // Close device availability modal and open Book a Device modal
+                            setShowDeviceAvailability(false)
+                            setBorrowDeviceOpen(true)
+                          } else {
+                            // Show toast if device is not available
+                            toast({
+                              variant: "destructive",
+                              title: "Device not available",
+                              description: `This device is not available for booking. Current status: ${deviceStatus}`,
+                            })
+                          }
+                        }
+
+                        const isAvailable = (device.status || "Available") === "Available"
+                        
+                        return (
+                          <TableRow 
+                            key={device.id || device.device_id} 
+                            onClick={handleDeviceClick}
+                            className={isAvailable ? "hover:bg-[#92278F]/10 cursor-pointer transition-colors" : "hover:bg-[#92278F]/5 cursor-not-allowed opacity-75"}
+                          >
+                            <TableCell className="font-medium text-[#25294B]">
+                              {device.asset_tag || device.device_id || "—"}
+                            </TableCell>
+                            <TableCell className="text-[#58595B]">
+                              {toTitleCase(device.device_type)}
+                            </TableCell>
+                            <TableCell className="text-[#58595B]">{device.brand || "—"}</TableCell>
+                            <TableCell className="text-[#58595B]">{device.model || "—"}</TableCell>
+                            <TableCell>
+                              <Badge className="bg-green-100 text-green-800 border-green-200">
+                                {device.status || "Available"}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -2589,89 +2915,132 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
           </DialogContent>
         </Dialog>
 
-        {/* Approve Borrow Requests Table Dialog */}
-        <Dialog open={showBorrowRequestsTable} onOpenChange={setShowBorrowRequestsTable}>
+        {/* Approve Borrow Requests Table Dialog - NEW CLEAN COMPONENT */}
+        <BorrowRequestsTable
+          open={showBorrowRequestsTable} 
+          onOpenChange={async (open) => {
+            setShowBorrowRequestsTable(open)
+            if (open) {
+              // Clear cache when dialog opens
+              supervisorDashboardService.clearCache('pending-borrow-requests')
+              supervisorDashboardService.clearCache('devices-pending-borrow')
+              supervisorDashboardService.clearCache('active-borrows')
+            }
+          }}
+          onApprove={async (id: string) => {
+            await supervisorDashboardService.approveBorrowRequest(id)
+            await loadBorrowData()
+            await fetchDeviceStats()
+          }}
+          onReject={async (id: string, reason: string) => {
+            await supervisorDashboardService.rejectBorrowRequest(id, reason)
+            await loadBorrowData()
+            await fetchDeviceStats()
+          }}
+          onViewDetails={(request) => {
+            handleRequestClick(request)
+          }}
+          onDelete={async (id: string) => {
+            await handleDeleteRequest(id, "borrow")
+          }}
+        />
+
+        {/* Active Borrows Table Dialog */}
+        <Dialog 
+          open={showActiveBorrowsTable} 
+          onOpenChange={async (open) => {
+            setShowActiveBorrowsTable(open)
+            // Clear cache and reload data when dialog opens to ensure fresh data
+            if (open) {
+              supervisorDashboardService.clearCache('active-borrows')
+              // Small delay to ensure cache is cleared before fetching
+              await new Promise(resolve => setTimeout(resolve, 100))
+              await loadBorrowData()
+            }
+          }}
+        >
           <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
+              <div className="flex items-center justify-between">
+                <div>
               <DialogTitle className="flex items-center gap-2 text-[#92278F]">
-                <CheckCircle2 className="h-5 w-5" />
-                Pending Borrow Requests
+                    <Package className="h-5 w-5" />
+                    Active Borrows
               </DialogTitle>
               <DialogDescription>
-                Review and approve device borrowing requests
+                    View all currently active device borrows (approved but not returned)
               </DialogDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    supervisorDashboardService.clearCache('active-borrows')
+                    await loadBorrowData()
+                  }}
+                  disabled={loadingBorrow}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-2 ${loadingBorrow ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+              </div>
             </DialogHeader>
             
             <div className="space-y-4">
               {loadingBorrow ? (
                 <div className="text-center py-8">
                   <RefreshCw className="h-8 w-8 animate-spin text-[#92278F] mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">Loading requests...</p>
+                  <p className="text-sm text-muted-foreground">Loading active borrows...</p>
                 </div>
-              ) : pendingBorrowRequests.length === 0 ? (
+              ) : activeBorrows.length === 0 ? (
                 <div className="text-center py-8">
-                  <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto mb-3" />
-                  <p className="text-muted-foreground">No pending borrow requests</p>
+                  <Package className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+                  <p className="text-muted-foreground">No active borrows</p>
                 </div>
               ) : (
-                <div className="border rounded-lg">
+                <div className="border rounded-lg overflow-hidden">
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-[#92278F]/5">
-                        <TableHead className="font-semibold text-[#25294B]">Employee</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Device</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Asset Tag</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Borrow Date</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Purpose</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Status</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Actions</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Employee</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Device</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Asset Tag</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Borrow Date</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Purpose</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Status</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {pendingBorrowRequests.map((request) => (
-                        <TableRow key={request.id} className="hover:bg-[#92278F]/5">
-                          <TableCell>
-                            <div>
-                              <div className="font-medium text-[#25294B]">{request.employeeName}</div>
-                              <div className="text-sm text-muted-foreground">{request.employeeId}</div>
+                      {activeBorrows.map((borrow) => {
+                        // Format borrow date to show only date (no time)
+                        const formattedDate = borrow.borrowDate 
+                          ? new Date(borrow.borrowDate).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric'
+                            })
+                          : borrow.borrowDate || "—"
+                        
+                        return (
+                          <TableRow key={borrow.id} className="hover:bg-[#92278F]/5">
+                            <TableCell className="py-3 px-4">
+                              <div className="space-y-0.5">
+                                <div className="font-medium text-[#25294B] text-sm">{borrow.employeeName}</div>
+                                <div className="text-xs text-muted-foreground">{borrow.employeeId}</div>
                             </div>
                           </TableCell>
-                          <TableCell className="font-medium text-[#25294B]">{request.deviceName}</TableCell>
-                          <TableCell className="text-[#58595B]">{request.assetTag}</TableCell>
-                          <TableCell className="text-[#58595B]">{request.borrowDate}</TableCell>
-                          <TableCell className="max-w-xs truncate text-[#58595B]">{request.purpose}</TableCell>
-                          <TableCell>
-                            <Badge className="bg-[#92278F]/10 text-[#92278F] border-[#92278F]/30">
-                              {request.status}
+                            <TableCell className="font-medium text-[#25294B] text-sm py-3 px-4">{borrow.deviceName}</TableCell>
+                            <TableCell className="text-[#58595B] text-sm py-3 px-4">{borrow.assetTag}</TableCell>
+                            <TableCell className="text-[#58595B] text-sm py-3 px-4">{formattedDate}</TableCell>
+                            <TableCell className="max-w-xs truncate text-[#58595B] text-sm py-3 px-4">{borrow.purpose}</TableCell>
+                            <TableCell className="py-3 px-4">
+                              <Badge className="bg-green-100 text-green-700 border-green-300 text-xs">
+                                {borrow.status || 'Active'}
                             </Badge>
                           </TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
-                                onClick={() => {
-                                  handleSelectRequestForApproval(request)
-                                  setShowBorrowRequestsTable(false)
-                                }}
-                              >
-                                <QrCode className="h-4 w-4 mr-1" />
-                                Approve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => {
-                                  handleReject(request.id, "borrow")
-                                }}
-                              >
-                                <X className="h-4 w-4 mr-1" />
-                                Reject
-                              </Button>
-                            </div>
-                          </TableCell>
                         </TableRow>
-                      ))}
+                        )
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -2679,7 +3048,7 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
             </div>
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => setShowBorrowRequestsTable(false)}>
+              <Button variant="outline" onClick={() => setShowActiveBorrowsTable(false)}>
                 Close
               </Button>
             </DialogFooter>
@@ -2711,74 +3080,146 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
                   <p className="text-muted-foreground">No pending return requests</p>
                 </div>
               ) : (
-                <div className="border rounded-lg">
+                <div className="border rounded-lg overflow-hidden">
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-[#92278F]/5">
-                        <TableHead className="font-semibold text-[#25294B]">Employee</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Device</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Asset Tag</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Return Date</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Condition</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Status</TableHead>
-                        <TableHead className="font-semibold text-[#25294B]">Actions</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Request ID</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Employee</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Device</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Asset Tag</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Date & Time</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Condition</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4">Status</TableHead>
+                        <TableHead className="font-semibold text-[#25294B] text-sm py-3 px-4 text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {returnRequests
                         .filter((r) => r.status === "Pending Return Approval" || r.status === "Pending Approval")
-                        .map((request) => (
+                        .map((request) => {
+                          // Format request date & time (created_at) to show both date and time
+                          const formattedDateTime = request.createdAt 
+                            ? new Date(request.createdAt).toLocaleString('en-US', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              })
+                            : request.returnDate
+                            ? new Date(request.returnDate).toLocaleString('en-US', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              })
+                            : "—"
+                          
+                          return (
                         <TableRow key={request.id} className="hover:bg-[#92278F]/5">
-                          <TableCell>
-                            <div>
-                              <div className="font-medium text-[#25294B]">{request.employeeName}</div>
-                              <div className="text-sm text-muted-foreground">{request.employeeId}</div>
+                              <TableCell className="text-[#58595B] text-sm py-3 px-4 font-mono">
+                                {request.id.substring(0, 8)}...
+                              </TableCell>
+                              <TableCell className="py-3 px-4">
+                                <div className="space-y-0.5">
+                                  <div className="font-medium text-[#25294B] text-sm">{request.employeeName}</div>
+                                  <div className="text-xs text-muted-foreground">{request.employeeId}</div>
                             </div>
                           </TableCell>
-                          <TableCell className="font-medium text-[#25294B]">{request.deviceName}</TableCell>
-                          <TableCell className="text-[#58595B]">{request.assetTag}</TableCell>
-                          <TableCell className="text-[#58595B]">{request.returnDate}</TableCell>
-                          <TableCell>
+                              <TableCell className="font-medium text-[#25294B] text-sm py-3 px-4">{request.deviceName}</TableCell>
+                              <TableCell className="text-[#58595B] text-sm py-3 px-4">{request.assetTag}</TableCell>
+                              <TableCell className="text-[#58595B] text-sm py-3 px-4">{formattedDateTime}</TableCell>
+                              <TableCell className="py-3 px-4">
                             <Badge variant={
                               request.deviceCondition === 'Excellent' ? 'default' :
                               request.deviceCondition === 'Good' ? 'secondary' :
                               request.deviceCondition === 'Damaged' ? 'destructive' : 'outline'
-                            }>
+                                } className="text-xs">
                               {request.deviceCondition}
                             </Badge>
                           </TableCell>
-                          <TableCell>
-                            <Badge className="bg-[#92278F]/10 text-[#92278F] border-[#92278F]/30">
+                              <TableCell className="py-3 px-4">
+                                <Badge className="bg-[#92278F]/10 text-[#92278F] border-[#92278F]/30 text-xs">
                               {request.status}
                             </Badge>
                           </TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
+                              <TableCell className="py-3 px-4 text-right">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
                               <Button
-                                size="sm"
-                                className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 hover:bg-muted"
+                                    >
+                                      <MoreVertical className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-48">
+                                    {(request.status === "Pending Return Approval" || request.status === "Pending Approval") && (
+                                      <>
+                                        <DropdownMenuItem
                                 onClick={() => {
-                                  handleApprove(request.id, "return")
+                                            handleOpenApprovalQRScanner(request, "return")
                                   setShowReturnsTable(false)
                                 }}
+                                          className="text-slate-700 hover:bg-slate-50 cursor-pointer"
                               >
-                                <CheckCircle2 className="h-4 w-4 mr-1" />
-                                Approve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
+                                          <QrCode className="h-4 w-4 mr-2" />
+                                          Approve & Scan
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
                                 onClick={() => {
-                                  handleReject(request.id, "return")
+                                            handleOpenRejectModal(request.id, "return")
                                 }}
+                                          className="text-[#BE1E2D] hover:bg-[#BE1E2D]/10 cursor-pointer"
                               >
-                                <X className="h-4 w-4 mr-1" />
+                                          <X className="h-4 w-4 mr-2" />
                                 Reject
-                              </Button>
-                            </div>
+                                        </DropdownMenuItem>
+                                      </>
+                                    )}
+                                    {(request.status.toLowerCase() === "approved" || request.status.toLowerCase() === "rejected") && (
+                                      <DropdownMenuItem
+                                        onClick={() => {
+                                          handleDeleteRequest(request.id, "return")
+                                        }}
+                                        className="text-[#BE1E2D] hover:bg-[#BE1E2D]/10 cursor-pointer"
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        // For return requests, we can show similar details
+                                        // Using the same dialog but with return request data
+                                        setSelectedRequest({
+                                          id: request.id,
+                                          employeeName: request.employeeName,
+                                          employeeId: request.employeeId,
+                                          deviceName: request.deviceName,
+                                          assetTag: request.assetTag || "",
+                                          borrowDate: request.returnDate,
+                                          purpose: `Return request - Condition: ${request.deviceCondition}`,
+                                          status: request.status,
+                                        })
+                                        setIsDialogOpen(true)
+                                      }}
+                                      className="text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                    >
+                                      <Eye className="h-4 w-4 mr-2" />
+                                      View Details
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                           </TableCell>
                         </TableRow>
-                      ))}
+                          )
+                        })}
                     </TableBody>
                   </Table>
                 </div>
@@ -2788,6 +3229,98 @@ const [roomAvailabilityOpen, setRoomAvailabilityOpen] = useState(false)
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowReturnsTable(false)}>
                 Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* QR Scanner Approval Modal */}
+        {pendingApprovalRequest && (
+          <ApprovalQRScannerModal
+            open={showApprovalQRScanner}
+            onOpenChange={setShowApprovalQRScanner}
+            requestType={pendingApprovalRequest.type}
+            requestId={pendingApprovalRequest.id}
+            deviceId={pendingApprovalRequest.deviceId}
+            assetTag={pendingApprovalRequest.assetTag}
+            deviceName={pendingApprovalRequest.deviceName}
+            employeeName={pendingApprovalRequest.employeeName}
+            onScanSuccess={handleQRScanSuccess}
+            onError={(error) => {
+              toast({
+                variant: "destructive",
+                title: "Scan failed",
+                description: error,
+              })
+            }}
+          />
+        )}
+
+        {/* Rejection Reason Modal */}
+        <Dialog open={showRejectModal} onOpenChange={(open) => {
+          if (!rejecting) {
+            setShowRejectModal(open)
+            if (!open) {
+              setPendingRejectRequest(null)
+              setRejectionReason("")
+            }
+          }
+        }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Reject Request</DialogTitle>
+              <DialogDescription>
+                Please provide a reason for rejecting this request. This reason is required.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div>
+                <Label htmlFor="rejection-reason" className="text-sm font-medium">
+                  Rejection Reason <span className="text-red-500">*</span>
+                </Label>
+                <Textarea
+                  id="rejection-reason"
+                  placeholder="Enter the reason for rejecting this request..."
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  rows={4}
+                  className="mt-2"
+                  disabled={rejecting}
+                />
+                {!rejectionReason.trim() && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    A rejection reason is required to proceed.
+                  </p>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (!rejecting) {
+                    setShowRejectModal(false)
+                    setPendingRejectRequest(null)
+                    setRejectionReason("")
+                  }
+                }}
+                disabled={rejecting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleConfirmReject}
+                disabled={rejecting || !rejectionReason.trim()}
+              >
+                {rejecting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Rejecting...
+                  </>
+                ) : (
+                  "Reject Request"
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

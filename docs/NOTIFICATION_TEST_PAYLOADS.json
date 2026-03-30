@@ -1,0 +1,149 @@
+{
+  "description": "Ready-to-use notification payloads for testing the notifications service",
+  "note": "Replace UUIDs with actual employee and supervisor IDs from your database",
+  
+  "payloads": [
+    {
+      "name": "Borrow Request → Supervisor",
+      "description": "Notification sent to supervisor when an employee submits a borrow request",
+      "payload": {
+        "employee_id": "550e8400-e29b-41d4-a716-446655440000",
+        "title": "New Device Borrow Request",
+        "message": "Employee John Doe (ID: EMP-001) has requested to borrow MacBook Pro 16\" (Asset: DEV-019). Expected return date: 2024-12-31. Purpose: Project development work.",
+        "notification_type": "internal",
+        "published_by": "7bca7b2d-d395-4321-80af-1afac4a9a476",
+        "is_confidential": false
+      },
+      "options": {
+        "sendEmail": true,
+        "preventDuplicates": true,
+        "duplicateWindowMinutes": 5
+      },
+      "expected_behavior": {
+        "recipient": "Supervisor (employee_id)",
+        "publisher": "Requesting Employee (published_by)",
+        "email_sent": true,
+        "email_sent_at": "Set after successful email",
+        "is_read": false,
+        "read_at": null
+      }
+    },
+    {
+      "name": "Approval Notification → Employee",
+      "description": "Notification sent to employee when supervisor approves their borrow request",
+      "payload": {
+        "employee_id": "7bca7b2d-d395-4321-80af-1afac4a9a476",
+        "title": "Borrow Request Approved",
+        "message": "Your request to borrow MacBook Pro 16\" (Asset: DEV-019) has been approved by Supervisor Jane Smith. Please collect the device from the IT department. You can scan the device QR code to complete pickup.",
+        "notification_type": "internal",
+        "published_by": "550e8400-e29b-41d4-a716-446655440000",
+        "is_confidential": false
+      },
+      "options": {
+        "sendEmail": true,
+        "preventDuplicates": true,
+        "duplicateWindowMinutes": 5
+      },
+      "expected_behavior": {
+        "recipient": "Requesting Employee (employee_id)",
+        "publisher": "Supervisor (published_by)",
+        "email_sent": true,
+        "email_sent_at": "Set after successful email",
+        "is_read": false,
+        "read_at": null
+      }
+    },
+    {
+      "name": "Rejection Notification → Employee (with reason)",
+      "description": "Notification sent to employee when supervisor rejects their borrow request",
+      "payload": {
+        "employee_id": "7bca7b2d-d395-4321-80af-1afac4a9a476",
+        "title": "Borrow Request Rejected",
+        "message": "Your request to borrow MacBook Pro 16\" (Asset: DEV-019) has been rejected by Supervisor Jane Smith. Reason: Device is currently unavailable due to maintenance. Please submit a new request when the device becomes available.",
+        "notification_type": "internal",
+        "published_by": "550e8400-e29b-41d4-a716-446655440000",
+        "is_confidential": false
+      },
+      "options": {
+        "sendEmail": true,
+        "preventDuplicates": true,
+        "duplicateWindowMinutes": 5
+      },
+      "expected_behavior": {
+        "recipient": "Requesting Employee (employee_id)",
+        "publisher": "Supervisor (published_by)",
+        "email_sent": true,
+        "email_sent_at": "Set after successful email",
+        "is_read": false,
+        "read_at": null
+      }
+    },
+    {
+      "name": "Rejection Notification → Employee (confidential reason)",
+      "description": "Notification sent to employee when supervisor rejects with sensitive reason",
+      "payload": {
+        "employee_id": "7bca7b2d-d395-4321-80af-1afac4a9a476",
+        "title": "Borrow Request Rejected",
+        "message": "Your request to borrow MacBook Pro 16\" (Asset: DEV-019) has been rejected. Please contact your supervisor for more details.",
+        "notification_type": "internal",
+        "published_by": "550e8400-e29b-41d4-a716-446655440000",
+        "is_confidential": true
+      },
+      "options": {
+        "sendEmail": true,
+        "preventDuplicates": true,
+        "duplicateWindowMinutes": 5
+      },
+      "expected_behavior": {
+        "recipient": "Requesting Employee (employee_id)",
+        "publisher": "Supervisor (published_by)",
+        "email_sent": true,
+        "email_sent_at": "Set after successful email",
+        "is_read": false,
+        "read_at": null,
+        "is_confidential": true
+      }
+    }
+  ],
+  
+  "usage_example": {
+    "description": "How to use these payloads with the notification service",
+    "code": "import { notificationService } from '@/lib/services/notification-service'\n\n// Example: Send borrow request notification to supervisor\nconst notification = await notificationService.createNotification(\n  payloads[0].payload,\n  payloads[0].options\n)\n\nconsole.log('Notification created:', notification.id)\nconsole.log('Email sent:', notification.email_sent)"
+  },
+  
+  "field_validation": {
+    "employee_id": {
+      "required": true,
+      "type": "UUID",
+      "description": "Must be a valid UUID of an employee in the employees table"
+    },
+    "title": {
+      "required": true,
+      "type": "string",
+      "max_length": 255,
+      "description": "Short, descriptive title for the notification"
+    },
+    "message": {
+      "required": true,
+      "type": "string",
+      "description": "Full notification message content (supports newlines)"
+    },
+    "notification_type": {
+      "required": true,
+      "type": "enum",
+      "values": ["internal", "external"],
+      "description": "Must be one of the enum values from notification_type_enum"
+    },
+    "published_by": {
+      "required": false,
+      "type": "UUID | null",
+      "description": "UUID of employee who triggered the notification (can be null)"
+    },
+    "is_confidential": {
+      "required": false,
+      "type": "boolean",
+      "default": false,
+      "description": "Mark sensitive notifications that require special handling"
+    }
+  }
+}

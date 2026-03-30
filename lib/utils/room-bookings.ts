@@ -79,7 +79,8 @@ export const resolveBookingRuntimeStatus = (
   // Check for rescheduled status (leave unchanged)
   if (normalized.includes('resched')) return 'Rescheduled'
   
-  // Check for completed status (leave unchanged)
+  // Check for attended/completed status - respect if already set in database
+  if (normalized === 'attended' || normalized.includes('attended')) return 'Attended'
   if (normalized.includes('completed')) return 'Completed'
   
   // Check if checked in - need to handle check_in_status field too
@@ -87,7 +88,9 @@ export const resolveBookingRuntimeStatus = (
     booking.checked_in_at || 
     booking.checkedInAt ||
     (booking as any).check_in_status === 'Checked-In' ||
-    (booking as any).checkInStatus === 'Checked-In'
+    (booking as any).checkInStatus === 'Checked-In' ||
+    (booking as any).check_in_status === 'Attended' ||
+    (booking as any).checkInStatus === 'Attended'
   )
 
   const conflict = existingBookings.some((existing) => {

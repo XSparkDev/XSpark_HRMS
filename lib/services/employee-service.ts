@@ -48,6 +48,60 @@ export interface Employee {
   deleted_at?: string
   created_at: string
   updated_at: string
+  role?: {
+    role_name?: string | null
+  } | null
+}
+
+export interface NextOfKin {
+  id: string
+  employee_id: string
+  first_name: string
+  middle_name?: string | null
+  last_name: string
+  email?: string | null
+  phone: string
+  alternative_phone?: string | null
+  relationship: string
+  is_primary?: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface NextOfKinInput {
+  id?: string
+  full_name?: string
+  name?: string
+  first_name?: string
+  middle_name?: string
+  last_name?: string
+  email?: string
+  phone: string
+  alternative_phone?: string
+  relationship: string
+  is_primary?: boolean
+}
+
+const splitFullName = (fullName: string): {
+  firstName: string
+  middleName?: string
+  lastName: string
+} => {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean)
+
+  if (parts.length === 0) {
+    return { firstName: '', lastName: '' }
+  }
+
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: parts[0] }
+  }
+
+  const firstName = parts[0]
+  const lastName = parts[parts.length - 1]
+  const middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : undefined
+
+  return { firstName, middleName, lastName }
 }
 
 export interface CreateEmployeeData {
@@ -61,6 +115,7 @@ export interface CreateEmployeeData {
   sex: 'male' | 'female'
   gender?: 'male' | 'female' | 'other' | 'prefer_not_to_say'
   pronouns?: string
+  employee_id?: string // Optional - will be auto-generated if not provided
   job_title_id?: string
   role_id?: string
   email: string
@@ -100,12 +155,21 @@ export class EmployeeService {
 
   /**
    * Get all active employees with optional filtering
+   * Note: Uses supabaseAdmin to bypass RLS since this is called from authenticated API routes
+   * that already verify user permissions. The API route ensures only admins/HR can access this.
    */
   async getAllActive(filters?: EmployeeFilters): Promise<Employee[]> {
     try {
-      let query = supabase
-        .from('active_employees')
-        .select('*')
+      let query = supabaseAdmin
+        .from('employees')
+        .select('*, job_titles(title, department)')
+
+      // Default to active employees only if is_active filter not provided
+      if (filters?.is_active !== undefined) {
+        query = query.eq('is_active', filters.is_active)
+      } else {
+        query = query.eq('is_active', true)
+      }
 
       // Apply filters
       if (filters?.search) {
@@ -197,16 +261,27 @@ export class EmployeeService {
 
   /**
    * Get employee by auth_user_id (Supabase auth)
+   * Uses supabaseAdmin to bypass RLS since this is called from authenticated API routes
    */
   async getByAuthUserId(authUserId: string): Promise<Employee | null> {
     try {
-      const { data, error } = await supabase
+      // PREVIOUS QUERY: .select('*')
+      // UPDATED QUERY: .select('*, next_of_kin(*)') to keep NOK data in profile payloads.
+      // Use supabaseAdmin to bypass RLS - this is called from authenticated API routes
+      const { data, error } = await supabaseAdmin
         .from('employees')
-        .select('*')
+        .select('*, next_of_kin(*), role:roles(role_name)')
         .eq('auth_user_id', authUserId)
         .single()
 
-      if (error) throw error
+      if (error) {
+        // If no record found, that's okay - return null
+        if (error.code === 'PGRST116') {
+          console.warn(`No employee found for auth_user_id: ${authUserId}`)
+          return null
+        }
+        throw error
+      }
       return data
     } catch (error) {
       console.error('Error fetching employee by auth user ID:', error)
@@ -220,7 +295,7 @@ export class EmployeeService {
   async getByDepartment(department: string): Promise<Employee[]> {
     try {
       const { data, error } = await supabase
-        .from('active_employees')
+        .from('employees')
         .select('*')
         .eq('department', department)
         .eq('is_active', true)
@@ -250,18 +325,20 @@ export class EmployeeService {
 
       // Encrypt id_number if provided
       if (employeeData.id_number) {
-        // Encrypt returns base64 string, convert to Buffer for BYTEA storage
+        // Encrypt returns base64 string, convert to hex format expected by PostgREST for BYTEA
         const base64Encrypted = encrypt(employeeData.id_number)
-        encryptedData.encrypted_id_number = Buffer.from(base64Encrypted, 'base64')
+        const encryptedBuffer = Buffer.from(base64Encrypted, 'base64')
+        encryptedData.encrypted_id_number = '\\x' + encryptedBuffer.toString('hex')
         // Remove plaintext from insert
         delete encryptedData.id_number
       }
 
       // Encrypt tax_number if provided
       if (employeeData.tax_number) {
-        // Encrypt returns base64 string, convert to Buffer for BYTEA storage
+        // Encrypt returns base64 string, convert to hex format expected by PostgREST for BYTEA
         const base64Encrypted = encrypt(employeeData.tax_number)
-        encryptedData.encrypted_tax_number = Buffer.from(base64Encrypted, 'base64')
+        const encryptedBuffer = Buffer.from(base64Encrypted, 'base64')
+        encryptedData.encrypted_tax_number = '\\x' + encryptedBuffer.toString('hex')
         // Remove plaintext from insert
         delete encryptedData.tax_number
       }
@@ -295,14 +372,16 @@ export class EmployeeService {
       // Encrypt id_number if being updated
       if ('id_number' in updateData && updateData.id_number) {
         const base64Encrypted = encrypt(updateData.id_number)
-        updateData.encrypted_id_number = Buffer.from(base64Encrypted, 'base64')
+        const encryptedBuffer = Buffer.from(base64Encrypted, 'base64')
+        updateData.encrypted_id_number = '\\x' + encryptedBuffer.toString('hex')
         delete updateData.id_number
       }
 
       // Encrypt tax_number if being updated
       if ('tax_number' in updateData && updateData.tax_number) {
         const base64Encrypted = encrypt(updateData.tax_number)
-        updateData.encrypted_tax_number = Buffer.from(base64Encrypted, 'base64')
+        const encryptedBuffer = Buffer.from(base64Encrypted, 'base64')
+        updateData.encrypted_tax_number = '\\x' + encryptedBuffer.toString('hex')
         delete updateData.tax_number
       }
 
@@ -322,14 +401,135 @@ export class EmployeeService {
   }
 
   /**
+   * Create or update multiple next of kin records for an employee
+   */
+  async saveNextOfKins(employeeId: string, nokArray: NextOfKinInput[]): Promise<NextOfKin[]> {
+    if (!employeeId) {
+      throw new Error('Employee ID is required to save next of kin')
+    }
+
+    if (!Array.isArray(nokArray) || nokArray.length === 0) {
+      return []
+    }
+
+    const savedRecords: NextOfKin[] = []
+    const timestamp = new Date().toISOString()
+
+    try {
+      for (const nok of nokArray) {
+        let firstName = nok.first_name?.trim()
+        let middleName = nok.middle_name?.trim()
+        let lastName = nok.last_name?.trim()
+
+        const fallbackName = (nok.full_name ?? nok.name ?? '').trim()
+        if ((!firstName || !lastName) && fallbackName) {
+          const split = splitFullName(fallbackName)
+          if (!firstName && split.firstName) firstName = split.firstName
+          if (!middleName && split.middleName) middleName = split.middleName
+          if (!lastName && split.lastName) lastName = split.lastName
+        }
+
+        if (!firstName || !lastName) {
+          throw new Error('Next of kin first_name and last_name are required')
+        }
+
+        const relationship = nok.relationship?.trim()
+        if (!relationship) {
+          throw new Error('Next of kin relationship is required')
+        }
+
+        const phone = nok.phone?.trim()
+        if (!phone) {
+          throw new Error('Next of kin phone is required')
+        }
+
+        const basePayload: Record<string, any> = {
+          employee_id: employeeId,
+          first_name: firstName,
+          last_name: lastName,
+          relationship,
+          phone,
+          updated_at: timestamp,
+          is_primary: typeof nok.is_primary === 'boolean' ? nok.is_primary : false
+        }
+
+        if (middleName) basePayload.middle_name = middleName
+        if (nok.email) basePayload.email = nok.email.trim()
+        if (nok.alternative_phone) basePayload.alternative_phone = nok.alternative_phone.trim()
+
+        if (nok.id) {
+          const { data, error } = await supabaseAdmin
+            .from('next_of_kin')
+            .update(basePayload)
+            .eq('id', nok.id)
+            .eq('employee_id', employeeId)
+            .select()
+            .single()
+
+          if (error) {
+            console.error('Supabase next_of_kin update error:', error)
+            throw new Error('Failed to save next_of_kin')
+          }
+
+          if (data) savedRecords.push(data as NextOfKin)
+        } else {
+          const insertPayload = {
+            ...basePayload,
+            created_at: timestamp
+          }
+
+          const { data, error } = await supabaseAdmin
+            .from('next_of_kin')
+            .insert([insertPayload])
+            .select()
+            .single()
+
+          if (error) {
+            console.error('Supabase next_of_kin insert error:', error)
+            throw new Error('Failed to save next_of_kin')
+          }
+
+          if (data) savedRecords.push(data as NextOfKin)
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        console.error('Unexpected error saving next of kin:', error)
+        throw new Error('Failed to save next_of_kin')
+      }
+
+      if (!error.message.startsWith('Next of kin')) {
+        console.error('Error saving next of kin:', error)
+        throw new Error('Failed to save next_of_kin')
+      }
+
+      throw error
+    }
+
+    return savedRecords
+  }
+
+  /**
    * Archive employee (soft delete)
    */
   async archive(id: string, reason?: string): Promise<boolean> {
     try {
-      const { error } = await supabase.rpc('archive_employee', {
-        emp_id: id,
-        reason: reason || null
-      })
+      const updateData: any = {
+        is_active: false,
+        deleted_at: new Date().toISOString(),
+        employment_status: 'archived'
+      }
+      
+      // Add termination reason if provided
+      if (reason) {
+        updateData.termination_reason = reason
+        updateData.date_terminated = new Date().toISOString().split('T')[0] // Date only
+      }
+
+      const { error } = await supabaseAdmin
+        .from('employees')
+        .update(updateData)
+        .eq('id', id)
 
       if (error) throw error
       return true
@@ -344,7 +544,7 @@ export class EmployeeService {
    */
   async restore(id: string): Promise<Employee | null> {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('employees')
         .update({
           is_active: true,
@@ -372,7 +572,7 @@ export class EmployeeService {
    */
   async verifyId(id: string): Promise<boolean> {
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('employees')
         .update({ id_verified: true })
         .eq('id', id)
@@ -390,7 +590,7 @@ export class EmployeeService {
    */
   async verifyBank(id: string): Promise<boolean> {
     try {
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('employees')
         .update({ bank_verified: true })
         .eq('id', id)

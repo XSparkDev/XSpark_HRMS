@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { bookingsService } from '@/lib/services'
+import { bookingsService, notificationService, roomsService } from '@/lib/services'
 import type { BookingFilters, CreateBookingInput, BookingRecord } from '@/lib/services/bookings-service'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -88,7 +88,15 @@ const buildDateFilters = (date?: string, fromDate?: string, toDate?: string) => 
 }
 
 const transformBookingForLegacyClients = (
-  booking: BookingRecord & { room_details?: RoomSummary | null },
+  booking: BookingRecord & { 
+    room_details?: RoomSummary | null
+    employee_name?: string | null
+    employee_first_name?: string | null
+    employee_id?: string | null
+    employee_email?: string | null
+    employee_auth_user_id?: string | null
+    employee_role?: string | null
+  },
 ) => {
   const date = toDateOnly(booking.start_time)
   const startTime = toTimeString(booking.start_time)
@@ -105,6 +113,16 @@ const transformBookingForLegacyClients = (
     meeting_agenda: booking.booking_reason ?? null,
     purpose: booking.booking_reason ?? null,
     room_details: booking.room_details ?? null,
+    // Include employee data for display
+    employee_name: booking.employee_name ?? undefined,
+    employee_first_name: booking.employee_first_name ?? undefined,
+    booked_by_name: booking.employee_name ?? undefined, // Legacy alias
+    employee_id: booking.employee_id ?? undefined,
+    employee_email: booking.employee_email ?? undefined,
+    employee_auth_user_id: booking.employee_auth_user_id ?? undefined,
+    employee_role: booking.employee_role ?? undefined,
+    role: booking.employee_role ?? undefined, // Simple alias
+    position: booking.employee_role ?? undefined, // Alternative alias
   }
 }
 
@@ -136,6 +154,32 @@ const resolveBookedByIdentifier = async (identifier?: string | null): Promise<st
   } catch (error) {
     console.warn('[room-bookings] Unexpected error resolving employee identifier', error)
     return undefined
+  }
+}
+
+const getEmployeeName = async (employeeUuid: string): Promise<string | null> => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('employees')
+      .select('first_name, last_name, preferred_name')
+      .eq('id', employeeUuid)
+      .maybeSingle()
+
+    if (error || !data) {
+      return null
+    }
+
+    const firstName = data.first_name || ''
+    const lastName = data.last_name || ''
+    const preferredName = data.preferred_name
+    
+    if (preferredName) {
+      return `${preferredName} ${lastName}`.trim()
+    }
+    return `${firstName} ${lastName}`.trim() || 'Unknown'
+  } catch (error) {
+    console.warn('[room-bookings] Failed to get employee name', error)
+    return null
   }
 }
 
@@ -216,7 +260,8 @@ export async function GET(request: NextRequest) {
     }
 
     const bookedByCandidate = parsed.bookedBy ?? parsed.employeeId
-    const resolvedBookedBy = await resolveBookedByIdentifier(bookedByCandidate)
+    // Only resolve bookedBy if it's provided - if not provided, return all bookings (for supervisor view)
+    const resolvedBookedBy = bookedByCandidate ? await resolveBookedByIdentifier(bookedByCandidate) : undefined
 
     if (bookedByCandidate && !resolvedBookedBy) {
       return NextResponse.json({
@@ -266,10 +311,100 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const enhanced = bookings.map((booking) => ({
-      ...booking,
-      room_details: roomsById[booking.room_id] ?? null,
-    }))
+    // Fetch employee data for all bookings
+    const employeeIds = Array.from(new Set(bookings.map((booking) => booking.booked_by).filter(Boolean)))
+    let employeesById: Record<string, { name: string; first_name: string; employee_id: string; email: string | null; auth_user_id: string | null; role_name: string | null; job_title: string | null }> = {}
+    if (employeeIds.length > 0) {
+      const { data: employeesData, error: employeesError } = await supabaseAdmin
+        .from('employees')
+        .select(`
+          id,
+          first_name,
+          last_name,
+          preferred_name,
+          employee_id,
+          role_id,
+          job_title_id,
+          email,
+          auth_user_id
+        `)
+        .in('id', employeeIds)
+
+      if (employeesError) {
+        console.error('[room-bookings] failed to load employee data', employeesError)
+      } else if (employeesData) {
+        // Fetch roles and job titles separately
+        const roleIds = Array.from(new Set(employeesData.map((e: any) => e.role_id).filter(Boolean)))
+        const jobTitleIds = Array.from(new Set(employeesData.map((e: any) => e.job_title_id).filter(Boolean)))
+        
+        let rolesById: Record<string, { role_name: string }> = {}
+        let jobTitlesById: Record<string, { title: string }> = {}
+        
+        if (roleIds.length > 0) {
+          const { data: rolesData } = await supabaseAdmin
+            .from('roles')
+            .select('id, role_name')
+            .in('id', roleIds)
+          if (rolesData) {
+            rolesById = rolesData.reduce((acc, role: any) => {
+              acc[role.id] = { role_name: role.role_name }
+              return acc
+            }, {} as Record<string, { role_name: string }>)
+          }
+        }
+        
+        if (jobTitleIds.length > 0) {
+          const { data: jobTitlesData } = await supabaseAdmin
+            .from('job_titles')
+            .select('id, title')
+            .in('id', jobTitleIds)
+          if (jobTitlesData) {
+            jobTitlesById = jobTitlesData.reduce((acc, jobTitle: any) => {
+              acc[jobTitle.id] = { title: jobTitle.title }
+              return acc
+            }, {} as Record<string, { title: string }>)
+          }
+        }
+        
+        employeesById = employeesData.reduce<Record<string, { name: string; first_name: string; employee_id: string; email: string | null; auth_user_id: string | null; role_name: string | null; job_title: string | null }>>((acc, emp: any) => {
+          const firstName = emp.first_name || ''
+          const lastName = emp.last_name || ''
+          const preferredName = emp.preferred_name
+          const fullName = preferredName 
+            ? `${preferredName} ${lastName}`.trim()
+            : `${firstName} ${lastName}`.trim()
+          
+          const role = emp.role_id ? rolesById[emp.role_id] : null
+          const jobTitle = emp.job_title_id ? jobTitlesById[emp.job_title_id] : null
+          
+          acc[emp.id] = {
+            name: fullName || 'Unknown',
+            first_name: preferredName || firstName || '',
+            employee_id: emp.employee_id || '',
+            email: emp.email || null,
+            auth_user_id: emp.auth_user_id || null,
+            role_name: role?.role_name || null,
+            job_title: jobTitle?.title || null,
+          }
+          return acc
+        }, {})
+      }
+    }
+
+    const enhanced = bookings.map((booking) => {
+      const employee = employeesById[booking.booked_by]
+      return {
+        ...booking,
+        room_details: roomsById[booking.room_id] ?? null,
+        employee_name: employee?.name || null,
+        employee_first_name: employee?.first_name || null,
+        employee_id: employee?.employee_id || null,
+        employee_email: employee?.email || null,
+        employee_auth_user_id: employee?.auth_user_id || null,
+        employee_role: employee?.role_name || employee?.job_title || null,
+        job_title: employee?.job_title || null,
+      }
+    })
 
     return NextResponse.json({
       success: true,
@@ -333,7 +468,101 @@ async function handleCreateBooking(request: NextRequest) {
       endTime: payload.end_time,
     })
 
-    // Then check if the specific room is available
+    // Check for room conflicts BEFORE throwing error (to send notifications)
+    const roomConflicts = await bookingsService.checkForRoomConflicts({
+      roomId: payload.room_id,
+      bookingDate: payload.date,
+      startTime: payload.start_time,
+      endTime: payload.end_time,
+    })
+
+    // If conflicts exist, send notifications to supervisors
+    if (roomConflicts.length > 0) {
+      try {
+        // Get room information
+        const room = await roomsService.getRoomById(payload.room_id)
+        const roomName = room?.name || room?.room_number || 'Unknown Room'
+
+        // Get employee information for the person trying to book
+        const { data: requestingEmployee } = await supabaseAdmin
+          .from('employees')
+          .select('id, employee_id, first_name, last_name, preferred_name')
+          .eq('id', resolvedBookedBy)
+          .maybeSingle()
+
+        const requestingEmployeeName = requestingEmployee?.preferred_name || 
+                                      `${requestingEmployee?.first_name || ''} ${requestingEmployee?.last_name || ''}`.trim() ||
+                                      requestingEmployee?.employee_id ||
+                                      'Unknown Employee'
+
+        // Get conflicting booking details
+        const conflictDetails = await Promise.all(
+          roomConflicts.map(async (conflict) => {
+            const conflictEmployeeName = await getEmployeeName(conflict.booked_by)
+            const conflictStartTime = toTimeString(conflict.start_time) || ''
+            const conflictEndTime = toTimeString(conflict.end_time) || ''
+            return {
+              employeeName: conflictEmployeeName || 'Unknown Employee',
+              startTime: conflictStartTime,
+              endTime: conflictEndTime,
+            }
+          })
+        )
+
+        // Build conflict message
+        const conflictMessages = conflictDetails.map(
+          (detail) => `${detail.employeeName} (${detail.startTime} - ${detail.endTime})`
+        ).join(', ')
+
+        const conflictDate = new Date(payload.date).toLocaleDateString()
+        const requestedTime = `${payload.start_time} - ${payload.end_time}`
+
+        // Find all supervisors
+        const { data: supervisorRole } = await supabaseAdmin
+          .from('roles')
+          .select('id')
+          .ilike('role_name', '%supervisor%')
+          .limit(1)
+          .maybeSingle()
+
+        if (supervisorRole?.id) {
+          const { data: supervisors } = await supabaseAdmin
+            .from('employees')
+            .select('id, employee_id, first_name, last_name, preferred_name')
+            .eq('role_id', supervisorRole.id)
+            .is('deleted_at', null)
+
+          if (supervisors && supervisors.length > 0) {
+            // Send notification to each supervisor
+            const notificationPromises = supervisors.map((supervisor) =>
+              notificationService.createNotification(
+                {
+                  employee_id: supervisor.id,
+                  title: 'Room Booking Conflict Detected',
+                  message: `Room booking conflict detected for ${roomName}. Employee ${requestingEmployeeName} (ID: ${requestingEmployee?.employee_id || 'N/A'}) attempted to book ${roomName} on ${conflictDate} from ${requestedTime}, but the room is already booked by: ${conflictMessages}.`,
+                  notification_type: 'internal',
+                  published_by: resolvedBookedBy,
+                  is_confidential: true, // Mark as confidential as it involves scheduling conflicts
+                },
+                {
+                  sendEmail: true,
+                  preventDuplicates: true,
+                  duplicateWindowMinutes: 5,
+                }
+              )
+            )
+
+            await Promise.allSettled(notificationPromises)
+            console.log(`[room-bookings] Sent conflict notifications to ${supervisors.length} supervisor(s)`)
+          }
+        }
+      } catch (notifError) {
+        console.error('[room-bookings] Failed to send conflict notification to supervisors:', notifError)
+        // Don't fail the request if notification fails
+      }
+    }
+
+    // Then check if the specific room is available (this will throw if conflicts exist)
     await bookingsService.ensureRoomIsAvailable({
       roomId: payload.room_id,
       bookingDate: payload.date,
@@ -373,8 +602,21 @@ async function handleCreateBooking(request: NextRequest) {
     }
 
     if (error instanceof Error && error.message.includes(conflictMessage)) {
+      // Check if we have conflict booking info
+      const conflictBooking = (error as any).conflictBooking as BookingRecord | undefined
+      let errorMessage = 'The selected room is already booked for that time window.'
+      
+      if (conflictBooking?.booked_by) {
+        const employeeName = await getEmployeeName(conflictBooking.booked_by)
+        if (employeeName) {
+          const startTime = toTimeString(conflictBooking.start_time) || ''
+          const endTime = toTimeString(conflictBooking.end_time) || ''
+          errorMessage = `The room is already booked by ${employeeName} from ${startTime} to ${endTime}. Please select a different time slot or room.`
+        }
+      }
+      
       return NextResponse.json(
-        { success: false, error: 'Room unavailable for selected time window' },
+        { success: false, error: errorMessage },
         { status: 409 },
       )
     }

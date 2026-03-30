@@ -35,6 +35,12 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface AMSDashboardLayoutProps {
   children: ReactNode
@@ -47,6 +53,11 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [profileDialogOpen, setProfileDialogOpen] = useState(false)
   const [employeeProfile, setEmployeeProfile] = useState<any>(null)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notifications, setNotifications] = useState<any[]>([])
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [selectedNotification, setSelectedNotification] = useState<any | null>(null)
+  const [notificationDetailsOpen, setNotificationDetailsOpen] = useState(false)
 
   useEffect(() => {
     const currentUser = getCurrentUser()
@@ -68,6 +79,113 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
     }
   }, [])
 
+  // Fetch notifications when dialog opens
+  useEffect(() => {
+    if (notificationsOpen && user) {
+      fetchNotifications()
+    }
+  }, [notificationsOpen, user])
+
+  const fetchNotifications = async () => {
+    if (!user) {
+      console.error("[Notifications] No user found")
+      return
+    }
+    
+    // Try multiple sources for employee ID
+    const employeeId = 
+      employeeProfile?.id || 
+      employeeProfile?.employee_id || 
+      user.id || 
+      user.employeeId
+    
+    if (!employeeId) {
+      console.error("[Notifications] No employee ID found. User:", user, "Employee Profile:", employeeProfile)
+      return
+    }
+
+    console.log("[Notifications] Fetching notifications for employee ID:", employeeId)
+    console.log("[Notifications] User object:", { id: user.id, employeeId: user.employeeId })
+    console.log("[Notifications] Employee profile:", { id: employeeProfile?.id, employee_id: employeeProfile?.employee_id })
+
+    setNotificationsLoading(true)
+    try {
+      const response = await fetch(`/api/notifications?employeeId=${employeeId}`)
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error("[Notifications] API error:", response.status, errorText)
+        throw new Error(`Failed to fetch notifications: ${response.status}`)
+      }
+      const result = await response.json()
+      console.log("[Notifications] API response:", result)
+      setNotifications(result.data || [])
+      console.log("[Notifications] Set notifications:", result.data?.length || 0, "notifications")
+    } catch (error) {
+      console.error("[Notifications] Error fetching notifications:", error)
+      setNotifications([])
+    } finally {
+      setNotificationsLoading(false)
+    }
+  }
+
+  const handleMarkAsRead = async (notificationId: string) => {
+    try {
+      const response = await fetch(`/api/notifications/${notificationId}/read`, {
+        method: "PATCH",
+      })
+      if (response.ok) {
+        const { data } = await response.json()
+        // Update local state
+        setNotifications((prev) =>
+          prev.map((n) =>
+            n.id === notificationId ? { ...n, is_read: true, read_at: data.read_at } : n
+          )
+        )
+        // Update selected notification if it's the one being marked as read
+        if (selectedNotification?.id === notificationId) {
+          setSelectedNotification({ ...selectedNotification, is_read: true, read_at: data.read_at })
+        }
+      }
+    } catch (error) {
+      console.error("Error marking notification as read:", error)
+    }
+  }
+
+  const handleNotificationClick = (notification: any) => {
+    setSelectedNotification(notification)
+    setNotificationDetailsOpen(true)
+    // Mark as read if unread
+    if (!notification.is_read) {
+      handleMarkAsRead(notification.id)
+    }
+  }
+
+  const handleMarkAllAsRead = async () => {
+    const unreadNotifications = notifications.filter((n) => !n.is_read)
+    for (const notification of unreadNotifications) {
+      await handleMarkAsRead(notification.id)
+    }
+  }
+
+  const formatNotificationDate = (dateString: string) => {
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60)
+    
+    if (diffInHours < 1) {
+      const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60))
+      return diffInMinutes < 1 ? 'Just now' : `${diffInMinutes}m ago`
+    } else if (diffInHours < 24) {
+      return `${Math.floor(diffInHours)}h ago`
+    } else if (diffInHours < 48) {
+      return 'Yesterday'
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
+    }
+  }
+
+  const unreadCount = notifications.filter((n) => !n.is_read).length
+
   if (user === undefined) return null
   if (user === null) return null
 
@@ -77,13 +195,14 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
   }
 
   const dashboardPath = user?.role === "supervisor" ? "/ams-supervisor" : "/ams-dashboard"
+  const settingsPath = user?.role === "supervisor" ? "/settings/supervisor" : "/ams-settings"
 
   const baseNavigation = [
     { name: "Dashboard", href: dashboardPath, icon: Home },
     { name: "Device Management", href: "/ams-devices", icon: Package },
     { name: "Room Booking", href: "/ams-bookings", icon: Calendar },
     { name: "Maintenance Request", href: "/ams-maintenance", icon: Wrench },
-    { name: "Settings", href: "/ams-settings", icon: Settings },
+    { name: "Settings", href: settingsPath, icon: Settings },
   ]
 
   const navigationTabs = baseNavigation
@@ -196,15 +315,128 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
 
           <div className="flex items-center gap-2">
             {/* Notifications */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="relative"
-              aria-label="View notifications"
-            >
-              <Bell className="h-5 w-5" />
-              <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-[#E31E24]" />
-            </Button>
+            <DropdownMenu open={notificationsOpen} onOpenChange={setNotificationsOpen}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="relative"
+                  aria-label="View notifications"
+                  onClick={() => setNotificationsOpen(true)}
+                >
+                  <Bell className="h-5 w-5" />
+                  {unreadCount > 0 && (
+                    <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-[#E31E24]" />
+                  )}
+                  {unreadCount > 0 && (
+                    <Badge className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-[#E31E24] text-white text-xs flex items-center justify-center p-0">
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </Badge>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-96 p-0 shadow-lg">
+                {/* Header */}
+                <div className="px-5 py-4 border-b bg-gradient-to-r from-[#92278F]/5 to-[#BE1E2D]/5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-base text-[#25294B]">Notifications</h3>
+                    {unreadCount > 0 && (
+                      <Badge variant="secondary" className="text-xs bg-[#92278F]/10 text-[#92278F] border-[#92278F]/20">
+                        {unreadCount} unread
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notifications List */}
+                <ScrollArea className="h-[450px]">
+                  {notificationsLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#92278F] mx-auto mb-2"></div>
+                        <p className="text-sm text-muted-foreground">Loading notifications...</p>
+                      </div>
+                    </div>
+                  ) : notifications.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 px-4">
+                      <Bell className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                      <p className="text-sm font-medium text-muted-foreground">No notifications</p>
+                      <p className="text-xs text-muted-foreground mt-1">You're all caught up!</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-border/50">
+                      {notifications.map((notification) => (
+                        <div
+                          key={notification.id}
+                          className={cn(
+                            "px-5 py-4 cursor-pointer transition-all duration-200",
+                            "hover:bg-gradient-to-r hover:from-[#92278F]/5 hover:to-[#BE1E2D]/5",
+                            !notification.is_read && "bg-gradient-to-r from-[#92278F]/8 to-[#BE1E2D]/8 border-l-2 border-[#92278F]"
+                          )}
+                          onClick={() => handleNotificationClick(notification)}
+                        >
+                          <div className="flex items-start gap-3">
+                            {/* Unread Indicator */}
+                            {!notification.is_read && (
+                              <div className="mt-1.5 flex-shrink-0">
+                                <div className="h-2 w-2 rounded-full bg-[#92278F] animate-pulse" />
+                              </div>
+                            )}
+                            
+                            {/* Content */}
+                            <div className="flex-1 min-w-0 space-y-2">
+                              {/* Title */}
+                              <div className="flex items-start justify-between gap-2">
+                                <p className={cn(
+                                  "text-sm leading-5",
+                                  !notification.is_read ? "font-semibold text-[#25294B]" : "font-medium text-[#25294B]/90"
+                                )}>
+                                  {notification.title}
+                                </p>
+                              </div>
+                              
+                              {/* Message Preview */}
+                              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                                {notification.message}
+                              </p>
+                              
+                              {/* Timestamp */}
+                              <div className="flex items-center gap-2 pt-1">
+                                <p className="text-xs text-muted-foreground/80">
+                                  {formatNotificationDate(notification.created_at)}
+                                </p>
+                                {notification.notification_type && (
+                                  <>
+                                    <span className="text-muted-foreground/40">•</span>
+                                    <Badge variant="outline" className="text-xs h-5 px-1.5 py-0 border-muted-foreground/20 text-muted-foreground/70">
+                                      {notification.notification_type}
+                                    </Badge>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+
+                {/* Footer */}
+                {notifications.length > 0 && unreadCount > 0 && (
+                  <div className="px-4 py-3 border-t bg-muted/30">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-xs text-muted-foreground hover:text-foreground"
+                      onClick={handleMarkAllAsRead}
+                    >
+                      Mark all as read
+                    </Button>
+                  </div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             {/* User Profile Trigger */}
             <Button variant="ghost" className="gap-2" onClick={() => setProfileDialogOpen(true)}>
@@ -278,6 +510,86 @@ export function AMSDashboardLayout({ children }: AMSDashboardLayoutProps) {
             <Button variant="outline" onClick={() => setProfileDialogOpen(false)}>
               Close
               </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Notification Details Dialog */}
+      <Dialog open={notificationDetailsOpen} onOpenChange={setNotificationDetailsOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-[#25294B]">
+              {selectedNotification?.title || "Notification Details"}
+            </DialogTitle>
+            {selectedNotification && (
+              <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                <span>{formatNotificationDate(selectedNotification.created_at)}</span>
+                {selectedNotification.notification_type && (
+                  <>
+                    <span>•</span>
+                    <Badge variant="outline" className="text-xs">
+                      {selectedNotification.notification_type}
+                    </Badge>
+                  </>
+                )}
+              </div>
+            )}
+          </DialogHeader>
+          
+          {selectedNotification && (
+            <div className="space-y-4 py-4">
+              {/* Full Message */}
+              <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
+                <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
+                  {selectedNotification.message}
+                </p>
+              </div>
+
+              {/* Additional Details */}
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between py-2 border-b border-border/30">
+                  <span className="text-muted-foreground">Date & Time</span>
+                  <span className="font-medium text-foreground">
+                    {new Date(selectedNotification.created_at).toLocaleString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+                </div>
+                {selectedNotification.notification_type && (
+                  <div className="flex items-center justify-between py-2 border-b border-border/30">
+                    <span className="text-muted-foreground">Type</span>
+                    <Badge variant="outline" className="text-xs">
+                      {selectedNotification.notification_type}
+                    </Badge>
+                  </div>
+                )}
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-muted-foreground">Status</span>
+                  <Badge 
+                    variant={selectedNotification.is_read ? "secondary" : "default"}
+                    className={cn(
+                      "text-xs",
+                      !selectedNotification.is_read && "bg-[#92278F]/10 text-[#92278F] border-[#92278F]/20"
+                    )}
+                  >
+                    {selectedNotification.is_read ? "Read" : "Unread"}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-4 border-t">
+            <Button
+              variant="outline"
+              onClick={() => setNotificationDetailsOpen(false)}
+            >
+              Close
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

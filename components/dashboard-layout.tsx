@@ -1,6 +1,6 @@
 "use client"
 
-import { type ReactNode, useState, useEffect, memo } from "react"
+import { type ReactNode, useState, useEffect, useRef, memo } from "react"
 import dynamic from "next/dynamic"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
@@ -40,6 +40,7 @@ import {
   StickyNote,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { isEmployeeFullyVerified } from "@/lib/employee-verification"
 
 interface DashboardLayoutProps {
   children: ReactNode
@@ -48,16 +49,118 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter()
   const pathname = usePathname()
-  const [user, setUser] = useState<User | undefined>(undefined)
+  const [user, setUser] = useState<User | null | undefined>(undefined)
+  const [displayName, setDisplayName] = useState<string>("")
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [employeeId, setEmployeeId] = useState<string>("")
+  const [isEmployeeVerified, setIsEmployeeVerified] = useState(true)
+  const [unreadNotifications, setUnreadNotifications] = useState<any[]>([])
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const didInitialNotificationFetch = useRef(false)
+
+  const fetchUnreadNotifications = async (employeeIdToUse: string) => {
+    if (!employeeIdToUse) return
+    setNotificationsLoading(true)
+    try {
+      const response = await fetch(
+        `/api/notifications?employeeId=${employeeIdToUse}&onlyUnread=true`,
+      )
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `Failed to fetch notifications: ${response.status}`)
+      }
+      const result = await response.json()
+      setUnreadNotifications(result.data || [])
+    } catch (error) {
+      console.error("[Notifications] fetch unread failed:", error)
+      setUnreadNotifications([])
+    } finally {
+      setNotificationsLoading(false)
+    }
+  }
+
+  const handleNotificationClick = async (notification: any) => {
+    if (!notification?.id) return
+    try {
+      const response = await fetch(`/api/notifications/${notification.id}/read`, {
+        method: "PATCH",
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || `Failed to mark notification as read: ${response.status}`)
+      }
+      // Remove from local list so it disappears immediately.
+      setUnreadNotifications((prev) => prev.filter((n) => n.id !== notification.id))
+    } catch (error) {
+      console.error("[Notifications] mark as read failed:", error)
+    }
+  }
+
+  const unreadCount = unreadNotifications.length
 
   useEffect(() => {
     const currentUser = getCurrentUser()
     if (!currentUser) {
       router.replace("/login")
     }
-    setUser(currentUser as User)
+    setUser(currentUser)
+    // Initial load of profile for display name
+    const loadProfile = async () => {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        try {
+          const storedSession = localStorage.getItem('xspark_session')
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to parse session for profile fetch:', error)
+        }
+
+        const res = await fetch('/api/auth/me', { headers })
+        const json = await res.json().catch(() => ({}))
+        const profile = json?.data?.employee || null
+        if (profile) {
+          // Use legal name (first + last) in the header; fall back to preferred_name or auth name
+          const legalName = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim()
+          const dn = legalName || profile.preferred_name || currentUser?.name || ''
+          setDisplayName(dn)
+          // Set employee ID for AI chat widget
+          if (profile.id) setEmployeeId(profile.id)
+          setIsEmployeeVerified(isEmployeeFullyVerified(profile))
+        } else if (currentUser?.name) {
+          setDisplayName(currentUser.name)
+        }
+      } catch {
+        if (currentUser?.name) setDisplayName(currentUser.name)
+      }
+    }
+    loadProfile()
+
+    const onProfileUpdated = () => loadProfile()
+    window.addEventListener('profile-updated', onProfileUpdated as EventListener)
+    return () => window.removeEventListener('profile-updated', onProfileUpdated as EventListener)
   }, [router])
+
+  // 1) Fetch once on page load (after we know employeeId)
+  useEffect(() => {
+    if (!employeeId) return
+    if (didInitialNotificationFetch.current) return
+    didInitialNotificationFetch.current = true
+    fetchUnreadNotifications(employeeId)
+  }, [employeeId])
+
+  // 2) Re-fetch whenever the bell dropdown is opened
+  useEffect(() => {
+    if (!notificationsOpen) return
+    if (!employeeId) return
+    fetchUnreadNotifications(employeeId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notificationsOpen, employeeId])
 
   if (user === undefined) {
     return null // Render nothing until user is determined
@@ -83,8 +186,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: "Switch System", href: "/system-selector", icon: Settings, permission: "*" },
   ]
 
+  const restrictedForUnverifiedEmployees = new Set(["Notes", "Leave Requests", "Documents"])
+  const isUnverifiedRegularEmployee = user.role === "employee" && !isEmployeeVerified
+
   const filteredNavigation = navigation.filter((item) => {
     if (item.adminOnly && user.role !== "super_admin") return false
+    if (isUnverifiedRegularEmployee && restrictedForUnverifiedEmployees.has(item.name)) return false
     if (item.permission === "*") return true
     return hasPermission(user, item.permission)
   })
@@ -94,20 +201,25 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       {/* Top Navigation */}
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="flex h-16 items-center gap-4 px-4">
+          {/* Mobile menu button */}
+          <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </Button>
+
           {/* Logo */}
           <Link href="/dashboard" className="flex items-center">
-            <XSparkLogo className="h-12 w-auto" />
+            <XSparkLogo className="h-8 w-auto" />
           </Link>
 
-          {/* Search (HR Manager and above) */}
+          {/* Search (Admin and above) */}
           {hasPermission(user, "view_employees") && (
             <div className="hidden md:flex flex-1 max-w-md">
               <div className="relative w-full">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
                   type="search"
                   placeholder="Search employees..."
-                  className="w-full pl-9 pr-4 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full pl-10 pr-4 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
             </div>
@@ -115,16 +227,55 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
           <div className="flex-1" />
 
-          {/* Switch System button */}
-          <Link href="/system-selector" className="hidden md:block">
-            <Button className="ml-1 gradient-primary text-white">Switch System</Button>
-          </Link>
-
           {/* Notifications */}
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="h-5 w-5" />
-            <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-[#E31E24]" />
-          </Button>
+          <DropdownMenu open={notificationsOpen} onOpenChange={setNotificationsOpen}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="relative"
+                aria-label="View notifications"
+              >
+                <Bell className="h-5 w-5" />
+                {unreadCount > 0 && (
+                  <Badge
+                    className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-[#E31E24] text-white text-xs flex items-center justify-center p-0"
+                  >
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </Badge>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {notificationsLoading ? (
+                <div className="p-3 text-sm text-muted-foreground">Loading notifications...</div>
+              ) : unreadCount === 0 ? (
+                <div className="p-3 text-sm text-muted-foreground">No new notifications yet.</div>
+              ) : (
+                <div className="max-h-[420px] overflow-auto">
+                  {unreadNotifications.map((notification) => (
+                    <button
+                      key={notification.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
+                      onClick={() => handleNotificationClick(notification)}
+                    >
+                      <div className="flex flex-col gap-1">
+                        <div className="text-sm font-semibold text-[#25294B]">
+                          {notification.title}
+                        </div>
+                        <div className="text-xs text-muted-foreground line-clamp-2">
+                          {notification.message}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* User Menu */}
           <DropdownMenu>
@@ -132,14 +283,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               <Button variant="ghost" className="gap-2">
                 <Avatar className="h-8 w-8">
                   <AvatarFallback className="gradient-primary text-white text-xs">
-                    {user.name
+                    {(displayName || user.name)
                       .split(" ")
                       .map((n) => n[0])
                       .join("")}
                   </AvatarFallback>
                 </Avatar>
                 <div className="hidden md:flex flex-col items-start">
-                  <span className="text-sm font-medium">{user.name}</span>
+                  <span className="text-sm font-medium">{displayName || user.name}</span>
                   <Badge className={cn("text-xs", getRoleBadgeColor(user.role))}>{getRoleDisplayName(user.role)}</Badge>
                 </div>
               </Button>
@@ -210,7 +361,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </div>
 
       {/* AI Chat Widget */}
-      <AIChatWidget />
+      {employeeId && <AIChatWidget employeeId={employeeId} />}
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (

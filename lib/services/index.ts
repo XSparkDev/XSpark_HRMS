@@ -26,6 +26,16 @@ export {
   type LeaveRequestFilters
 } from './leave-service'
 
+export {
+  AuthService,
+  authService,
+  type AuthUser,
+  type Session,
+  type LoginCredentials,
+  type SignupData,
+  type AuthResponse
+} from './auth-service'
+
 export { 
   PayrollService, 
   payrollService,
@@ -44,6 +54,25 @@ export {
   type NoteFilters
 } from './notes-service-new'
 
+export {
+  notes2Service,
+  type EmployeeNote2,
+  type CreateNotes2Input,
+  type Notes2AlertLevel,
+  type UpdateNotes2Input
+} from './notes2-service'
+
+export {
+  createEmployeeNote,
+  getEmployeeNotesByEmployee,
+  getEmployeeNoteById,
+  updateEmployeeNote,
+  deleteEmployeeNote,
+  type EmployeeNote,
+  type CreateEmployeeNoteData,
+  type UpdateEmployeeNoteData
+} from './employee-notes-service'
+
 export { 
   StorageService,
   storageService,
@@ -58,59 +87,17 @@ export {
   type Room,
   type RoomFilters,
   type CreateRoomInput,
-  type UpdateRoomInput,
+  type UpdateRoomInput
 } from './rooms-service'
 
 export {
   ResourcesService,
   resourcesService,
-  type ResourceModel,
-  type ResourceRecord as BaseResourceRecord,
 } from './resources-service'
-
-export {
-  DevicesService,
-  devicesService,
-  type DeviceRecord,
-  type DeviceFilters,
-  type CreateDeviceInput,
-  type UpdateDeviceInput,
-} from './devices-service'
-
-export {
-  BorrowService,
-  borrowService,
-  type BorrowRecord,
-  type BorrowFilters,
-  type CreateBorrowInput,
-  type UpdateBorrowInput,
-} from './borrow-service'
-
-export {
-  IncidentsService,
-  incidentsService,
-  type IncidentRecord,
-  type IncidentFilters,
-  type CreateIncidentInput,
-  type UpdateIncidentInput,
-} from './incidents-service'
-
-export {
-  BookingsService,
-  bookingsService,
-  type BookingRecord,
-  type BookingFilters,
-  type CreateBookingInput,
-  type UpdateBookingInput,
-} from './bookings-service'
-
-export {
-  NotificationService,
-  notificationService,
-  type NotificationRecord,
-  type CreateNotificationInput,
-  type NotificationRealtimeHandlers,
-} from './notification-service'
+export type {
+  ResourceModel,
+  ResourceRecord as BaseResourceRecord,
+} from '@/lib/models/resource-models'
 
 // Legacy services (to be migrated)
 export { notesService as legacyNotesService } from './notes-service'
@@ -126,11 +113,7 @@ import { storageService } from './storage-service'
 import { assignedDevicesService } from './assigned-devices-service'
 import { roomsService } from './rooms-service'
 import { resourcesService } from './resources-service'
-import { devicesService } from './devices-service'
-import { bookingsService } from './bookings-service'
-import { borrowService } from './borrow-service'
-import { incidentsService } from './incidents-service'
-import { notificationService } from './notification-service'
+import { notes2Service } from './notes2-service'
 
 // Service factory for dependency injection
 export class ServiceFactory {
@@ -151,6 +134,9 @@ export class ServiceFactory {
         case 'notes':
           this.instances.set(serviceName, notesService)
           break
+        case 'notes2':
+          this.instances.set(serviceName, notes2Service)
+          break
         case 'storage':
           this.instances.set(serviceName, storageService)
           break
@@ -162,21 +148,6 @@ export class ServiceFactory {
           break
         case 'resources':
           this.instances.set(serviceName, resourcesService)
-          break
-        case 'devices':
-          this.instances.set(serviceName, devicesService)
-          break
-        case 'borrows':
-          this.instances.set(serviceName, borrowService)
-          break
-        case 'incidents':
-          this.instances.set(serviceName, incidentsService)
-          break
-        case 'bookings':
-          this.instances.set(serviceName, bookingsService)
-          break
-        case 'notifications':
-          this.instances.set(serviceName, notificationService)
           break
         default:
           throw new Error(`Unknown service: ${serviceName}`)
@@ -192,13 +163,21 @@ export default {
   leaveManagementService,
   payrollService,
   notesService,
+  notes2Service,
   storageService,
   roomsService,
   resourcesService,
-  devicesService,
-  borrowService,
-  incidentsService,
-  bookingsService,
-  notificationService,
   ServiceFactory
 }
+
+// Notifications
+export {
+  notificationService,
+} from './notification-service'
+export type {
+  NotificationType,
+  NotificationRecord,
+  CreateNotificationInput,
+  CreateNotificationOptions,
+  NotificationRealtimeHandlers,
+} from './notification-service'

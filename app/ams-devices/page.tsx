@@ -33,6 +33,9 @@ import {
   RotateCcw,
   Trash2,
   Repeat,
+  ChevronDown,
+  Plus,
+  ClipboardList,
 } from "lucide-react"
 import { QRScanner } from "@/components/qr-scanner"
 import { CollectScanDeviceModal } from "@/components/collect-scan-device-modal"
@@ -48,6 +51,7 @@ import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
 import { DEVICE_HISTORY_UPDATED_EVENT } from "@/lib/storage/device-history"
 import { BUSINESS_START_TIME, BUSINESS_END_TIME, timeStringToMinutes, isWithinBusinessHours as isBusinessTime, BUSINESS_TIME_PATTERN } from "@/lib/utils/business-hours"
+import { employeeService, type Employee } from "@/lib/services/employee-service"
 
 type InventoryDevice = {
   id: string
@@ -384,7 +388,7 @@ export default function AMSDevicesLandingPage() {
   const [assignDeviceErrors, setAssignDeviceErrors] = useState<Record<string, string>>({})
   const [availableDevicesForAssign, setAvailableDevicesForAssign] = useState<InventoryDevice[]>([])
   const [availableDevicesLoading, setAvailableDevicesLoading] = useState(false)
-  const [employeesList, setEmployeesList] = useState<Array<{ id: string; first_name: string; last_name: string; employee_id: string }>>([])
+  const [employeesList, setEmployeesList] = useState<Employee[]>([])
   const [employeesLoading, setEmployeesLoading] = useState(false)
 
   const storageKey = userIdentity ? `ams_device_history_${userIdentity}` : null
@@ -538,7 +542,6 @@ export default function AMSDevicesLandingPage() {
   const [borrowDate, setBorrowDate] = useState("")
   const [borrowReturnDate, setBorrowReturnDate] = useState("")
   const [borrowPurpose, setBorrowPurpose] = useState("")
-  const [borrowDateDisplay, setBorrowDateDisplay] = useState("")
   const [borrowReturnError, setBorrowReturnError] = useState<string | null>(null)
   const [bannerMessage, setBannerMessage] = useState<string | null>(null)
   const [borrowReceipt, setBorrowReceipt] = useState<BorrowReceipt | null>(null)
@@ -887,19 +890,7 @@ const selectedBorrowDevice = useMemo(
   }, [history, updateHistory])
 
 
-  useEffect(() => {
-    if (!borrowOpen || typeof window === "undefined") return
-
-    const updateNow = () => {
-      const now = new Date()
-      setBorrowDate(now.toISOString())
-      setBorrowDateDisplay(now.toLocaleString())
-    }
-
-    updateNow()
-    const intervalId = window.setInterval(updateNow, 1000)
-    return () => window.clearInterval(intervalId)
-  }, [borrowOpen])
+  // Removed automatic real-time date setting - user can now edit the date manually
 
   useEffect(() => {
     if (!borrowOpen) {
@@ -1074,7 +1065,6 @@ const selectedBorrowDevice = useMemo(
     }
 
     const borrowDateValue = borrowDate || new Date().toISOString()
-    const recordId = crypto.randomUUID()
     const assetTag = selectedDevice.asset_tag || selectedDevice.serial_number || selectedDevice.id
     const resolvedDeviceName = selectedDevice.model || selectedDevice.brand || toTitleCase(selectedDevice.device_type ?? undefined) || "Device"
     const resolvedDeviceType = toTitleCase(selectedDevice.device_type ?? undefined) || "Device"
@@ -1099,6 +1089,7 @@ const selectedBorrowDevice = useMemo(
     if (borrowSubmitting) return
     setBorrowSubmitting(true)
 
+    let borrowResponse: any = null
     try {
       const response = await fetch("/api/borrows", {
         method: "POST",
@@ -1115,17 +1106,59 @@ const selectedBorrowDevice = useMemo(
       if (!response.ok || json.success === false) {
         throw new Error(json?.error || "Failed to record borrow in the database.")
       }
+      borrowResponse = json
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Borrow not saved",
         description: error instanceof Error ? error.message : "Unable to save this borrow request.",
       })
+      setBorrowSubmitting(false)
       return
     } finally {
       setBorrowSubmitting(false)
     }
 
+    // If auto-approved (supervisor), show scanner immediately
+    if (borrowResponse?.autoApproved && borrowResponse?.data?.borrow_id && isSupervisor) {
+      // Add to history with "Approved" status
+      const recordId = borrowResponse.data.borrow_id
+      const newEntry: DeviceHistoryRow = {
+        recordId,
+        deviceId: assetTag,
+        deviceRecordId: selectedDevice.id,
+        deviceName: resolvedDeviceName,
+        deviceType: resolvedDeviceType,
+        borrowDate: borrowDateValue,
+        expectedReturnDate: borrowReturnDate || undefined,
+        status: "Pending" as DeviceHistoryStatus, // Will be updated to "Borrowed" after scan
+        action: "Borrow",
+        notes: trimmedPurpose || undefined,
+        borrowerId: borrowerIdentifier,
+      }
+      updateHistory((prev) => [newEntry, ...prev])
+
+      // Open scanner modal
+      setCollectScanMode("collect")
+      setCollectScanBorrowId(recordId)
+      setCollectScanDeviceId(selectedDevice.id)
+      setBorrowOpen(false)
+      setCollectScanModalOpen(true)
+      toast({
+        title: "Request Approved",
+        description: "Please scan the device to complete pickup.",
+      })
+      // Reset form
+      setBorrowType("")
+      setBorrowId("")
+      setBorrowReturnDate("")
+      setBorrowPurpose("")
+      setBorrowReturnError(null)
+      return
+    }
+
+    // Regular flow for non-supervisors or non-auto-approved requests
+    const recordId = borrowResponse?.data?.borrow_id || crypto.randomUUID()
     const newEntry: DeviceHistoryRow = {
       recordId,
       deviceId: assetTag,
@@ -1394,23 +1427,25 @@ const selectedBorrowDevice = useMemo(
   }
 
   const handleReturnFromHistory = async (entry: DeviceHistoryRow) => {
-    if (entry.status !== "Borrowed") {
+    if (entry.status !== "Borrowed" && entry.status !== "Awaiting Return") {
       toast({
         variant: "destructive",
         title: "Return unavailable",
-        description: "Only borrowed devices can be returned.",
+        description: "Only borrowed devices or devices awaiting return can be returned.",
       })
       return
     }
     
-    // Update status to "Awaiting Return"
-    updateHistory((prev) =>
-      prev.map((e) =>
-        e.recordId === entry.recordId
-          ? { ...e, status: "Awaiting Return" as DeviceHistoryStatus }
-          : e,
-      ),
-    )
+    // Update status to "Awaiting Return" if not already
+    if (entry.status !== "Awaiting Return") {
+      updateHistory((prev) =>
+        prev.map((e) =>
+          e.recordId === entry.recordId
+            ? { ...e, status: "Awaiting Return" as DeviceHistoryStatus }
+            : e,
+        ),
+      )
+    }
     
     // Open scan modal for return
     setCollectScanMode("return")
@@ -1433,18 +1468,28 @@ const selectedBorrowDevice = useMemo(
           await completeReturnScan(collectScanBorrowId, scannedCode)
         }
       } else {
-        // Collect flow - update status to "Borrowed"
+        // Collect flow - device has been picked up and marked as borrowed
         toast({
           title: "Device collected successfully",
-          description: "Device has been scanned and collected.",
+          description: "Device has been scanned and marked as borrowed.",
         })
+        // Update local history if we have the borrow_id
+        if (collectScanBorrowId) {
+          updateHistory((prev) =>
+            prev.map((e) =>
+              e.recordId === collectScanBorrowId ? { ...e, status: "Borrowed" as DeviceHistoryStatus } : e,
+            ),
+          )
+        }
+        // Reload inventory to reflect device status change
+        await loadInventory()
         // Trigger history sync
         if (storageKey && typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent(DEVICE_HISTORY_UPDATED_EVENT))
         }
       }
     },
-    [collectScanMode, collectScanBorrowId, isSupervisor, storageKey],
+    [collectScanMode, collectScanBorrowId, isSupervisor, storageKey, updateHistory, loadInventory],
   )
   
   const completeReturnScan = async (borrowId: string | undefined, scannedCode: string) => {
@@ -1663,26 +1708,31 @@ const selectedBorrowDevice = useMemo(
 
 
         <div className="space-y-4">
-          <div className="flex flex-row items-start justify-between gap-4">
-            <div></div>
-            <div className="flex items-center gap-2">
-              {canManageInventory && (
-                <>
-                  <Button
-                    className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white"
-                    onClick={() => setAddDeviceOpen(true)}
-                  >
-                    Add Device
+          <div className="flex flex-row items-center justify-end gap-3">
+            {isSupervisor ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90 h-10 px-4">
+                    Actions
+                    <ChevronDown className="ml-2 h-4 w-4" />
                   </Button>
-                  <Button
-                    className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white"
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem
+                    onClick={() => setAddDeviceOpen(true)}
+                    className="cursor-pointer"
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Device
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
                     onClick={async () => {
                       setAssignDeviceOpen(true)
                       setAvailableDevicesLoading(true)
                       setEmployeesLoading(true)
                       try {
-                        // Fetch both devices and employees in parallel using GET requests
-                        const [devicesResponse, employeesResponse] = await Promise.all([
+                        // Fetch both devices and employees in parallel
+                        const [devicesResponse, employeesData] = await Promise.all([
                           fetch("/api/devices?availableOnly=true&limit=200", {
                             method: "GET",
                             cache: "no-store",
@@ -1691,18 +1741,10 @@ const selectedBorrowDevice = useMemo(
                               Accept: "application/json",
                             },
                           }),
-                          fetch("/api/employees?limit=500&is_active=true", {
-                            method: "GET",
-                            cache: "no-store",
-                            credentials: "include",
-                            headers: {
-                              Accept: "application/json",
-                            },
-                          })
+                          employeeService.getAllActive({ limit: 500 })
                         ])
                         
                         const devicesJson = await devicesResponse.json()
-                        const employeesJson = await employeesResponse.json()
                         
                         if (devicesResponse.ok && devicesJson.success && Array.isArray(devicesJson.data)) {
                           setAvailableDevicesForAssign(devicesJson.data)
@@ -1710,14 +1752,15 @@ const selectedBorrowDevice = useMemo(
                           throw new Error(devicesJson?.error || "Failed to fetch devices")
                         }
                         
-                        if (employeesResponse.ok && employeesJson.success && Array.isArray(employeesJson.data)) {
-                          setEmployeesList(employeesJson.data)
+                        // Use employee service data directly
+                        if (Array.isArray(employeesData)) {
+                          setEmployeesList(employeesData)
                         } else {
-                          console.error("Failed to fetch employees:", employeesJson?.error)
+                          console.error("Failed to fetch employees: Invalid response")
                           toast({
                             variant: "destructive",
                             title: "Failed to load employees",
-                            description: employeesJson?.error || "Could not fetch employees list.",
+                            description: "Could not fetch employees list.",
                           })
                         }
                       } catch (error) {
@@ -1732,16 +1775,45 @@ const selectedBorrowDevice = useMemo(
                         setEmployeesLoading(false)
                       }
                     }}
+                    className="cursor-pointer"
                   >
+                    <UserPlus className="mr-2 h-4 w-4" />
                     Assign Device
-                  </Button>
-                </>
-              )}
-
-              <div className="flex flex-wrap items-center gap-3">
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setBorrowOpen(true)}
+                    className="cursor-pointer"
+                  >
+                    <Calendar className="mr-2 h-4 w-4" />
+                    Book a Device
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setCollectScanMode("collect")
+                      setCollectScanModalOpen(true)
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <QrCode className="mr-2 h-4 w-4" />
+                    Collect & Scan Device
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    asChild
+                    className="cursor-pointer"
+                  >
+                    <Link href="/ams-devices/management-history">
+                      <ClipboardList className="mr-2 h-4 w-4" />
+                      Device Management History
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <>
+                {/* DialogTrigger for non-supervisors only */}
                 <Dialog open={borrowOpen} onOpenChange={setBorrowOpen}>
                   <DialogTrigger asChild>
-                    <Button className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90">Book a Device</Button>
+                    <Button className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90 h-10 px-4">Book a Device</Button>
                   </DialogTrigger>
                   <DialogContent className="sm:max-w-lg space-y-4">
                     <DialogHeader className="rounded-lg bg-white/80 p-4 shadow-sm space-y-1">
@@ -1825,8 +1897,30 @@ const selectedBorrowDevice = useMemo(
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div className="space-y-1.5">
                           <Label>Borrow Date</Label>
-                          <Input value={borrowDateDisplay || "Populating..."} readOnly className="bg-muted/40 text-sm" />
-                          <p className="text-xs text-muted-foreground">Captured automatically in real-time.</p>
+                          <Input
+                            type="date"
+                            min={new Date().toISOString().split('T')[0]}
+                            value={borrowDate ? new Date(borrowDate).toISOString().split('T')[0] : ""}
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                const date = new Date(e.target.value + 'T00:00:00')
+                                const day = date.getDay()
+                                if (day === 0 || day === 6) {
+                                  toast({
+                                    variant: "destructive",
+                                    title: "Invalid borrow date",
+                                    description: "Borrow date cannot fall on a weekend.",
+                                  })
+                                  return
+                                }
+                                setBorrowDate(date.toISOString())
+                              } else {
+                                setBorrowDate("")
+                              }
+                            }}
+                            className="text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">Select a date (weekdays only, today or future).</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label>Return Date</Label>
@@ -1872,7 +1966,7 @@ const selectedBorrowDevice = useMemo(
                   </DialogContent>
                 </Dialog>
                 <Button 
-                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90 h-10 px-4"
                   onClick={() => {
                     setCollectScanMode("collect")
                     setCollectScanModalOpen(true)
@@ -1881,14 +1975,155 @@ const selectedBorrowDevice = useMemo(
                   <QrCode className="mr-2 h-4 w-4" />
                   Collect & Scan Device
                 </Button>
-                {isSupervisor && (
-                  <Link href="/ams-devices/management-history">
-                    <Button variant="outline" className="border-[#92278F]/40 text-[#92278F] hover:bg-[#92278F]/10">
-                      Device Management History
+              </>
+            )}
+            
+          {/* Book a Device Dialog - For supervisor (triggered via dropdown onClick) */}
+          {isSupervisor && (
+            <Dialog open={borrowOpen} onOpenChange={setBorrowOpen}>
+              <DialogContent className="sm:max-w-lg space-y-4">
+              <DialogHeader className="rounded-lg bg-white/80 p-4 shadow-sm space-y-1">
+                <DialogTitle>Book a Device</DialogTitle>
+                <DialogDescription>Request to book a device</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 rounded-lg bg-white/90 p-4 shadow-sm">
+                <div className="space-y-2">
+                  <Label>Device Type</Label>
+                  <Select
+                    value={borrowType}
+                    onValueChange={(value) => {
+                      setBorrowType(value)
+                      setBorrowId("")
+                    }}
+                    disabled={borrowDeviceTypeOptions.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          borrowDeviceTypeOptions.length === 0 ? "No available types" : "Select device type"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {borrowDeviceTypeOptions.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {type}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Device</Label>
+                  <Select
+                    value={borrowId}
+                    onValueChange={(value) => {
+                      setBorrowId(value)
+                      const selected = availableInventoryDevices.find((device) => device.id === value)
+                      setBorrowType(selected ? toTitleCase(selected.device_type ?? undefined) : borrowType)
+                    }}
+                    disabled={inventoryLoading || filteredBorrowDevices.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          inventoryLoading
+                            ? "Loading devices..."
+                            : filteredBorrowDevices.length === 0
+                              ? borrowType
+                                ? "No devices for this type"
+                                : "Select a device type first"
+                              : "Select device"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredBorrowDevices.map((device) => {
+                        const label = device.model || device.brand || toTitleCase(device.device_type ?? undefined) || "Device"
+                        const tag = device.asset_tag || device.serial_number || device.id
+                        return (
+                          <SelectItem key={device.id} value={device.id}>
+                            {label} ({tag})
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="rounded-lg border border-dashed border-muted/70 px-3 py-2 text-xs text-muted-foreground">
+                  <div className="flex items-center justify-between">
+                    <span>Identifier</span>
+                    <span className="font-medium text-[#25294B]">
+                      {selectedBorrowDevice?.asset_tag ||
+                        selectedBorrowDevice?.serial_number ||
+                        (borrowId ? "Fetching details..." : "—")}
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Borrow Date</Label>
+                    <Input
+                      type="date"
+                      min={new Date().toISOString().split('T')[0]}
+                      value={borrowDate ? new Date(borrowDate).toISOString().split('T')[0] : ""}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          const date = new Date(e.target.value + 'T00:00:00')
+                          setBorrowDate(date.toISOString())
+                        } else {
+                          setBorrowDate("")
+                        }
+                      }}
+                      className="text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">Select a date (today or future).</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Return Date</Label>
+                    <Input
+                      type="date"
+                      min={borrowDateIso}
+                      max={borrowReturnLimitIso}
+                      value={borrowReturnDate}
+                      onChange={(e) => handleBorrowReturnDateChange(e.target.value)}
+                      aria-invalid={Boolean(borrowReturnError) || undefined}
+                      className={`text-sm ${borrowReturnError ? "border-destructive focus-visible:ring-destructive/40" : ""}`}
+                    />
+                    {borrowReturnError ? (
+                      <p className="text-xs text-destructive">{borrowReturnError}</p>
+                    ) : (
+                      borrowReturnLimitIso && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Return within {MAX_BORROW_DURATION_DAYS} days ({borrowReturnLimitIso} latest).
+                        </p>
+                      )
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Purpose</Label>
+                  <Textarea rows={3} placeholder="Provide a brief purpose for borrowing" value={borrowPurpose} onChange={(e) => setBorrowPurpose(e.target.value)} />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <DialogClose asChild>
+                    <Button variant="outline" className="w-40">
+                      Cancel
                     </Button>
-                  </Link>
-                )}
+                  </DialogClose>
+                  <Button
+                    className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white w-40 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={submitBorrow}
+                    disabled={!borrowDialogReady || borrowSubmitting}
+                  >
+                    {borrowSubmitting ? "Submitting…" : "Submit Request"}
+                  </Button>
+                </div>
               </div>
+              </DialogContent>
+            </Dialog>
+          )}
+          </div>
             {/* Borrow Confirmation Slip */}
             <Dialog
               open={borrowConfirmOpen}
@@ -1907,53 +2142,64 @@ const selectedBorrowDevice = useMemo(
                 }
               }}
             >
-              <DialogContent className="sm:max-w-lg space-y-4">
-                <DialogHeader className="rounded-lg bg-white/80 p-4 shadow-sm space-y-1">
+              <DialogContent className="sm:max-w-lg space-y-4 rounded-xl">
+                <DialogHeader className="space-y-1 rounded-lg bg-white/80 p-4 shadow-sm border-b border-[#E4E4E7]">
                   <DialogTitle>Borrow Summary</DialogTitle>
                   <DialogDescription>Quick confirmation of your borrow request.</DialogDescription>
                 </DialogHeader>
-                <div className="space-y-3 text-sm text-[#1F2937] rounded-lg bg-white/90 p-4 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Device</span>
-                    <span className="font-medium">{borrowReceipt?.deviceName ?? "—"}</span>
+                <div className="space-y-3 text-sm px-4">
+                  <div className="flex justify-between">
+                    <span className="text-[#58595B]">Device:</span>
+                    <span className="font-medium text-[#25294B]">{borrowReceipt?.deviceName ?? "—"}</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Type</span>
-                    <span className="font-medium">{borrowReceipt?.deviceType ?? "—"}</span>
+                  <div className="flex justify-between">
+                    <span className="text-[#58595B]">Type:</span>
+                    <span className="font-medium text-[#25294B]">{borrowReceipt?.deviceType ?? "—"}</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Asset Tag</span>
-                    <span className="font-medium">{borrowReceipt?.deviceId ?? "—"}</span>
+                  <div className="flex justify-between">
+                    <span className="text-[#58595B]">Asset Tag:</span>
+                    <span className="font-medium text-[#25294B]">{borrowReceipt?.deviceId ?? "—"}</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Borrowed On</span>
-                    <span className="font-medium">
-                      {borrowReceipt ? new Date(borrowReceipt.borrowDate).toLocaleString() : "—"}
+                  <div className="flex justify-between">
+                    <span className="text-[#58595B]">Borrowed On:</span>
+                    <span className="font-medium text-[#25294B]">
+                      {borrowReceipt ? new Date(borrowReceipt.borrowDate).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit'
+                      }) : "—"}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Return Date</span>
-                    <span className="font-medium">
+                  <div className="flex justify-between">
+                    <span className="text-[#58595B]">Return Date:</span>
+                    <span className="font-medium text-[#25294B]">
                       {borrowReceipt?.expectedReturnDate
-                        ? new Date(borrowReceipt.expectedReturnDate).toLocaleDateString()
+                        ? new Date(borrowReceipt.expectedReturnDate).toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit'
+                          })
                         : "—"}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Status</span>
-                    <span className="font-semibold text-[#111827]">{borrowReceipt?.status ?? "—"}</span>
+                  <div className="mt-3 pt-3 border-t border-[#808285]/20 flex items-center justify-between">
+                    <span className="text-[#58595B] text-xs">Status</span>
+                    <Badge 
+                      variant="secondary" 
+                      className="text-xs"
+                      style={(() => {
+                        const status = borrowReceipt?.status || "Pending"
+                        const color = getDeviceStatusBadgeColor(status) || "#F59E0B"
+                        return {
+                          backgroundColor: color,
+                          color: "white",
+                          borderColor: color,
+                        }
+                      })()}
+                    >
+                      {borrowReceipt?.status ?? "Pending"}
+                    </Badge>
                   </div>
-                </div>
-                <div className="flex justify-end">
-                  <Button
-                    className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
-                    onClick={() => {
-                      setBorrowConfirmOpen(false)
-                      setBorrowReceipt(null)
-                    }}
-                  >
-                    Close
-                  </Button>
                 </div>
               </DialogContent>
             </Dialog>
@@ -2307,8 +2553,6 @@ const selectedBorrowDevice = useMemo(
                 </DialogFooter>
               </DialogContent>
               </Dialog>
-            </div>
-          </div>
           
           {/* Filters */}
           <Card>
@@ -2437,7 +2681,7 @@ const selectedBorrowDevice = useMemo(
                                       event.preventDefault()
                                       handleReturnFromHistory(entry)
                                     }}
-                                    disabled={entry.status !== "Borrowed"}
+                                    disabled={entry.status !== "Borrowed" && entry.status !== "Awaiting Return"}
                                     className="text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
                                   >
                                     <RotateCcw className="mr-2 h-4 w-4" />
@@ -2487,74 +2731,73 @@ const selectedBorrowDevice = useMemo(
               )}
             </CardContent>
           </Card>
-          </div>
 
-        <Dialog
-          open={editDialogOpen}
-          onOpenChange={(open) => {
-            setEditDialogOpen(open)
-            if (!open) {
-              setEditRecord(null)
-          setEditReturnDate("")
-            }
-          }}
-        >
-          <DialogContent className="sm:max-w-md space-y-4">
-            <DialogHeader className="mb-2">
-          <DialogTitle>Edit Return Date</DialogTitle>
-          <DialogDescription>Adjust the expected return date for this device.</DialogDescription>
-            </DialogHeader>
-            {editRecord ? (
-              <div className="space-y-3">
-                <div>
-                  <Label>Device</Label>
-                  <Input
-                    value={`${editRecord.deviceName} (${editRecord.deviceId})`}
-                    readOnly
-                    className="bg-muted/40 text-sm"
-                  />
-                </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Dialog
+            open={editDialogOpen}
+            onOpenChange={(open) => {
+              setEditDialogOpen(open)
+              if (!open) {
+                setEditRecord(null)
+                setEditReturnDate("")
+              }
+            }}
+          >
+            <DialogContent className="sm:max-w-md space-y-4">
+              <DialogHeader className="mb-2">
+                <DialogTitle>Edit Return Date</DialogTitle>
+                <DialogDescription>Adjust the expected return date for this device.</DialogDescription>
+              </DialogHeader>
+              {editRecord ? (
+                <div className="space-y-3">
+                  <div>
+                    <Label>Device</Label>
+                    <Input
+                      value={`${editRecord.deviceName} (${editRecord.deviceId})`}
+                      readOnly
+                      className="bg-muted/40 text-sm"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <Label>Borrowed On</Label>
                 <Input value={formatDateOnly(editRecord.borrowDate)} readOnly className="bg-muted/40 text-sm" />
-              </div>
-              <div>
-                <Label>Current Return Date</Label>
-                <Input
-                  value={formatDateOnly(editRecord.expectedReturnDate || editRecord.returnDate)}
-                  readOnly
-                  className="bg-muted/40 text-sm"
-                />
-              </div>
+                  </div>
+                  <div>
+                    <Label>Current Return Date</Label>
+                    <Input
+                      value={formatDateOnly(editRecord.expectedReturnDate || editRecord.returnDate)}
+                      readOnly
+                      className="bg-muted/40 text-sm"
+                    />
+                  </div>
+                  </div>
+                  <div>
+                    <Label>New Return Date</Label>
+                    <Input
+                      type="date"
+                      value={editReturnDate}
+                      min={toDateInputValue(editRecord.borrowDate)}
+                      onChange={(e) => setEditReturnDate(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div>
-              <Label>New Return Date</Label>
-              <Input
-                type="date"
-                value={editReturnDate}
-                min={toDateInputValue(editRecord.borrowDate)}
-                onChange={(e) => setEditReturnDate(e.target.value)}
-              />
-                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Select a record to edit.</p>
+              )}
+              <div className="mt-4 flex justify-end gap-2">
+                <DialogClose asChild>
+                  <Button variant="outline">Cancel</Button>
+                </DialogClose>
+                <Button
+                  className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90 disabled:opacity-60"
+                  onClick={handleSaveEdit}
+                  disabled={!editRecord}
+                >
+                  Save Return Date
+                </Button>
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">Select a record to edit.</p>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <DialogClose asChild>
-                <Button variant="outline">Cancel</Button>
-              </DialogClose>
-              <Button
-                className="bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90 disabled:opacity-60"
-                onClick={handleSaveEdit}
-                disabled={!editRecord}
-              >
-            Save Return Date
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
 
         {/* Add Device Modal */}
         <Dialog open={addDeviceOpen} onOpenChange={setAddDeviceOpen}>
@@ -3340,6 +3583,7 @@ const selectedBorrowDevice = useMemo(
             }
           }}
         />
+        </div>
       </div>
     </AMSDashboardLayout>
   )

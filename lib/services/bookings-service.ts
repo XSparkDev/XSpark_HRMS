@@ -370,7 +370,10 @@ export class BookingsService extends BaseService {
     const conflicts = await this.fetchConflictingBookings(params)
 
     if (conflicts.length > 0) {
-      throw new Error('The room is already booked for that time window.')
+      // Include conflict booking info in error for better error messages
+      const error: Error & { conflictBooking?: BookingRecord } = new Error('The room is already booked for that time window.')
+      error.conflictBooking = conflicts[0]
+      throw error
     }
   }
 
@@ -425,6 +428,26 @@ export class BookingsService extends BaseService {
     return unavailable
   }
 
+  /**
+   * Check for conflicting bookings for a specific room without throwing
+   * Returns array of conflicting bookings
+   */
+  async checkForRoomConflicts(params: {
+    roomId: string
+    bookingDate: string
+    startTime: string
+    endTime: string
+    excludeBookingId?: string
+  }): Promise<BookingRecord[]> {
+    return this.fetchConflictingBookings({
+      roomId: params.roomId,
+      bookingDate: params.bookingDate,
+      startTime: params.startTime,
+      endTime: params.endTime,
+      excludeBookingId: params.excludeBookingId,
+    })
+  }
+
   private async fetchConflictingBookings(params: AvailabilityParams) {
     const startIso = this.combineDateAndTime(params.bookingDate, params.startTime)
     const endIso = this.combineDateAndTime(params.bookingDate, params.endTime)
@@ -435,7 +458,7 @@ export class BookingsService extends BaseService {
     // the existing booking starts before the new one ends
     let query = this.admin
       .from(this.table)
-      .select('booking_id, room_id, start_time, end_time')
+      .select('booking_id, room_id, start_time, end_time, booked_by')
       .lt('start_time', endIso)  // Existing booking starts before new booking ends
       .gt('end_time', startIso)  // Existing booking ends after new booking starts
 

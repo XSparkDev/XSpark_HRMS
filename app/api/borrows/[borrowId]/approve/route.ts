@@ -9,7 +9,7 @@ const approveSchema = z.object({
 
 export async function PATCH(
   request: NextRequest,
-  context: { params: { borrowId: string } | Promise<{ borrowId: string }> }
+  context: { params: Promise<{ borrowId: string }> }
 ) {
   try {
     const params = await context.params

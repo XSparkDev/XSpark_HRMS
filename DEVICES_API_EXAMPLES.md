@@ -109,3 +109,4 @@ curl -X GET "http://localhost:3000/api/devices?assigned_to=550e8400-e29b-41d4-a7
 ```
 
 
+

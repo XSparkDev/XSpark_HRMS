@@ -10,8 +10,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   MessageSquare,
   X,
+  XCircle,
   Minimize2,
   Maximize2,
+  Download,
   Send,
   Paperclip,
   HelpCircle,
@@ -23,6 +25,15 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { searchKnowledgeBase, formatKnowledgeResponse, getCategoryFromQuery } from "@/lib/sa-labour-law-knowledge"
+import { supabase } from "@/lib/supabase"
+import { useToast } from "@/hooks/use-toast"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog"
 
 // Message schema for future AI integration
 export interface ChatMessage {
@@ -59,9 +70,11 @@ interface AIChatWidgetProps {
   hooks?: ChatWidgetHooks
   initialMessages?: ChatMessage[]
   className?: string
+  // Employee identifier used to scope chat sessions per employee
+  employeeId: string
 }
 
-export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatWidgetProps) {
+export function AIChatWidget({ hooks, initialMessages = [], className, employeeId }: AIChatWidgetProps) {
   const [state, setState] = useState<ChatWidgetState>({
     isOpen: false,
     isMaximized: false,
@@ -72,9 +85,146 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
 
   const [inputValue, setInputValue] = useState("")
   const [isMobile, setIsMobile] = useState(false)
-  const [activeTab, setActiveTab] = useState<"hr" | "compliance">("hr")
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  const [isLoadingSession, setIsLoadingSession] = useState(false)
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
+  const [historySessions, setHistorySessions] = useState<
+    { id: string; title: string; created_at: string; updated_at: string; message_count?: number }[]
+  >([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const { toast } = useToast()
+
+  // Helper: ensure a Supabase chat session exists for this employee
+  const ensureSession = useCallback(
+    async (titleFromFirstMessage?: string): Promise<string | null> => {
+      if (!employeeId) return null
+
+      if (currentSessionId) {
+        return currentSessionId
+      }
+
+      // Create a new session using the first user message as title if provided
+      const title =
+        titleFromFirstMessage && titleFromFirstMessage.trim().length > 0
+          ? titleFromFirstMessage.trim().slice(0, 120)
+          : `Chat started ${new Date().toLocaleString()}`
+
+      const { data, error } = await supabase
+        .from("chat_sessions")
+        .insert({
+          employee_id: employeeId,
+          title,
+        })
+        .select("id")
+        .single()
+
+      if (error || !data || !data.id) {
+        console.error("Failed to create chat session:", error)
+        return null
+      }
+
+      setCurrentSessionId(data.id as string)
+      return data.id as string
+    },
+    [employeeId, currentSessionId]
+  )
+
+  // Helper: persist a single message to Supabase
+  const persistMessage = useCallback(
+    async (msg: ChatMessage, firstUserMessageTextForTitle?: string) => {
+      if (!employeeId) return
+
+      const sessionId = await ensureSession(firstUserMessageTextForTitle)
+      if (!sessionId) return
+
+      const { error } = await supabase.from("chat_messages").insert({
+        session_id: sessionId,
+        sender: msg.sender,
+        text: msg.text,
+        created_at: msg.created_at,
+      })
+
+      if (error) {
+        console.error("Failed to persist chat message:", error)
+      }
+    },
+    [employeeId, ensureSession]
+  )
+
+  // Load latest chat session + messages for this employee on mount / employee change
+  useEffect(() => {
+    if (!employeeId) return
+
+    let isCancelled = false
+
+    const loadLatestSession = async () => {
+      setIsLoadingSession(true)
+      try {
+        const { data: sessions, error: sessionError } = await supabase
+          .from("chat_sessions")
+          .select("id, title, created_at, updated_at")
+          .eq("employee_id", employeeId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+
+        if (sessionError) {
+          console.error("Failed to load chat sessions:", sessionError)
+          return
+        }
+
+        const latestSession = sessions && sessions.length > 0 ? sessions[0] : null
+
+        if (!latestSession) {
+          // No previous session – keep welcome message / empty state
+          setCurrentSessionId(null)
+          return
+        }
+
+        const { data: messages, error: messagesError } = await supabase
+          .from("chat_messages")
+          .select("id, sender, text, created_at")
+          .eq("session_id", latestSession.id)
+          .order("created_at", { ascending: true })
+
+        if (messagesError) {
+          console.error("Failed to load chat messages:", messagesError)
+          return
+        }
+
+        if (isCancelled) return
+
+        const loadedMessages: ChatMessage[] =
+          messages?.map((m: any) => ({
+            id: m.id?.toString() ?? `msg-${m.created_at}`,
+            sender: m.sender,
+            text: m.text,
+            created_at: m.created_at,
+          })) ?? []
+
+        setCurrentSessionId(latestSession.id as string)
+
+        if (loadedMessages.length > 0) {
+          setState(prev => ({
+            ...prev,
+            messages: loadedMessages,
+            unreadCount: 0,
+          }))
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingSession(false)
+        }
+      }
+    }
+
+    loadLatestSession()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [employeeId])
 
   // Check for mobile viewport
   useEffect(() => {
@@ -129,52 +279,85 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
     hooks?.onRestore?.()
   }, [hooks])
 
-  const handleSend = useCallback(() => {
-    if (!inputValue.trim()) return
+  const handleSend = useCallback(async () => {
+    if (!inputValue.trim() || state.isTyping) return
 
-    const newMessage: ChatMessage = {
+    const userMessage = inputValue.trim()
+    setInputValue("")
+
+    // Add user message
+    const userChatMessage: ChatMessage = {
       id: `msg-${Date.now()}`,
       sender: "user",
-      text: inputValue.trim(),
+      text: userMessage,
       created_at: new Date().toISOString(),
     }
 
     setState(prev => ({
       ...prev,
-      messages: [...prev.messages, newMessage],
+      messages: [...prev.messages, userChatMessage],
       isTyping: true,
     }))
 
-    // Simulate AI response (UI only) - South African HR Assistant
-    setTimeout(() => {
-      const userMessage = inputValue.trim()
-      const lowerMessage = userMessage.toLowerCase()
-      
-      // Search the knowledge base for relevant information
-      const knowledgeEntries = searchKnowledgeBase(userMessage)
-      
-      let response = ""
-      
-      if (knowledgeEntries.length > 0) {
-        // Use the most relevant knowledge entry
-        const knowledge = knowledgeEntries[0]
-        response = `👩‍💼 HR Assistant speaking...\n\n${formatKnowledgeResponse(knowledge)}\n\n${knowledgeEntries.length > 1 ? `\n*Additional relevant information may be available. Please ask if you need more details.*` : ''}`
-      } else if (lowerMessage.includes('greeting') || lowerMessage.includes('hello') || lowerMessage.includes('hi')) {
-        response = "👩‍💼 HR Assistant speaking...\n\nHello there! 👋 I'm here to assist you with South African labour law compliance and workplace rights. You can ask me about leave entitlements, disciplinary procedures, health & safety, employee rights, or any HR-related questions. How can I help you today?"
-      } else if (lowerMessage.includes('help') || lowerMessage.includes('what can')) {
-        response = "👩‍💼 HR Assistant speaking...\n\nI can help you with:\n\n• **Leave Entitlements** - Annual, sick, maternity, family responsibility leave (BCEA)\n• **Working Hours & Overtime** - Standard hours, overtime rates, rest periods (BCEA)\n• **Disciplinary Procedures** - Fair disciplinary process, rights, CCMA (LRA)\n• **Health & Safety** - Workplace safety, rights, employer duties (OHSA)\n• **Employee Rights** - Protection against discrimination, equal pay (EEA)\n• **Workplace Policies** - Conduct, attendance, confidentiality\n\nSimply ask your question or use the quick action buttons for specific topics. All information is based on South African labour legislation."
-      } else if (lowerMessage.includes('thank')) {
-        response = "👩‍💼 HR Assistant speaking...\n\nPleasure to assist! Remember, I'm here 24/7 to help you understand your rights under South African labour law. If you have any other questions, feel free to ask. Stay informed and protected! 🇿🇦"
-      } else {
-        // General help response
-        response = "👩‍💼 HR Assistant speaking...\n\nI understand you're looking for information. To provide you with the most accurate guidance, please ask about a specific topic such as:\n\n• Leave entitlements and procedures\n• Disciplinary processes and rights\n• Health & safety obligations\n• Working hours and overtime\n• Employee rights under South African law\n• Workplace policies and conduct\n\nOr use the quick action buttons below for instant access to specific legislation. All information is based on official South African labour laws."
+    // Persist user message (first user message can be used as session title)
+    void persistMessage(userChatMessage, userMessage)
+
+    try {
+      // Convert messages to API format (role/content)
+      const conversationHistory = state.messages
+        .filter(msg => msg.sender !== "system")
+        .map(msg => ({
+          role: msg.sender === "user" ? "user" : "assistant",
+          content: msg.text
+        }))
+
+      // Call your new API endpoint
+      const response = await fetch('/api/chatbot/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMessage,
+          conversationHistory: conversationHistory
+        })
+      })
+
+      if (!response.ok) {
+        let errorData
+        try {
+          errorData = await response.json()
+        } catch (jsonError) {
+          // If JSON parsing fails, use status text
+          throw new Error(`Failed to get response: ${response.status} ${response.statusText}`)
+        }
+        
+        // Extract error message - handle nested error objects
+        let errorMessage: string
+        
+        if (typeof errorData.error?.message === 'string') {
+          errorMessage = errorData.error.message
+        } else if (typeof errorData.error === 'string') {
+          errorMessage = errorData.error
+        } else if (typeof errorData.message === 'string') {
+          errorMessage = errorData.message
+        } else {
+          errorMessage = `Failed to get response: ${response.status} ${response.statusText}`
+        }
+        
+        // Ensure it's a clean string (no regex-like patterns)
+        errorMessage = String(errorMessage).trim().substring(0, 500)
+        
+        throw new Error(errorMessage)
       }
-      
+
+      const data = await response.json()
+
+      // Add AI response
       const aiResponse: ChatMessage = {
         id: `msg-${Date.now() + 1}`,
         sender: "assistant",
-        text: response,
+        text: data.reply,
         created_at: new Date().toISOString(),
+        metadata: data.sources ? { sources: data.sources } : undefined
       }
 
       setState(prev => ({
@@ -182,11 +365,31 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
         messages: [...prev.messages, aiResponse],
         isTyping: false,
       }))
-    }, 1500)
 
-    hooks?.onSend?.(inputValue.trim())
-    setInputValue("")
-  }, [inputValue, hooks])
+      // Persist AI response
+      void persistMessage(aiResponse)
+
+      hooks?.onSend?.(userMessage)
+    } catch (error) {
+      console.error('Chat error:', error)
+      
+      // Add error message
+      const errorResponse: ChatMessage = {
+        id: `msg-${Date.now() + 1}`,
+        sender: "assistant",
+        text: 'Sorry, I encountered an error. Please try again.',
+        created_at: new Date().toISOString(),
+      }
+
+      setState(prev => ({
+        ...prev,
+        messages: [...prev.messages, errorResponse],
+        isTyping: false,
+      }))
+
+      void persistMessage(errorResponse)
+    }
+  }, [inputValue, state.messages, state.isTyping, hooks, persistMessage])
 
   const handleQuickReply = useCallback((text: string, action?: string) => {
     // Don't set input value, instead directly add a response
@@ -202,6 +405,9 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
       messages: [...prev.messages, userMessage],
       isTyping: true,
     }))
+
+    // Persist quick reply as user message (may be first message, so can set title)
+    void persistMessage(userMessage, text)
 
     // Generate contextual response based on action using knowledge base
     setTimeout(() => {
@@ -239,7 +445,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
       } else {
         // Fallback responses
         switch(action) {
-          // HR Questions tab responses
+          // HR Questions responses
           case "view_payslip":
             response = "👩‍💼 HR Assistant speaking...\n\nTo view your payslip, you can:\n\n• **Navigate to Documents** section in the sidebar\n• **Select 'Payslips'** from the document filter\n• **Click on the payslip** you wish to view\n• **Download** for your records\n\nYour payslips are securely stored and accessible anytime. All payslips include breakdowns of: basic salary, allowances, deductions, tax (PAYE), UIF, and net pay.\n\nNeed help accessing a specific payslip?"
             break
@@ -252,7 +458,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
           case "update_personal_info":
             response = "👩‍💼 HR Assistant speaking...\n\nTo update your personal information:\n\n1. **Go to My Profile** in the sidebar\n2. **Click 'Edit'** on the section you wish to update\n3. **Update** your information (contact details, emergency contacts, banking info, etc.)\n4. **Save** your changes\n\nFor certain changes (like banking details), your changes may require verification. You'll be notified once approved.\n\nNeed help updating a specific section?"
             break
-          // Employee Compliance tab responses
+          // Compliance and legal information responses
           case "leave_rights":
             response = "👩‍💼 HR Assistant speaking...\n\nAccording to **Section 20 of the Basic Conditions of Employment Act (Act 75 of 1997)**, employees are entitled to at least 21 consecutive days of annual leave per year. Leave accrues at 1.25 days per month. You also have rights to sick leave (30 days per 36-month cycle), family responsibility leave (3 days per year), and maternity leave (4 consecutive months).\n\nWould you like specific details on any particular leave type?"
             break
@@ -283,41 +489,131 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
         messages: [...prev.messages, aiResponse],
         isTyping: false,
       }))
+
+      void persistMessage(aiResponse)
       
       hooks?.onQuickReplySelected?.({ text, action })
     }, 1200)
     
-  }, [hooks])
+  }, [hooks, persistMessage])
+
+  // Clear current chat, mark session inactive, and prepare for a new one
+  const handleClearChat = useCallback(async () => {
+    if (!currentSessionId) return
+
+    try {
+      // Clear messages and show welcome again
+      setCurrentSessionId(null)
+      setState(prev => ({
+        ...prev,
+        messages: [],
+        unreadCount: 0,
+        isTyping: false,
+      }))
+      setInputValue("")
+
+      toast({
+        title: "Chat saved and closed",
+        description: "A new chat will start with your next message.",
+      })
+    } catch (error) {
+      console.error("Error closing chat:", error)
+      toast({
+        title: "Error",
+        description: "Error saving chat. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }, [currentSessionId, toast])
+
+  // Download current chat as a .txt file
+  const handleDownloadChat = useCallback(() => {
+    if (!state.messages.length) return
+
+    const firstUserMessage = state.messages.find(m => m.sender === "user")
+    const rawTitle = firstUserMessage?.text || "Chat"
+
+    const title = rawTitle.slice(0, 50).replace(/[^a-z0-9]/gi, "_") || "Chat"
+
+    // Use current date in YYYY-MM-DD format (example: 2026-01-28)
+    const datePart = new Date().toISOString().split("T")[0]
+    const filename = `${title}_${datePart}.txt`
+
+    let content = ""
+    content += `Chat: ${rawTitle}\n`
+    content += `Date: ${new Date().toLocaleString()}\n`
+    content += `${"=".repeat(18)}\n\n`
+
+    state.messages.forEach(msg => {
+      if (msg.sender === "system") return
+      const time = new Date(msg.created_at).toLocaleTimeString()
+      const role = msg.sender === "user" ? "User" : "Assistant"
+      content += `[${time}] ${role}: ${msg.text}\n\n`
+    })
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }, [state.messages])
+
+  // Load history of closed chats for this employee
+  const loadHistory = useCallback(async () => {
+    if (!employeeId) return
+
+    setIsLoadingHistory(true)
+    try {
+      const { data, error } = await supabase
+        .from("chat_sessions")
+        .select("id, title, created_at, updated_at")
+        .eq("employee_id", employeeId)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Failed to load chat history:", error)
+        toast({
+          title: "Error",
+          description: "Could not load chat history.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setHistorySessions(
+        (data || []).map((s: any) => ({
+          id: s.id,
+          title: s.title || "Untitled chat",
+          created_at: s.created_at,
+          updated_at: s.updated_at,
+        }))
+      )
+    } finally {
+      setIsLoadingHistory(false)
+    }
+  }, [employeeId, toast])
 
   const formatTime = (timestamp: string) => {
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
-  // Tab-specific quick replies
-  const hrQuickReplies = [
+  // Quick replies for HR questions
+  const quickReplies = [
     { text: "View Payslip", action: "view_payslip" },
     { text: "Apply for Leave", action: "apply_leave" },
     { text: "Check Leave Balance", action: "check_leave_balance" },
     { text: "Update Personal Info", action: "update_personal_info" },
   ]
 
-  const complianceQuickReplies = [
-    { text: "Understand My Leave Rights", action: "leave_rights" },
-    { text: "Workplace Conduct Policy", action: "workplace_conduct" },
-    { text: "Employee Act Guidance", action: "employee_act" },
-    { text: "Disciplinary Process Info", action: "disciplinary_process" },
-    { text: "Health & Safety Rules", action: "health_safety" },
-  ]
-
-  const currentQuickReplies = activeTab === "hr" ? hrQuickReplies : complianceQuickReplies
-
   // Welcome message for empty state
   const welcomeMessage: ChatMessage = {
     id: "welcome",
     sender: "system",
-    text: activeTab === "hr" 
-      ? "Hello there 👋 I'm your HR Assistant — how can I help you today?\n\nI can assist with viewing your payslips, managing leave requests, checking your leave balance, or updating your personal information."
-      : "Hi there! 👋 I'm your HR Compliance Assistant.\n\nI'm here to help you understand your rights under South African labour law including the BCEA, LRA, OHSA, and other relevant legislation.\n\nHow can I assist you today?",
+    text: "Hello there 👋 I'm your HR Assistant — how can I help you today?\n\nI can assist with viewing your payslips, managing leave requests, checking your leave balance, updating your personal information, or answering questions about South African labour law and workplace policies.",
     created_at: new Date().toISOString(),
   }
 
@@ -374,7 +670,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-2">
                   <Bot className="h-5 w-5 text-primary" />
-                  <h3 className="font-semibold text-sm">HR Compliance Assistant</h3>
+                    <h3 className="font-semibold text-sm">HR Assistant</h3>
                 </div>
                 <Badge variant="secondary" className="text-xs bg-primary/10 text-primary">
                   SA HR
@@ -382,6 +678,29 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
               </div>
               
               <div className="flex items-center gap-1">
+                {/* View History button */}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        onClick={() => {
+                          setIsHistoryOpen(true)
+                          void loadHistory()
+                        }}
+                        aria-label="View chat history"
+                      >
+                        <Clock className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>View history</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -404,6 +723,27 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
                   </Tooltip>
                 </TooltipProvider>
 
+                {/* Download chat transcript */}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={handleDownloadChat}
+                        aria-label="Download chat transcript"
+                        disabled={!state.messages.length}
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Download chat as text</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
                 {!isMobile && (
                   <Button
                     variant="ghost"
@@ -420,6 +760,28 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
                   </Button>
                 )}
 
+                {/* Clear / close current chat session (red X) */}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-600 hover:text-red-700"
+                        onClick={handleClearChat}
+                        aria-label="Clear chat and start new session"
+                        disabled={isLoadingSession}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Clear chat & start new</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
+                {/* Existing close button just hides the widget */}
                 <Button
                   variant="ghost"
                   size="icon"
@@ -431,32 +793,6 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
                 </Button>
               </div>
             </CardHeader>
-
-            {/* Tabs */}
-            <div className="border-b px-4 flex items-center gap-1">
-              <button
-                onClick={() => setActiveTab("hr")}
-                className={cn(
-                  "px-4 py-2 text-sm font-medium transition-all duration-200 border-b-2",
-                  activeTab === "hr"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                )}
-              >
-                HR Questions
-              </button>
-              <button
-                onClick={() => setActiveTab("compliance")}
-                className={cn(
-                  "px-4 py-2 text-sm font-medium transition-all duration-200 border-b-2",
-                  activeTab === "compliance"
-                    ? "border-primary text-primary"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                )}
-              >
-                Employee Compliance
-              </button>
-            </div>
 
             {/* Messages Area */}
             <CardContent className="flex-1 p-0 overflow-hidden">
@@ -548,7 +884,7 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
                     <div className="space-y-2 mt-4">
                       <p className="text-xs text-muted-foreground">Select a topic to learn more:</p>
                       <div className="flex flex-wrap gap-2">
-                        {currentQuickReplies.map((reply, index) => (
+                        {quickReplies.map((reply, index) => (
                           <Button
                             key={index}
                             variant="outline"
@@ -619,6 +955,87 @@ export function AIChatWidget({ hooks, initialMessages = [], className }: AIChatW
           </Card>
         </div>
       )}
+
+      {/* History dialog */}
+      <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Past chats</DialogTitle>
+            <DialogDescription>
+              View your previous HR assistant conversations.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {isLoadingHistory && (
+              <p className="text-sm text-muted-foreground">Loading history...</p>
+            )}
+            {!isLoadingHistory && historySessions.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No past chats found yet. Close a chat to save it to history.
+              </p>
+            )}
+            {!isLoadingHistory &&
+              historySessions.map(session => (
+                <button
+                  key={session.id}
+                  type="button"
+                  className="w-full text-left rounded-lg border border-border px-3 py-2 hover:bg-muted transition flex items-center justify-between"
+                  onClick={async () => {
+                    try {
+                      const { data: messages, error } = await supabase
+                        .from("chat_messages")
+                        .select("id, sender, text, created_at")
+                        .eq("session_id", session.id)
+                        .order("created_at", { ascending: true })
+
+                      if (error) {
+                        console.error("Failed to load chat from history:", error)
+                        toast({
+                          title: "Error",
+                          description: "Could not load this conversation.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      const loadedMessages: ChatMessage[] =
+                        messages?.map((m: any) => ({
+                          id: m.id?.toString() ?? `msg-${m.created_at}`,
+                          sender: m.sender,
+                          text: m.text,
+                          created_at: m.created_at,
+                        })) ?? []
+
+                      setState(prev => ({
+                        ...prev,
+                        messages: loadedMessages,
+                        unreadCount: 0,
+                      }))
+                      setCurrentSessionId(session.id)
+                      setIsHistoryOpen(false)
+                    } catch (error) {
+                      console.error("Error loading chat from history:", error)
+                      toast({
+                        title: "Error",
+                        description: "Could not load this conversation.",
+                        variant: "destructive",
+                      })
+                    }
+                  }}
+                >
+                  <div>
+                    <p className="text-sm font-medium line-clamp-1">
+                      {session.title || "Untitled chat"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(session.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                </button>
+              ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

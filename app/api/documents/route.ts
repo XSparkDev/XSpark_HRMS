@@ -1,8 +1,11 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { documentSchema, documentUploadRequestSchema } from "@/lib/validation/documents"
 import { documentsService } from "@/lib/services/documents-service"
 import { getCurrentUser } from "@/lib/auth"
+import { getRequestUser } from "@/lib/auth/request-user"
 import { z } from "zod"
+import { logAuditEvent } from "@/lib/crypto"
+import { supabase } from "@/lib/supabase"
 
 // Rate limiter for uploads
 const uploadLimiter = new Map<string, { count: number; resetTime: number }>()
@@ -24,12 +27,51 @@ const checkRateLimit = (ip: string, maxRequests: number = 10, windowMs: number =
   return true
 }
 
+type ApiUserContext = {
+  id: string
+  employeeId: string
+  role: string
+  name: string
+}
+
+const resolveUserContext = (req: NextRequest): ApiUserContext | null => {
+  const headerUser = getRequestUser(req)
+  const currentUser = getCurrentUser(req)
+
+  const id = headerUser?.id ?? currentUser?.id
+  const employeeId = headerUser?.employeeId ?? currentUser?.employeeId ?? id ?? null
+  const role = headerUser?.role ?? currentUser?.role ?? "employee"
+  const name = currentUser?.name ?? currentUser?.email ?? "User"
+
+  if (!id || !employeeId) {
+    return null
+  }
+
+  return {
+    id,
+    employeeId,
+    role,
+    name,
+  }
+}
+
 // POST /api/documents - Upload new document
-export async function POST(req: Request) {
-  const user = getCurrentUser()
+export async function POST(req: NextRequest) {
+  const user = resolveUserContext(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }
+
+   // Set Postgres session variable for audit triggers
+   try {
+     await supabase.rpc("set_config", {
+       setting: "app.current_user_id",
+       value: user.id,
+       is_local: true,
+     })
+   } catch (error) {
+     console.error("Failed to set app.current_user_id for audit logging:", error)
+   }
 
   const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown"
   
@@ -39,8 +81,40 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const validatedData = documentUploadRequestSchema.parse(body)
 
+    // When the client sends a complete document payload, validate and persist it directly.
+    if (body?.document) {
+      const documentInput = body.document
+      const normalizedDocument = {
+        ...documentInput,
+        deleted_at: documentInput.deleted_at ? new Date(documentInput.deleted_at) : null,
+        created_at: documentInput.created_at ? new Date(documentInput.created_at) : new Date(),
+        updated_at: documentInput.updated_at ? new Date(documentInput.updated_at) : new Date(),
+      }
+
+      const validatedDocument = documentSchema.parse(normalizedDocument)
+      const document = await documentsService.uploadDocument(validatedDocument)
+
+      // Audit: document created via full payload
+      logAuditEvent(
+        "document_access",
+        {
+          action: "upload",
+          documentId: document.id,
+          employeeId: document.employee_id,
+          uploadedBy: user.id,
+          uploadedByName: user.name,
+          ip,
+          userAgent: req.headers.get("user-agent") || undefined,
+        },
+        user.id,
+        "high",
+      )
+
+      return NextResponse.json(document, { status: 201 })
+    }
+
+    const validatedData = documentUploadRequestSchema.parse(body)
     const { fileName, fileType, fileSize, documentType, isSensitive } = validatedData
 
     // Generate signed upload URL
@@ -52,7 +126,7 @@ export async function POST(req: Request) {
       type: documentType,
       description: "",
       tags: "",
-      employee_id: user.id,
+      employee_id: user.employeeId,
       uploaded_by: user.id,
       uploaded_by_name: user.name,
       employee_name: user.name, // In real app, get from employee data
@@ -70,11 +144,27 @@ export async function POST(req: Request) {
 
     const document = await documentsService.uploadDocument(documentData)
 
-    return NextResponse.json({ 
+    // Audit: document created via signed upload flow
+    logAuditEvent(
+      "document_access",
+      {
+        action: "upload",
+        documentId: document.id,
+        employeeId: document.employee_id,
+        uploadedBy: user.id,
+        uploadedByName: user.name,
+        ip,
+        userAgent: req.headers.get("user-agent") || undefined,
+      },
+      user.id,
+      "high",
+    )
+
+    return NextResponse.json({
       message: "Upload URL generated successfully",
       uploadUrl: url,
       documentKey: key,
-      documentId: document.id
+      documentId: document.id,
     }, { status: 201 })
 
   } catch (error) {
@@ -93,8 +183,8 @@ export async function POST(req: Request) {
 }
 
 // GET /api/documents - Get all documents
-export async function GET(req: Request) {
-  const user = getCurrentUser()
+export async function GET(req: NextRequest) {
+  const user = resolveUserContext(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }
@@ -130,13 +220,14 @@ export async function GET(req: Request) {
 }
 
 // PUT /api/documents/[id] - Update document
-export async function PUT(req: Request) {
-  const user = getCurrentUser()
+export async function PUT(req: NextRequest) {
+  const user = resolveUserContext(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }
 
   try {
+    const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown"
     const { searchParams } = new URL(req.url)
     const documentId = searchParams.get("id")
     
@@ -169,6 +260,22 @@ export async function PUT(req: Request) {
       updated_at: new Date(),
     })
 
+    // Audit: document metadata / version updated
+    logAuditEvent(
+      "document_access",
+      {
+        action: "update",
+        documentId: updatedDoc.id,
+        employeeId: existingDoc.employee_id,
+        uploadedBy: updatedDoc.uploaded_by,
+        uploadedByName: updatedDoc.uploaded_by_name,
+        ip,
+        userAgent: req.headers.get("user-agent") || undefined,
+      },
+      user.id,
+      "high",
+    )
+
     return NextResponse.json(updatedDoc, { status: 200 })
 
   } catch (error) {
@@ -188,12 +295,15 @@ export async function PUT(req: Request) {
 
 // DELETE /api/documents/[id] - Delete document
 export async function DELETE(req: Request) {
-  const user = getCurrentUser()
+  const user = getCurrentUser(req)
   if (!user) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
   }
 
   try {
+    const ip = (req as any).headers?.get?.("x-forwarded-for") ||
+      (req as any).headers?.get?.("x-real-ip") ||
+      "unknown"
     const { searchParams } = new URL(req.url)
     const documentId = searchParams.get("id")
     const permanent = searchParams.get("permanent") === "true"
@@ -215,9 +325,41 @@ export async function DELETE(req: Request) {
       }
       
       await documentsService.permanentlyDeleteDocument(documentId, user.id)
+
+      // Audit: document permanently deleted
+      logAuditEvent(
+        "document_access",
+        {
+          action: "delete_permanent",
+          documentId,
+          employeeId: existingDoc.employee_id,
+          deletedBy: user.id,
+          deletedByName: user.name,
+          ip,
+          userAgent: (req as any).headers?.get?.("user-agent") || undefined,
+        },
+        user.id,
+        "critical",
+      )
     } else {
       // Soft deletion
       await documentsService.deleteDocument(documentId, user.id, user.role)
+
+      // Audit: document soft deleted
+      logAuditEvent(
+        "document_access",
+        {
+          action: "delete_soft",
+          documentId,
+          employeeId: existingDoc.employee_id,
+          deletedBy: user.id,
+          deletedByName: user.name,
+          ip,
+          userAgent: (req as any).headers?.get?.("user-agent") || undefined,
+        },
+        user.id,
+        "high",
+      )
     }
 
     return NextResponse.json({ message: "Document deleted successfully" }, { status: 200 })

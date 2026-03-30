@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get current user
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { message: "Unauthorized" },
@@ -52,6 +52,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify password (in production, verify against hashed password in database)
+    if (!user.id) {
+      return NextResponse.json(
+        { message: "User ID not found" },
+        { status: 401 }
+      )
+    }
+
     const isValidPassword = await verifyPassword(user.id, password)
     if (!isValidPassword) {
       logAuditEvent('reauth_password_failed', {
@@ -68,8 +75,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify 2FA if enabled (mock implementation)
-    if (user.twoFactorEnabled) {
-      const isValid2FA = await verifyTwoFactorCode(user.id, twoFactorCode)
+    if (user.twoFactorEnabled && user.id) {
+      const isValid2FA = await verifyTwoFactorCode(user.id, twoFactorCode || '')
       if (!isValid2FA) {
         logAuditEvent('reauth_2fa_failed', {
           userId: user.id,
@@ -86,6 +93,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Create re-authentication session
+    if (!user.id) {
+      return NextResponse.json(
+        { message: "User ID not found" },
+        { status: 401 }
+      )
+    }
+
     const sessionToken = generateToken(32)
     const expiresAt = Date.now() + (15 * 60 * 1000) // 15 minutes
 
@@ -141,7 +155,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get current user
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { message: "Unauthorized" },
@@ -234,7 +248,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Get current user
-    const user = getCurrentUser()
+    const user = getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { message: "Unauthorized" },
@@ -298,7 +312,7 @@ async function verifyPassword(userId: string, password: string): Promise<boolean
   console.log(`Verifying password for user ${userId}`)
   
   // Mock: accept any non-empty password
-  return password && password.length > 0
+  return Boolean(password && password.length > 0)
 }
 
 async function verifyTwoFactorCode(userId: string, code: string): Promise<boolean> {
@@ -307,7 +321,7 @@ async function verifyTwoFactorCode(userId: string, code: string): Promise<boolea
   console.log(`Verifying 2FA code for user ${userId}`)
   
   // Mock: accept any 6-digit code
-  return code && /^\d{6}$/.test(code)
+  return Boolean(code && /^\d{6}$/.test(code))
 }
 
 // Cleanup expired sessions (run periodically)

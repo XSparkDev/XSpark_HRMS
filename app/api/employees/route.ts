@@ -5,21 +5,39 @@
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server'
-import { employeeService } from '@/lib/services'
+import { employeeService, leaveManagementService, authService } from '@/lib/services'
+import { getRequestUser } from '@/lib/auth/request-user'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { supabase } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 
 // Validation schemas
+const NextOfKinSchema = z.object({
+  full_name: z.string().min(1).max(100),
+  relationship: z.string().min(1).max(100),
+  phone: z.string().min(1).max(20),
+  address: z.string().max(500).optional()
+})
+
+const NextOfKinWithIdSchema = NextOfKinSchema.extend({
+  id: z.string().uuid().optional()
+})
+
+const NextOfKinArraySchema = z.array(NextOfKinWithIdSchema)
+
 const CreateEmployeeSchema = z.object({
   auth_user_id: z.string().uuid().optional(),
   first_name: z.string().min(1).max(100),
   middle_name: z.string().max(100).optional(),
   last_name: z.string().min(1).max(100),
-  preferred_name: z.string().max(100).optional(),
+  preferred_name: z.string().max(50).optional(),
   id_number: z.string().length(13).optional(),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   sex: z.enum(['male', 'female']),
   gender: z.enum(['male', 'female', 'other', 'prefer_not_to_say']).optional(),
   pronouns: z.string().max(50).optional(),
+  employee_id: z.string().max(20).optional(), // Optional - will be auto-generated if not provided
   job_title_id: z.string().uuid().optional(),
   role_id: z.string().uuid().optional(),
   email: z.string().email(),
@@ -31,10 +49,14 @@ const CreateEmployeeSchema = z.object({
   passport_number: z.string().max(50).optional(),
   passport_document_url: z.string().url().optional(),
   work_permit_url: z.string().url().optional(),
+  // HR/admin-only: determine whether employee appears in active or past list
+  is_active: z.boolean().optional().default(true),
   employment_status: z.enum(['active', 'suspended', 'terminated', 'probation', 'absconded', 'archived']).default('probation'),
   date_hired: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   profile_picture_url: z.string().url().optional(),
-  documents: z.array(z.any()).optional()
+  documents: z.array(z.any()).optional(),
+  password: z.string().min(8).optional(), // Optional password for creating auth user
+  sendEmail: z.boolean().optional() // Optional flag to send confirmation email
 })
 
 const UpdateEmployeeSchema = CreateEmployeeSchema.partial().extend({
@@ -57,6 +79,61 @@ const EmployeeFiltersSchema = z.object({
 // ============================================================================
 export async function GET(request: NextRequest) {
   try {
+    // Try custom headers first (for notes API consistency)
+    let user = getRequestUser(request)
+    
+    // Fallback to Bearer token authentication (like /api/auth/me)
+    if (!user) {
+      const authHeader = request.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7)
+        const supabaseUrl = process.env.SUPABASE_URL!
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        })
+
+        const { data: { user: authUser }, error } = await userClient.auth.getUser(token)
+        if (!error && authUser) {
+          // Get employee record to get employee ID
+          const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('id, role_id, roles(role_name)')
+            .eq('auth_user_id', authUser.id)
+            .single()
+          
+          if (employee) {
+            const roleName = (employee.roles as any)?.role_name?.toLowerCase?.() || 'employee'
+            user = {
+              id: authUser.id,
+              employeeId: employee.id,
+              role: roleName
+            }
+          }
+        }
+      }
+    }
+    
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized'
+      }, { status: 401 })
+    }
+
+    // Only admins/HR can access employee list
+    const allowedRoles = ['admin', 'super_admin', 'junior_hr', 'hr_manager', 'hr_admin']
+    if (!allowedRoles.includes(user.role.toLowerCase())) {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Only admins and HR can access employee list'
+      }, { status: 403 })
+    }
+
     const { searchParams } = new URL(request.url)
     
     // Parse and validate query parameters
@@ -71,7 +148,7 @@ export async function GET(request: NextRequest) {
       offset: searchParams.get('offset') ? parseInt(searchParams.get('offset')!) : 0
     })
 
-    // Get employees from service
+    // Get employees from service (uses employees table with is_active filter)
     const employees = await employeeService.getAllActive(filters)
 
     return NextResponse.json({
@@ -84,7 +161,7 @@ export async function GET(request: NextRequest) {
       }
     })
   } catch (error) {
-    console.error('Error fetching employees:', error)
+    console.error('[Employees API] Full error:', error)
     
     if (error instanceof z.ZodError) {
       return NextResponse.json({
@@ -94,9 +171,21 @@ export async function GET(request: NextRequest) {
       }, { status: 400 })
     }
 
+    // Extract error details
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    const errorDetails = (error as any)?.details || (error as any)?.hint || (error as any)?.code || null
+    
+    console.error('[Employees API] Error details:', {
+      message: errorMessage,
+      details: errorDetails,
+      fullError: JSON.stringify(error, null, 2)
+    })
+
     return NextResponse.json({
       success: false,
-      error: 'Failed to fetch employees'
+      error: 'Failed to fetch employees',
+      details: errorMessage,
+      ...(errorDetails && { hint: errorDetails })
     }, { status: 500 })
   }
 }
@@ -106,17 +195,133 @@ export async function GET(request: NextRequest) {
 // ============================================================================
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
+    // Check authentication and authorization (same pattern as GET)
+    let user = getRequestUser(request)
     
-    // Validate request body
-    const employeeData = CreateEmployeeSchema.parse(body)
+    // Fallback to Bearer token authentication (like /api/auth/me)
+    if (!user) {
+      const authHeader = request.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7)
+        const supabaseUrl = process.env.SUPABASE_URL!
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        })
 
-    // Create employee via service
-    const employee = await employeeService.create(employeeData)
+        const { data: { user: authUser }, error } = await userClient.auth.getUser(token)
+        if (!error && authUser) {
+          // Get employee record to get employee ID
+          const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('id, role_id, roles(role_name)')
+            .eq('auth_user_id', authUser.id)
+            .single()
+          
+          if (employee) {
+            const roleName = (employee.roles as any)?.role_name?.toLowerCase?.() || 'employee'
+            user = {
+              id: authUser.id,
+              employeeId: employee.id,
+              role: roleName
+            }
+          }
+        }
+      }
+    }
+    
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized'
+      }, { status: 401 })
+    }
+
+    // Only admins/HR can create employees
+    const allowedRoles = ['admin', 'super_admin', 'junior_hr', 'hr_manager', 'hr_admin']
+    if (!allowedRoles.includes(user.role.toLowerCase())) {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Only admins and HR can create employees'
+      }, { status: 403 })
+    }
+
+    const body = await request.json()
+
+    const { next_of_kin: rawNextOfKin, password, sendEmail, ...employeePayload } = body ?? {}
+
+    // Only admin/super_admin can create inactive (past) employees.
+    // Other HR roles can still create employees, but they will always start as active.
+    if (!["admin", "super_admin"].includes(user.role.toLowerCase())) {
+      employeePayload.is_active = true
+    }
+
+    // Validate request body
+    const employeeData = CreateEmployeeSchema.parse(employeePayload)
+    const nextOfKinData = rawNextOfKin ? NextOfKinArraySchema.parse(rawNextOfKin) : []
+
+    // If password is provided, create employee with auth user
+    // Otherwise, create employee without auth user
+    let employee
+    if (password) {
+      try {
+        console.log('Creating employee with auth user...', { email: employeeData.email })
+        const result = await authService.createEmployeeWithAuth(
+          employeeData,
+          password,
+          { sendEmail: sendEmail || false }
+        )
+        employee = result.employee
+        console.log('Successfully created employee with auth user', { 
+          employeeId: employee.id, 
+          authUserId: result.authUser.id,
+          email: employeeData.email 
+        })
+      } catch (authError) {
+        console.error('Error creating employee with auth:', authError)
+        // Don't silently fall back - throw the error so the user knows auth creation failed
+        throw new Error(`Failed to create authentication: ${authError instanceof Error ? authError.message : 'Unknown error'}`)
+      }
+    } else {
+      // Create employee via service (no auth user)
+      console.log('Creating employee without auth user...', { email: employeeData.email })
+      employee = await employeeService.create(employeeData)
+    }
+
+    // Initialize core leave balances for the new employee based on hire date
+    try {
+      await leaveManagementService.initializeCoreLeaveBalancesForNewEmployee(
+        employee.id,
+        employee.date_hired,
+      )
+    } catch (leaveError) {
+      // Log but don't fail employee creation if leave init fails
+      console.error('Error initializing leave balances for new employee:', leaveError)
+    }
+
+    let nextOfKin: any[] = []
+    if (nextOfKinData.length) {
+      try {
+        nextOfKin = await employeeService.saveNextOfKins(employee.id, nextOfKinData)
+      } catch (nokError) {
+        console.error('Error saving next_of_kin:', nokError)
+        return NextResponse.json({
+          success: false,
+          error: 'Failed to save next_of_kin'
+        }, { status: 500 })
+      }
+    }
 
     return NextResponse.json({
       success: true,
-      data: employee,
+      data: {
+        employee,
+        next_of_kin: nextOfKin
+      },
       message: 'Employee created successfully'
     }, { status: 201 })
   } catch (error) {
@@ -142,10 +347,73 @@ export async function POST(request: NextRequest) {
 // ============================================================================
 export async function PUT(request: NextRequest) {
   try {
-    const body = await request.json()
+    // Check authentication and authorization (same pattern as GET)
+    let user = getRequestUser(request)
     
+    // Fallback to Bearer token authentication (like /api/auth/me)
+    if (!user) {
+      const authHeader = request.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7)
+        const supabaseUrl = process.env.SUPABASE_URL!
+        const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
+        const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        })
+
+        const { data: { user: authUser }, error } = await userClient.auth.getUser(token)
+        if (!error && authUser) {
+          // Get employee record to get employee ID
+          const { data: employee } = await supabaseAdmin
+            .from('employees')
+            .select('id, role_id, roles(role_name)')
+            .eq('auth_user_id', authUser.id)
+            .single()
+          
+          if (employee) {
+            const roleName = (employee.roles as any)?.role_name?.toLowerCase?.() || 'employee'
+            user = {
+              id: authUser.id,
+              employeeId: employee.id,
+              role: roleName
+            }
+          }
+        }
+      }
+    }
+    
+    if (!user) {
+      return NextResponse.json({
+        success: false,
+        error: 'Unauthorized'
+      }, { status: 401 })
+    }
+
+    const body = await request.json()
+
+    const { next_of_kin: rawNextOfKin, ...employeePayload } = body ?? {}
+
+    // Allow admins/HR to update any employee.
+    // Allow regular employees to update ONLY their own profile.
+    const allowedRoles = ['admin', 'super_admin', 'junior_hr', 'hr_manager', 'hr_admin']
+    const isPrivileged = allowedRoles.includes(user.role.toLowerCase())
+    const targetEmployeeId = employeePayload?.id as string | undefined
+    const isSelfUpdate = !!targetEmployeeId && user.employeeId === targetEmployeeId
+
+    if (!isPrivileged && !isSelfUpdate) {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: You may only update your own profile'
+      }, { status: 403 })
+    }
+
     // Validate request body
-    const updateData = UpdateEmployeeSchema.parse(body)
+    const updateData = UpdateEmployeeSchema.parse(employeePayload)
+    const nextOfKinData = rawNextOfKin ? NextOfKinArraySchema.parse(rawNextOfKin) : []
 
     // Update employee via service
     const employee = await employeeService.update(updateData.id, updateData)
@@ -157,9 +425,25 @@ export async function PUT(request: NextRequest) {
       }, { status: 404 })
     }
 
+    let nextOfKin: any[] = []
+    if (nextOfKinData.length) {
+      try {
+        nextOfKin = await employeeService.saveNextOfKins(employee.id, nextOfKinData)
+      } catch (nokError) {
+        console.error('Error saving next_of_kin:', nokError)
+        return NextResponse.json({
+          success: false,
+          error: 'Failed to save next_of_kin'
+        }, { status: 500 })
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      data: employee,
+      data: {
+        employee,
+        next_of_kin: nextOfKin
+      },
       message: 'Employee updated successfully'
     })
   } catch (error) {

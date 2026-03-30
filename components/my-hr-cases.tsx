@@ -31,29 +31,71 @@ export function MyHrCases() {
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [employeeUuid, setEmployeeUuid] = useState<string | null>(null)
 
   const user = getCurrentUser()
-  const employeeId = user?.id
   const lastFetchedEmployeeIdRef = useRef<string | null>(null)
   const lastFetchTimeRef = useRef<number>(0)
 
+  // Fetch employee UUID from /api/auth/me
   useEffect(() => {
-    // Only run when we have a valid employee id
-    if (!employeeId || employeeId === "anonymous") return
+    if (!user?.id) return
+
+    const fetchEmployeeUuid = async () => {
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        }
+        
+        // Get Bearer token from localStorage
+        try {
+          const storedSession = localStorage.getItem('xspark_session')
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch (error) {
+          console.warn('[MyHrCases] Failed to parse session for Bearer token:', error)
+        }
+
+        const res = await fetch("/api/auth/me", { headers })
+        const json = await res.json()
+        
+        if (res.ok && json.success && json.data?.employee?.id) {
+          // Use the actual UUID from employees table
+          setEmployeeUuid(json.data.employee.id)
+        } else {
+          if (res.status !== 401) {
+            console.warn("[MyHrCases] Failed to fetch employee UUID:", json.error)
+          }
+        }
+      } catch (error) {
+        console.warn("[MyHrCases] Error fetching employee UUID:", error)
+      }
+    }
+
+    fetchEmployeeUuid()
+  }, [user?.id])
+
+  // Fetch tickets when employee UUID is available
+  useEffect(() => {
+    if (!employeeUuid) return
 
     let cancelled = false
 
     const doFetch = async () => {
       // Prevent duplicate immediate requests (e.g., React Strict Mode)
       if (
-        lastFetchedEmployeeIdRef.current === employeeId &&
+        lastFetchedEmployeeIdRef.current === employeeUuid &&
         Date.now() - lastFetchTimeRef.current < 1000
       ) {
         return
       }
-      lastFetchedEmployeeIdRef.current = employeeId
+      lastFetchedEmployeeIdRef.current = employeeUuid
       lastFetchTimeRef.current = Date.now()
-      await fetchTickets(employeeId)
+      await fetchTickets(employeeUuid)
     }
 
     // Initial fetch
@@ -61,8 +103,8 @@ export function MyHrCases() {
 
     // Optional polling every 60s (max once per minute)
     const interval = setInterval(() => {
-      if (!cancelled) {
-        fetchTickets(employeeId)
+      if (!cancelled && employeeUuid) {
+        fetchTickets(employeeUuid)
       }
     }, 60000)
 
@@ -70,7 +112,7 @@ export function MyHrCases() {
       cancelled = true
       clearInterval(interval)
     }
-  }, [employeeId])
+  }, [employeeUuid])
 
   const fetchTickets = async (id: string) => {
     try {

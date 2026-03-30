@@ -29,6 +29,7 @@ import {
   Loader2,
   RefreshCw,
   AlertTriangle,
+  ArrowRight,
 } from "lucide-react"
 import Link from "next/link"
 import { supabase } from "@/lib/supabase"
@@ -3369,103 +3370,131 @@ const getReturnDateUpperBound = (start: Date | null) => {
         {/* Employee Dashboard Enhancements */}
         {!isSupervisor && (
           <>
-            <div className="grid gap-4">
-              <Card className="rounded-xl border border-[#E5E7EB] bg-[#FFFFFF] shadow-sm">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-[#1F2937] font-semibold">Meeting Check-In</CardTitle>
-                  <CardDescription className="text-[#6B7280]">
-                    {activeCheckInBooking ? "Upcoming meeting" : "No meetings scheduled for today."}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4 text-sm text-[#1F2937]">
-                  {roomBookingsLoading ? (
-                    <div className="flex items-center justify-center py-8">
-                      <div className="flex flex-col items-center gap-2">
-                        <Loader2 className="h-6 w-6 animate-spin text-[#6B7280]" />
-                        <p className="text-xs text-[#6B7280]">Loading meetings...</p>
-                      </div>
-                    </div>
-                  ) : !activeCheckInBooking || checkInCandidates.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-8 text-center space-y-2">
-                      <p className="text-sm font-semibold text-[#1F2937]">No upcoming meetings</p>
-                      <p className="text-xs text-[#6B7280]">You don't have any meetings scheduled for today.</p>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-4 py-4 space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 space-y-1.5">
-                            <p className="text-base font-semibold text-[#1F2937]">
-                              {activeCheckInBooking.booking.meetingAgenda || "Room booking"}
-                            </p>
-                            <p className="text-sm text-[#6B7280]">
-                              {activeCheckInBooking.booking.meetingCategory || "Internal"}
-                            </p>
-                            <p className="text-sm text-[#6B7280]">
-                              Room: {activeCheckInBooking.booking.room || activeCheckInBooking.booking.roomLabel || "Room TBD"} ·{" "}
-                              {activeCheckInBooking.startDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} -{" "}
-                              {activeCheckInBooking.endDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </p>
-                            <p className="text-sm text-[#6B7280]">
-                              {activeCheckInBooking.isInProgress
-                                ? `In progress · ends at ${activeCheckInBooking.endDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                                : (() => {
-                                    const minutes = Math.max(activeCheckInBooking.minutes ?? 0, 0)
-                                    const hours = Math.floor(minutes / 60)
-                                    const mins = minutes % 60
-                                    const parts = []
-                                    if (hours > 0) parts.push(`${hours}h`)
-                                    parts.push(`${mins}m`)
-                                    return `Starts in ${parts.join(" ")}`
-                                  })()}
+            {/* Upcoming Events */}
+            <Card className="hover:shadow-lg transition-shadow border border-[#808285]/20 bg-gradient-to-br from-white via-[#92278F]/6 to-[#BE1E2D]/10">
+          <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-[#25294B]">
+                  <CalendarIcon className="h-5 w-5 text-[#92278F]" />
+                  Upcoming events
+                </CardTitle>
+                <CardDescription className="text-[#58595B]">
+                  Bookings, returns, approvals, and maintenance
+                </CardDescription>
+          </CardHeader>
+          <CardContent>
+                {scheduleLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading your timeline…</p>
+                ) : scheduleItems.length > 0 ? (
+                  <div className="space-y-3">
+                    {scheduleItems.map((item) => {
+                      const Icon = scheduleIconMap[item.category]
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-3 rounded-lg border border-[#808285]/20 bg-white/80 p-3 transition-colors hover:bg-gradient-to-r hover:from-[#92278F]/5 hover:to-[#BE1E2D]/5"
+                        >
+                          <Icon className="h-5 w-5 text-[#92278F]" />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-[#25294B]">{item.title}</p>
+                            <p className="text-xs text-[#6B6E8A]">
+                              {item.details} · {formatRelativeTime(item.date)}
                             </p>
                           </div>
-                          <Badge
-                            variant="outline"
-                            className="text-xs font-medium border-[#E5E7EB] bg-[#F9FAFB] text-[#6B7280]"
-                          >
-                            Upcoming
+                          <Badge variant="outline" className="text-xs">
+                            {item.date.toLocaleDateString()}
                           </Badge>
                         </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No upcoming events yet.</p>
+                )}
+                {scheduleError && (
+                  <p className="mt-3 text-xs text-destructive">{scheduleError}</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Meeting Check-In */}
+            <div className="grid gap-4">
+              <Card className="border border-[#808285]/20 bg-gradient-to-br from-white via-[#dfeaff] to-[#f5ecff]">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-[#25294B]">
+                    <CalendarIcon className="h-5 w-5 text-[#92278F]" />
+                    Meeting Check-In
+                  </CardTitle>
+                  <CardDescription className="text-[#58595B]">
+                    {activeCheckInBooking
+                      ? `Starts in ${activeCheckInBooking.minutes ?? 0} min · ${
+                          activeCheckInBooking.booking.room || "Room TBD"
+                        }`
+                      : "No upcoming meetings within the next hour."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm text-[#25294B]">
+                  {activeCheckInBooking ? (
+                    <>
+                      <div className="flex items-center justify-between rounded-lg border border-[#E4E4E7] bg-white px-3 py-2">
+                        <div>
+                          <p className="font-semibold">
+                            {activeCheckInBooking.booking.meetingAgenda || "Room booking"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {activeCheckInBooking.startDate.toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}{" "}
+                            • {activeCheckInBooking.booking.meetingCategory || "Internal"}
+                          </p>
+                          <p className="text-xs font-semibold text-[#A0AEC0]">
+                            Status: {getBookingStatusLabel(activeCheckInBooking.booking)}
+                          </p>
+                        </div>
+                        <Badge variant="secondary" className="text-xs text-[#25294B]">
+                          {getBookingStatusLabel(activeCheckInBooking.booking)}
+                        </Badge>
                       </div>
-                      <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-[#E5E7EB]">
-                        <Button
-                          type="button"
-                          className="flex-1 min-w-[140px] h-10 rounded-md bg-gradient-to-r from-[#8B2A6C] to-[#B02A5C] text-white shadow-sm hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                          onClick={() => handleOpenCheckInConfirm(activeCheckInBooking)}
-                          disabled={checkInLoading || !activeCheckInBooking}
-                        >
-                          {checkInLoading ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Checking in...
-                            </>
-                          ) : (
-                            "Check In"
-                          )}
-                        </Button>
-                        <Button
-                          type="button"
-                          className="flex-1 min-w-[140px] h-10 rounded-md border border-[#E5E7EB] bg-[#F9FAFB] text-[#1F2937] shadow-sm hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
-                          onClick={() => handleQuickPostpone(activeCheckInBooking)}
-                          disabled={isPostponing || !activeCheckInBooking}
-                          variant="outline"
-                        >
-                          {isPostponing ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#6B7280]" />
-                              Postponing...
-                            </>
-                          ) : (
-                            "Postpone"
-                          )}
-                        </Button>
-                      </div>
+                      <Button
+                        className="w-full bg-gradient-to-r from-[#92278F] to-[#BE1E2D] text-white hover:opacity-90"
+                        onClick={() => handleOpenCheckInConfirm(activeCheckInBooking)}
+                        disabled={checkInLoading}
+                      >
+                        {checkInLoading ? "Checking in…" : "Check-In"}
+                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Checking in logs the current time and marks the meeting as attended.
+                      </p>
                     </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      You’ll be able to check in when you have a meeting within the next hour.
+                    </p>
                   )}
                 </CardContent>
               </Card>
             </div>
+
+            {/* Admin View */}
+            {(user.role === "hr_manager" || user.role === "super_admin") && (
+              <>
+                <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <Card>
+                    <CardHeader className="flex flex-row items-center justify-between pb-2">
+                      <CardTitle className="text-sm font-medium">Total Assets</CardTitle>
+                      <Building2 className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold text-navy">1,247</div>
+                      <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                        <ArrowRight className="h-3 w-3" />
+                        +12 this month
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </>
+            )}
 
           </>
         )}

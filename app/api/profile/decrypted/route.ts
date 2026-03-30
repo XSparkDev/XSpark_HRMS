@@ -116,6 +116,19 @@ export async function GET(request: NextRequest) {
               // First try: assume it's old data (stored as UTF-8 string of base64)
               const utf8String = buffer.toString('utf8')
               
+              // Handle legacy JSON Buffer format: {"type":"Buffer","data":[...]}
+              try {
+                const parsed = JSON.parse(utf8String)
+                if (parsed && parsed.type === 'Buffer' && Array.isArray(parsed.data)) {
+                  const legacyBuffer = Buffer.from(parsed.data)
+                  const base64FromLegacy = legacyBuffer.toString('base64')
+                  console.log(`Converted hex (${hexString.length} chars) - legacy Buffer JSON format (${parsed.data.length} bytes)`)
+                  return base64FromLegacy
+                }
+              } catch {
+                // Not JSON, continue with other heuristics
+              }
+              
               // Check if the UTF-8 string is valid base64
               const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/
               if (base64Regex.test(utf8String) && utf8String.length > 10) {

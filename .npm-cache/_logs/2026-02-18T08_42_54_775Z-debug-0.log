@@ -1,0 +1,290 @@
+0 verbose cli /usr/local/Cellar/node/23.9.0/bin/node /usr/local/bin/npm
+1 info using npm@10.9.2
+2 info using node@v23.9.0
+3 silly config load:file:/usr/local/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/xspark3/ASM & HRMS/XSpark_HRMS/.npmrc
+5 silly config load:file:/Users/xspark3/.npmrc
+6 silly config load:file:/usr/local/etc/npmrc
+7 verbose title npm instal html5-qrcode
+8 verbose argv "instal" "html5-qrcode"
+9 verbose logfile logs-max:10 dir:/Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2026-02-18T08_42_54_775Z-
+10 verbose logfile /Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2026-02-18T08_42_54_775Z-debug-0.log
+11 silly logfile start cleaning logs, removing 1 files
+12 silly packumentCache heap:2197815296 maxSize:549453824 maxEntrySize:274726912
+13 silly logfile done cleaning log files
+14 silly idealTree buildDeps
+15 silly fetch manifest html5-qrcode@*
+16 silly packumentCache full:https://registry.npmjs.org/html5-qrcode cache-miss
+17 verbose shrinkwrap failed to load node_modules/.package-lock.json out of date, updated: node_modules
+18 http fetch GET 200 https://registry.npmjs.org/html5-qrcode 827ms (cache revalidated)
+19 silly packumentCache full:https://registry.npmjs.org/html5-qrcode set size:240953 disposed:false
+20 silly placeDep ROOT html5-qrcode@2.3.8 OK for: my-v0-project@0.1.0 want: *
+21 silly reify mark retired [
+21 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-freebsd-x64'
+21 silly reify ]
+22 silly reify mark retired [
+22 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-arm-gnueabihf'
+22 silly reify ]
+23 silly reify mark retired [
+23 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-arm64-musl'
+23 silly reify ]
+24 silly reify mark retired [
+24 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-arm64-gnu'
+24 silly reify ]
+25 silly reify mark retired [
+25 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-x64-gnu'
+25 silly reify ]
+26 silly reify mark retired [
+26 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-x64-musl'
+26 silly reify ]
+27 silly reify mark retired [
+27 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-win32-arm64-msvc'
+27 silly reify ]
+28 silly reify mark retired [
+28 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-darwin-arm64'
+28 silly reify ]
+29 silly reify mark retired [
+29 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-win32-x64-msvc'
+29 silly reify ]
+30 silly reify mark retired [
+30 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-darwin-arm64'
+30 silly reify ]
+31 silly reify mark retired [
+31 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-arm'
+31 silly reify ]
+32 silly reify mark retired [
+32 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-ppc64'
+32 silly reify ]
+33 silly reify mark retired [
+33 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-arm64'
+33 silly reify ]
+34 silly reify mark retired [
+34 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-s390x'
+34 silly reify ]
+35 silly reify mark retired [
+35 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-x64'
+35 silly reify ]
+36 silly reify mark retired [
+36 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linuxmusl-arm64'
+36 silly reify ]
+37 silly reify mark retired [
+37 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linuxmusl-x64'
+37 silly reify ]
+38 silly reify mark retired [
+38 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-arm'
+38 silly reify ]
+39 silly reify mark retired [
+39 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-arm64'
+39 silly reify ]
+40 silly reify mark retired [
+40 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-ppc64'
+40 silly reify ]
+41 silly reify mark retired [
+41 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-s390x'
+41 silly reify ]
+42 silly reify mark retired [
+42 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-x64'
+42 silly reify ]
+43 silly reify mark retired [
+43 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linuxmusl-arm64'
+43 silly reify ]
+44 silly reify mark retired [
+44 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linuxmusl-x64'
+44 silly reify ]
+45 silly reify mark retired [
+45 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-wasm32'
+45 silly reify ]
+46 silly reify mark retired [
+46 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-win32-arm64'
+46 silly reify ]
+47 silly reify mark retired [
+47 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-win32-ia32'
+47 silly reify ]
+48 silly reify mark retired [
+48 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-win32-x64'
+48 silly reify ]
+49 silly reify mark retired [
+49 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-darwin-arm64'
+49 silly reify ]
+50 silly reify mark retired [
+50 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-darwin-arm64'
+50 silly reify ]
+51 silly reify mark retired [
+51 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-linux-arm64-gnu'
+51 silly reify ]
+52 silly reify mark retired [
+52 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-linux-arm64-musl'
+52 silly reify ]
+53 silly reify mark retired [
+53 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-linux-x64-gnu'
+53 silly reify ]
+54 silly reify mark retired [
+54 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-linux-x64-musl'
+54 silly reify ]
+55 silly reify mark retired [
+55 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-win32-arm64-msvc'
+55 silly reify ]
+56 silly reify mark retired [
+56 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-win32-x64-msvc'
+56 silly reify ]
+57 silly reify mark retired [
+57 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-android-arm64'
+57 silly reify ]
+58 silly reify mark retired [
+58 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-darwin-arm64'
+58 silly reify ]
+59 silly reify mark retired [
+59 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-freebsd-x64'
+59 silly reify ]
+60 silly reify mark retired [
+60 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-arm-gnueabihf'
+60 silly reify ]
+61 silly reify mark retired [
+61 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-arm64-gnu'
+61 silly reify ]
+62 silly reify mark retired [
+62 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-arm64-musl'
+62 silly reify ]
+63 silly reify mark retired [
+63 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-x64-gnu'
+63 silly reify ]
+64 silly reify mark retired [
+64 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-x64-musl'
+64 silly reify ]
+65 silly reify mark retired [
+65 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-wasm32-wasi'
+65 silly reify ]
+66 silly reify mark retired [
+66 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-win32-arm64-msvc'
+66 silly reify ]
+67 silly reify mark retired [
+67 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-win32-x64-msvc'
+67 silly reify ]
+68 silly reify mark retired [
+68 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/autoprefixer',
+68 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/autoprefixer'
+68 silly reify ]
+69 silly reify mark retired [ '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/html5-qrcode' ]
+70 silly reify mark retired [
+70 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/jest',
+70 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/jest'
+70 silly reify ]
+71 silly reify mark retired [
+71 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/jest-cli',
+71 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/jest'
+71 silly reify ]
+72 silly reify mark retired [
+72 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/next',
+72 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/next'
+72 silly reify ]
+73 silly reify mark retired [
+73 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/ts-node',
+73 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node',
+73 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node-cwd',
+73 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node-esm',
+73 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node-script',
+73 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node-transpile-only',
+73 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-script'
+73 silly reify ]
+74 silly reify mark retired [
+74 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/ts-jest',
+74 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-jest'
+74 silly reify ]
+75 silly reify mark retired [
+75 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/typescript',
+75 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/tsc',
+75 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/tsserver'
+75 silly reify ]
+76 silly reify moves {
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-freebsd-x64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-freebsd-x64-uZ8cpMF6',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-arm-gnueabihf': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-linux-arm-gnueabihf-EGAZhzW1',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-arm64-musl': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-linux-arm64-musl-whaAC2xG',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-arm64-gnu': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-linux-arm64-gnu-ar209VKH',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-x64-gnu': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-linux-x64-gnu-Cpni2xiX',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-linux-x64-musl': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-linux-x64-musl-bkIFhwI7',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-win32-arm64-msvc': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-win32-arm64-msvc-ug7xmnbk',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-darwin-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-darwin-arm64-IGQp5tQG',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/lightningcss-win32-x64-msvc': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.lightningcss-win32-x64-msvc-Xuumz10p',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-darwin-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-darwin-arm64-t9CVl2pi',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-arm': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-libvips-linux-arm-AZs6zJXM',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-ppc64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-libvips-linux-ppc64-RG1F1qnV',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-libvips-linux-arm64-3bcNsOJC',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-s390x': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-libvips-linux-s390x-XukNDZok',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linux-x64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-libvips-linux-x64-y2FjxVZL',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linuxmusl-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-libvips-linuxmusl-arm64-xO0gm1Cm',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-linuxmusl-x64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-libvips-linuxmusl-x64-03F8rZ8R',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-arm': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-linux-arm-r0WOKptw',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-linux-arm64-GrqfwYBU',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-ppc64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-linux-ppc64-WSPVBb92',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-s390x': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-linux-s390x-jCYLdePp',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linux-x64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-linux-x64-drKDGaSf',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linuxmusl-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-linuxmusl-arm64-wr3dwtq8',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-linuxmusl-x64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-linuxmusl-x64-q7n9m97B',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-wasm32': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-wasm32-kD9hPV1p',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-win32-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-win32-arm64-SlCG3Vpa',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-win32-ia32': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-win32-ia32-JS0ZTjbw',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-win32-x64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-win32-x64-NgX5VWso',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/sharp-libvips-darwin-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@img/.sharp-libvips-darwin-arm64-mQb2JihW',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-darwin-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/.swc-darwin-arm64-rD8j5pqT',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-linux-arm64-gnu': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/.swc-linux-arm64-gnu-XfZPVtXG',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-linux-arm64-musl': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/.swc-linux-arm64-musl-t40Mfl4z',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-linux-x64-gnu': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/.swc-linux-x64-gnu-FvWFIUx7',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-linux-x64-musl': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/.swc-linux-x64-musl-MXRLhRyO',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-win32-arm64-msvc': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/.swc-win32-arm64-msvc-M8B6tuUl',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/swc-win32-x64-msvc': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@next/.swc-win32-x64-msvc-zGR9JrNw',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-android-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-android-arm64-LiZlUclO',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-darwin-arm64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-darwin-arm64-b4wo9jm6',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-freebsd-x64': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-freebsd-x64-Rj4NJ0KJ',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-arm-gnueabihf': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-linux-arm-gnueabihf-7QK4MeeM',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-arm64-gnu': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-linux-arm64-gnu-1I5ShpEx',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-arm64-musl': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-linux-arm64-musl-robp4Xvd',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-x64-gnu': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-linux-x64-gnu-ZmsDmWap',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-linux-x64-musl': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-linux-x64-musl-DWbUKzQg',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-wasm32-wasi': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-wasm32-wasi-mAMjflZS',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-win32-arm64-msvc': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-win32-arm64-msvc-W0b6hF1v',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/oxide-win32-x64-msvc': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/@tailwindcss/.oxide-win32-x64-msvc-Uu4ySrKg',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/autoprefixer': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.autoprefixer-vJnCJ3mw',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/autoprefixer': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.autoprefixer-mpAw2PIo',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/html5-qrcode': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.html5-qrcode-vF0YSB7y',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/jest': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.jest-y7tmKPvN',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/jest': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.jest-ULhX6FFl',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/jest-cli': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.jest-cli-MDzoj4ao',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/next': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.next-M8WQuyWf',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/next': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.next-fyWFVjxJ',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/ts-node': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.ts-node-ujkX9tw8',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.ts-node-YC9oPTsG',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node-cwd': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.ts-node-cwd-zXMNtYoV',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node-esm': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.ts-node-esm-I0Kg4r0p',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node-script': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.ts-node-script-2vsBDQUM',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-node-transpile-only': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.ts-node-transpile-only-sYQ4GCd0',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-script': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.ts-script-PAJUttNB',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/ts-jest': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.ts-jest-xubCUV9t',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/ts-jest': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.ts-jest-7LJL0mVM',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/typescript': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.typescript-PPvLYRPa',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/tsc': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.tsc-RYcfK2y8',
+76 silly reify   '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/tsserver': '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.bin/.tsserver-A07nE0ue'
+76 silly reify }
+77 verbose stack Error: ENOTDIR: not a directory, rename '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/autoprefixer' -> '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.autoprefixer-vJnCJ3mw'
+77 verbose stack     at async Object.rename (node:internal/fs/promises:779:10)
+77 verbose stack     at async moveFile (/usr/local/lib/node_modules/npm/node_modules/@npmcli/fs/lib/move-file.js:30:5)
+77 verbose stack     at async Promise.allSettled (index 47)
+77 verbose stack     at async [reifyPackages] (/usr/local/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:325:11)
+77 verbose stack     at async Arborist.reify (/usr/local/lib/node_modules/npm/node_modules/@npmcli/arborist/lib/arborist/reify.js:142:5)
+77 verbose stack     at async Install.exec (/usr/local/lib/node_modules/npm/lib/commands/install.js:150:5)
+77 verbose stack     at async Npm.exec (/usr/local/lib/node_modules/npm/lib/npm.js:207:9)
+77 verbose stack     at async module.exports (/usr/local/lib/node_modules/npm/lib/cli/entry.js:74:5)
+78 error code ENOTDIR
+79 error syscall rename
+80 error path /Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/autoprefixer
+81 error dest /Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.autoprefixer-vJnCJ3mw
+82 error errno -20
+83 error ENOTDIR: not a directory, rename '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/autoprefixer' -> '/Users/xspark3/ASM & HRMS/XSpark_HRMS/node_modules/.autoprefixer-vJnCJ3mw'
+84 silly unfinished npm timer reify 1771404175423
+85 silly unfinished npm timer reify:retireShallow 1771404176584
+86 verbose cwd /Users/xspark3/ASM & HRMS/XSpark_HRMS
+87 verbose os Darwin 23.6.0
+88 verbose node v23.9.0
+89 verbose npm  v10.9.2
+90 verbose exit -20
+91 verbose code -20
+92 error A complete log of this run can be found in: /Users/xspark3/ASM & HRMS/XSpark_HRMS/.npm-cache/_logs/2026-02-18T08_42_54_775Z-debug-0.log

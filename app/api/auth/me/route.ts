@@ -33,22 +33,30 @@ export async function GET(request: NextRequest) {
       // If RLS allows user to read their own employee record, this works
       // Otherwise, fall back to admin client only after verifying ownership
       let employee = null
+      // PREVIOUS QUERY: .select('*, job_titles(title)')
+      // UPDATED QUERY: includes next_of_kin so profile consumers receive NOK rows.
       const { data: employeeData, error: empError } = await userClient
         .from('employees')
-        .select('*, job_titles(title)')
+        .select('*, job_titles(title), next_of_kin(*), role:roles(role_name)')
         .eq('auth_user_id', user.id)
         .single()
+
+      console.log('Employee data with next_of_kin (user client):', employeeData)
 
       employee = employeeData || null
 
       // If RLS blocks access, verify ownership and use admin client as fallback
       if (empError || !employee) {
         // Double-check: verify this token belongs to this user before using admin client
+        // PREVIOUS QUERY: .select('*, job_titles(title)')
+        // UPDATED QUERY: .select('*, job_titles(title), next_of_kin(*)')
         const { data: adminEmployee } = await supabaseAdmin
           .from('employees')
-          .select('*, job_titles(title)')
+          .select('*, job_titles(title), next_of_kin(*), role:roles(role_name)')
           .eq('auth_user_id', user.id)
           .single()
+
+        console.log('Employee data with next_of_kin (admin client):', adminEmployee)
         
         if (!adminEmployee) {
           return NextResponse.json({ success: false, error: 'Employee not found' }, { status: 404 })
@@ -62,11 +70,18 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      const roleName = employee?.role?.role_name?.toLowerCase?.() || 'employee'
+
       return NextResponse.json({
         success: true,
         data: {
           user,
-          employee: employee || null,
+          employee: employee
+            ? {
+                ...employee,
+                role_name: roleName,
+              }
+            : null,
           session: null
         }
       })
@@ -79,11 +94,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Not authenticated' }, { status: 401 })
     }
 
+    const roleName =
+      authResponse.employee?.role?.role_name?.toLowerCase?.() || 'employee'
+
     return NextResponse.json({
       success: true,
       data: {
         user: authResponse.user,
-        employee: authResponse.employee,
+        employee: authResponse.employee
+          ? {
+              ...authResponse.employee,
+              role_name: roleName,
+            }
+          : null,
         session: authResponse.session
       }
     })

@@ -55,8 +55,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch role name from roles table if role_id exists
-    let roleName = 'employee' // Default
-    if (authResponse.employee.role_id) {
+    let roleName = authResponse.employee.role?.role_name || 'employee'
+    if (!roleName && authResponse.employee.role_id) {
       const { data: roleData } = await supabaseAdmin
         .from('roles')
         .select('role_name')
@@ -68,23 +68,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const normalizedRoleName = (roleName || 'employee').toLowerCase()
+
     // Format user object with role for frontend
     const userWithRole = {
       ...authResponse.user,
-      role: roleName,
+      role: normalizedRoleName,
       name: `${authResponse.employee.first_name} ${authResponse.employee.last_name}`,
       employeeId: authResponse.employee.employee_id,
       roleId: authResponse.employee.role_id,
     }
 
-    const defaultInterfacePath = getDefaultRouteForRole(roleName)
+    const defaultInterfacePath = getDefaultRouteForRole(normalizedRoleName)
 
     return NextResponse.json({
       success: true,
       message: 'Login successful',
       data: {
         user: userWithRole,
-        employee: authResponse.employee,
+        employee: {
+          ...authResponse.employee,
+          role_name: normalizedRoleName,
+        },
         session: authResponse.session,
         defaultRoute: defaultInterfacePath,
       }
