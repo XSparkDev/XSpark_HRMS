@@ -206,7 +206,13 @@ export async function GET(req: NextRequest) {
     if (search) {
       documents = await documentsService.searchDocuments(search, filters)
     } else {
-      documents = await documentsService.getAllDocuments(user.id, user.role)
+      // Support filtering by employee_id for admin roles (needed for employee preview)
+      if (employee_id && ["super_admin", "admin", "hr_admin"].includes((user.role || "").toLowerCase())) {
+        documents = await documentsService.getDocumentsByEmployee(employee_id)
+      } else {
+        // IMPORTANT: documents.employee_id maps to auth user id in this codebase
+        documents = await documentsService.getAllDocuments(user.id, user.role)
+      }
     }
 
     return NextResponse.json(documents, { status: 200 })

@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useMemo, useState, useEffect } from "react"
+import { memo, useMemo, useRef, useState, useEffect } from "react"
 import dynamic from "next/dynamic"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { ContactHrModal } from "@/components/contact-hr-modal"
@@ -33,6 +33,8 @@ import {
   Upload,
   MessageSquare,
   XCircle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react"
 import { SuperAdminDashboard } from "@/components/dashboard/super-admin-dashboard"
 import { AdminDashboard } from "@/components/dashboard/admin-dashboard"
@@ -67,8 +69,12 @@ export default function DashboardPage() {
   const [availableBalances, setAvailableBalances] = useState<Record<string, number>>({})
   const [leaveBalances, setLeaveBalances] = useState<Record<string, { available: number; total: number }>>({})
   const [leaveRequests, setLeaveRequests] = useState<any[]>([])
+  const [currentApprovedLeave, setCurrentApprovedLeave] = useState<any | null>(null)
+  const [isEarlyReturnModalOpen, setIsEarlyReturnModalOpen] = useState(false)
+  const [isSubmittingEarlyReturn, setIsSubmittingEarlyReturn] = useState(false)
   const [showVerificationPopup, setShowVerificationPopup] = useState(false)
   const [isRequestingVerification, setIsRequestingVerification] = useState(false)
+  const leaveStripRef = useRef<HTMLDivElement | null>(null)
 
   // Leave modal local state
   const [leaveType, setLeaveType] = useState("annual")
@@ -99,6 +105,20 @@ export default function DashboardPage() {
   const isJuniorHR = user.role === "junior_hr"
   const isHRManager = user.role === "hr_manager" || user.role === "admin" || user.role === "hr_admin"
   const isSuperAdmin = user.role === "super_admin"
+
+  const otherLeaveTypes = useMemo(() => {
+    const baseKnown = ["maternity", "paternity", "unpaid", "other"]
+    const fromApi = Object.keys(leaveBalances || {})
+    const all = Array.from(new Set([...baseKnown, ...fromApi]))
+    return all.filter((key) => !["annual", "sick", "family_responsibility"].includes(key))
+  }, [leaveBalances])
+
+  const scrollLeaveStrip = (direction: "left" | "right") => {
+    const el = leaveStripRef.current
+    if (!el) return
+    const amount = Math.max(260, Math.floor(el.clientWidth * 0.75))
+    el.scrollBy({ left: direction === "left" ? -amount : amount, behavior: "smooth" })
+  }
 
   // Load preferred name from profile (same as dashboard layout header)
   useEffect(() => {
@@ -278,6 +298,26 @@ export default function DashboardPage() {
           console.error('Error fetching leave requests:', error)
           setLeaveRequests([])
         }
+
+        // Fetch approved leaves to detect "currently on leave" banner + early return state
+        try {
+          const approvedRes = await fetch(`/api/leave/requests?employee_id=${employeeId}&status=approved&limit=50`, { headers })
+          if (approvedRes.ok) {
+            const approvedData = await approvedRes.json().catch(() => ({}))
+            const items = approvedData?.success && Array.isArray(approvedData.data) ? approvedData.data : []
+
+            const today = new Date().toISOString().slice(0, 10)
+            const current = items.find((r: any) => {
+              const start = String(r.start_date || r.leave_day_from || "")
+              const end = String(r.end_date || r.leave_day_to || "")
+              return start && end && start <= today && today <= end
+            })
+
+            setCurrentApprovedLeave(current || null)
+          }
+        } catch (e) {
+          console.warn("Failed to fetch approved leave requests:", e)
+        }
       } catch (error) {
         console.error('Error fetching leave balances:', error)
       }
@@ -329,9 +369,113 @@ export default function DashboardPage() {
         {/* Employee View */}
         {isEmployee && (
           <>
+            {/* Currently on leave banner + Early Return */}
+            {currentApprovedLeave && (
+              <Card className="border-l-4 border-l-[#A6206A]">
+                <CardContent className="p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Leave status</p>
+                    <h3 className="text-lg font-semibold text-navy">You are currently on leave</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {getLeaveTypeDisplayName(currentApprovedLeave.leave_types?.key || currentApprovedLeave.leave_type || "leave")} •{" "}
+                      {String(currentApprovedLeave.start_date || currentApprovedLeave.leave_day_from)} →{" "}
+                      {String(currentApprovedLeave.end_date || currentApprovedLeave.leave_day_to)}
+                    </p>
+
+                    {currentApprovedLeave.early_return_status === "pending" && (
+                      <p className="text-sm mt-2 text-muted-foreground">
+                        Early return request submitted — awaiting approval.
+                      </p>
+                    )}
+                    {currentApprovedLeave.early_return_status === "approved" && (
+                      <p className="text-sm mt-2 text-green-700">
+                        Your early return has been approved. Welcome back!
+                      </p>
+                    )}
+                    {currentApprovedLeave.early_return_status === "rejected" && (
+                      <p className="text-sm mt-2 text-red-700">
+                        Your early return request was rejected.
+                      </p>
+                    )}
+                  </div>
+
+                  {(currentApprovedLeave.early_return_status === null ||
+                    currentApprovedLeave.early_return_status === undefined ||
+                    currentApprovedLeave.early_return_status === "rejected") && (
+                    <Button
+                      onClick={() => setIsEarlyReturnModalOpen(true)}
+                      disabled={isSubmittingEarlyReturn}
+                    >
+                      I have returned early
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            <Dialog open={isEarlyReturnModalOpen} onOpenChange={setIsEarlyReturnModalOpen}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Confirm Early Return</DialogTitle>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  Are you sure you want to notify your admin that you have returned? Your return date will be recorded as today.
+                </p>
+                <div className="flex justify-end gap-2 pt-4">
+                  <Button variant="outline" onClick={() => setIsEarlyReturnModalOpen(false)} disabled={isSubmittingEarlyReturn}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      if (!currentApprovedLeave?.id) return
+                      setIsSubmittingEarlyReturn(true)
+                      try {
+                        const headers: Record<string, string> = { "Content-Type": "application/json" }
+                        const storedSession = localStorage.getItem("xspark_session")
+                        if (storedSession) {
+                          const sessionParsed = JSON.parse(storedSession)
+                          if (sessionParsed?.access_token) headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+                        }
+
+                        const today = new Date().toISOString().slice(0, 10)
+                        const res = await fetch(`/api/leave/requests/${currentApprovedLeave.id}/request-early-return`, {
+                          method: "POST",
+                          headers,
+                          body: JSON.stringify({ early_return_date: today }),
+                        })
+                        const json = await res.json().catch(() => ({}))
+                        if (!res.ok || !json?.success) {
+                          throw new Error(json?.error || "Failed to request early return")
+                        }
+
+                        toast({
+                          title: "Early return requested",
+                          description: "Early return request submitted — awaiting approval.",
+                        })
+                        setCurrentApprovedLeave(json.data)
+                        setIsEarlyReturnModalOpen(false)
+                      } catch (e) {
+                        toast({
+                          title: "Request failed",
+                          description: e instanceof Error ? e.message : "Could not submit early return request.",
+                          variant: "destructive",
+                        })
+                      } finally {
+                        setIsSubmittingEarlyReturn(false)
+                      }
+                    }}
+                    disabled={isSubmittingEarlyReturn}
+                  >
+                    Confirm
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
             {/* Leave Balance */}
-            <div className="grid md:grid-cols-3 gap-6">
-              <Card>
+            <div className="flex flex-col lg:flex-row gap-6 items-stretch">
+              <div className="grid md:grid-cols-3 gap-6 flex-1">
+                <Card>
                 <CardHeader>
                   <CardTitle className="text-sm font-medium text-muted-foreground">Annual Leave</CardTitle>
                 </CardHeader>
@@ -363,9 +507,9 @@ export default function DashboardPage() {
                     )}
                   </div>
                 </CardContent>
-              </Card>
+                </Card>
 
-              <Card>
+                <Card>
                 <CardHeader>
                   <CardTitle className="text-sm font-medium text-muted-foreground">Sick Leave</CardTitle>
                 </CardHeader>
@@ -397,9 +541,9 @@ export default function DashboardPage() {
                     )}
                   </div>
                 </CardContent>
-              </Card>
+                </Card>
 
-              <Card>
+                <Card>
                 <CardHeader>
                   <CardTitle className="text-sm font-medium text-muted-foreground">Family Responsibility</CardTitle>
                 </CardHeader>
@@ -431,7 +575,66 @@ export default function DashboardPage() {
                     )}
                   </div>
                 </CardContent>
-              </Card>
+                </Card>
+              </div>
+
+              {/* Other leave types (hidden until scroll/next) */}
+              {otherLeaveTypes.length > 0 && (
+                <div className="relative lg:w-[290px]">
+                  <div className="absolute right-2 top-2 flex items-center gap-1 z-10">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 bg-background"
+                      onClick={() => scrollLeaveStrip("left")}
+                      aria-label="Previous leave type"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 bg-background"
+                      onClick={() => scrollLeaveStrip("right")}
+                      aria-label="Next leave type"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <div
+                    ref={leaveStripRef}
+                    className="flex gap-6 overflow-x-auto scroll-smooth snap-x snap-mandatory pb-2 pr-1"
+                    style={{ scrollbarWidth: "none" } as any}
+                  >
+                    {otherLeaveTypes.map((leaveKey) => {
+                      const bal = leaveBalances[leaveKey] || { available: 0, total: 0 }
+                      const available = Math.max(0, Math.round(bal.available || 0))
+                      const total = Math.max(0, Math.round(bal.total || 0))
+                      const display = getLeaveTypeDisplayName(leaveKey)
+
+                      return (
+                        <Card key={leaveKey} className="min-w-[260px] snap-start">
+                          <CardHeader>
+                            <CardTitle className="text-sm font-medium text-muted-foreground">{display}</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-2">
+                              <div className="flex items-baseline gap-2">
+                                <span className="text-3xl font-bold text-navy">{available}</span>
+                                <span className="text-muted-foreground">/ {total} days</span>
+                              </div>
+                              <p className="text-sm text-muted-foreground">{available} days left</p>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* My HR Cases */}

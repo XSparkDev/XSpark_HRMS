@@ -50,6 +50,9 @@ export interface LeaveRequest {
   review_notes?: string
   document_url?: string
   document_required: boolean
+  early_return_requested_at?: string | null
+  early_return_date?: string | null
+  early_return_status?: 'pending' | 'approved' | 'rejected' | null
   created_at: string
   updated_at: string
 }
@@ -70,6 +73,7 @@ export interface LeaveRequestFilters {
   employee_id?: string
   status?: 'pending' | 'approved' | 'rejected' | 'cancelled'
   leave_type?: string
+  early_return_status?: 'pending' | 'approved' | 'rejected'
   date_from?: string
   date_to?: string
   reviewed_by?: string
@@ -1038,6 +1042,10 @@ export class LeaveManagementService {
         query = query.eq('status', filters.status)
       }
 
+      if (filters?.early_return_status) {
+        query = query.eq('early_return_status', filters.early_return_status)
+      }
+
       if (filters?.date_from) {
         query = query.gte('start_date', filters.date_from)
       }
@@ -1066,6 +1074,161 @@ export class LeaveManagementService {
       console.error('Error fetching leave requests:', error)
       throw new Error('Failed to fetch leave requests')
     }
+  }
+
+  // EARLY RETURN OPERATIONS ---------------------------------------------------
+
+  async requestEarlyReturn(
+    leaveRequestId: string,
+    employeeId: string,
+    earlyReturnDate: string,
+  ): Promise<LeaveRequest> {
+    const leaveRequest = await this.getLeaveRequestById(leaveRequestId)
+    if (!leaveRequest) {
+      throw new Error('Leave request not found')
+    }
+
+    if (leaveRequest.employee_id !== employeeId) {
+      throw new Error('Forbidden')
+    }
+
+    if (leaveRequest.status !== 'approved') {
+      throw new Error('Early return can only be requested for approved leave')
+    }
+
+    if (leaveRequest.early_return_status === 'pending') {
+      throw new Error('Early return request is already pending')
+    }
+
+    if (leaveRequest.early_return_status === 'approved') {
+      throw new Error('Early return has already been approved')
+    }
+
+    // Validate date within leave range (must not be before start_date)
+    if (earlyReturnDate < leaveRequest.start_date) {
+      throw new Error('Early return date cannot be before leave start date')
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('leave_requests')
+      .update({
+        early_return_requested_at: new Date().toISOString(),
+        early_return_status: 'pending',
+        early_return_date: earlyReturnDate,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', leaveRequestId)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data as LeaveRequest
+  }
+
+  async approveEarlyReturn(
+    leaveRequestId: string,
+    reviewerEmployeeId: string,
+  ): Promise<LeaveRequest> {
+    const leaveRequest = await this.getLeaveRequestById(leaveRequestId)
+    if (!leaveRequest) throw new Error('Leave request not found')
+
+    if (leaveRequest.status !== 'approved') {
+      throw new Error('Leave must be approved before it can be closed early')
+    }
+
+    if (leaveRequest.early_return_status !== 'pending' || !leaveRequest.early_return_date) {
+      throw new Error('No pending early return request found')
+    }
+
+    const earlyReturnDate = leaveRequest.early_return_date
+
+    // Compute new total days based on start_date..earlyReturnDate (inclusive working days)
+    const newTotalDays = await this.calculateWorkingDays(leaveRequest.start_date, earlyReturnDate)
+    const oldTotalDays = Number(leaveRequest.total_days || 0)
+    const delta = Math.max(0, oldTotalDays - newTotalDays)
+
+    // Update leave request: end_date + total_days + early_return_status
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from('leave_requests')
+      .update({
+        end_date: earlyReturnDate,
+        total_days: newTotalDays,
+        early_return_status: 'approved',
+        reviewed_by: reviewerEmployeeId,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', leaveRequestId)
+      .select()
+      .single()
+
+    if (updateError) throw updateError
+
+    // Best-effort: trim leave_calendar after early return date
+    try {
+      await supabaseAdmin
+        .from('leave_calendar')
+        .delete()
+        .eq('leave_request_id', leaveRequestId)
+        .gt('leave_date', earlyReturnDate)
+    } catch (e) {
+      console.warn('Failed to trim leave_calendar for early return:', e)
+    }
+
+    // Best-effort: refund unused days from leave_balances.total_used
+    if (delta > 0) {
+      try {
+        const { data: leaveType, error: ltError } = await supabaseAdmin
+          .from('leave_types')
+          .select('key')
+          .eq('id', leaveRequest.leave_type_id)
+          .single()
+
+        if (!ltError && leaveType?.key) {
+          const balance = await this.getLeaveBalance(leaveRequest.employee_id, leaveType.key)
+          if (balance) {
+            await supabaseAdmin
+              .from('leave_balances')
+              .update({
+                total_used: Math.max(0, (balance.total_used || 0) - delta),
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', balance.id)
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to refund leave balance for early return:', e)
+      }
+    }
+
+    return updated as LeaveRequest
+  }
+
+  async rejectEarlyReturn(
+    leaveRequestId: string,
+    reviewerEmployeeId: string,
+  ): Promise<LeaveRequest> {
+    const leaveRequest = await this.getLeaveRequestById(leaveRequestId)
+    if (!leaveRequest) throw new Error('Leave request not found')
+
+    if (leaveRequest.early_return_status !== 'pending') {
+      throw new Error('No pending early return request found')
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('leave_requests')
+      .update({
+        early_return_status: 'rejected',
+        reviewed_by: reviewerEmployeeId,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', leaveRequestId)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data as LeaveRequest
   }
 
   async getPendingLeaveRequests(): Promise<LeaveRequest[]> {

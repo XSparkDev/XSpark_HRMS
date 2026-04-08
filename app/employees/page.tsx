@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { CalendarIcon, Plus, Search, Filter, Edit, Trash2, Eye, MoreHorizontal, History, RotateCcw } from "lucide-react"
+import { CalendarIcon, Plus, Search, Filter, Edit, Trash2, Eye, MoreHorizontal, History, RotateCcw, ExternalLink, FileText } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,6 +29,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useToast } from "@/hooks/use-toast"
 
 export default function EmployeeManagementPage() {
+  type EmployeeDocumentPreview = {
+    id: string
+    employee_id: string
+    name: string
+    type: string
+    file_size: number
+    file_type: string
+    file_url: string
+    created_at: string
+    is_sensitive: boolean
+  }
+
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [filteredEmployees, setFilteredEmployees] = useState<EmployeeProfile[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -44,6 +56,9 @@ export default function EmployeeManagementPage() {
   const [gmail, setGmail] = useState("")
   const [gmailError, setGmailError] = useState("")
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeProfile | null>(null)
+  const [selectedEmployeeDocuments, setSelectedEmployeeDocuments] = useState<EmployeeDocumentPreview[]>([])
+  const [isLoadingEmployeeDocuments, setIsLoadingEmployeeDocuments] = useState(false)
+  const [activePreviewDocument, setActivePreviewDocument] = useState<EmployeeDocumentPreview | null>(null)
   const [filters, setFilters] = useState<EmployeeFilters>({})
   const [searchTerm, setSearchTerm] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
@@ -51,7 +66,109 @@ export default function EmployeeManagementPage() {
   const user = getCurrentUser()
   const { toast } = useToast()
   const canVerifyEmployees = user?.role === "admin" || user?.role === "super_admin"
+  const canPreviewEmployeeDocuments = user?.role === "admin" || user?.role === "super_admin"
   const hasFetchedRef = useRef(false)
+  const unverifiedToastShownRef = useRef(false)
+
+  useEffect(() => {
+    if (!canVerifyEmployees) return
+    if (unverifiedToastShownRef.current) return
+    if (!employees || employees.length === 0) return
+
+    const unverifiedCount = employees.filter((employee) => !(employee.id_verified && employee.bank_verified)).length
+    if (unverifiedCount <= 0) return
+
+    unverifiedToastShownRef.current = true
+    toast({
+      title: "Employees need verification",
+      description: `${unverifiedCount} employee${unverifiedCount === 1 ? "" : "s"} are unverified. Click the ID/Bank badges to verify (or unverify).`,
+    })
+  }, [canVerifyEmployees, employees, toast])
+
+  const formatFileSize = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 Bytes"
+    const units = ["Bytes", "KB", "MB", "GB"]
+    const unitIndex = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+    const value = bytes / Math.pow(1024, unitIndex)
+    return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+  }
+
+  const formatDocumentType = (type: string) => type.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase())
+
+  const inferFileTypeFromUrl = (url: string) => {
+    const lower = (url || "").toLowerCase()
+    if (lower.includes(".pdf")) return "application/pdf"
+    if (lower.includes(".png")) return "image/png"
+    if (lower.includes(".jpg") || lower.includes(".jpeg")) return "image/jpeg"
+    return ""
+  }
+
+  const inferNameFromUrl = (url: string) => {
+    try {
+      const clean = url.split("?")[0] || url
+      const parts = clean.split("/").filter(Boolean)
+      return decodeURIComponent(parts[parts.length - 1] || "Document")
+    } catch {
+      return "Document"
+    }
+  }
+
+  const fetchEmployeeDocuments = useCallback(async (employeeAuthUserId: string) => {
+    if (!canPreviewEmployeeDocuments) {
+      setSelectedEmployeeDocuments([])
+      setActivePreviewDocument(null)
+      return
+    }
+
+    try {
+      setIsLoadingEmployeeDocuments(true)
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...buildHeaders(user),
+      }
+
+      try {
+        const storedSession = localStorage.getItem("xspark_session")
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+          }
+        }
+      } catch (error) {
+        console.warn("[Employees][DOCUMENTS] Failed to parse session for Bearer token:", error)
+      }
+
+      const res = await fetch(`/api/documents?employee_id=${encodeURIComponent(employeeAuthUserId)}`, { method: "GET", headers })
+      const json = await res.json().catch(() => [])
+      const employeeDocs = (Array.isArray(json) ? json : [])
+        .map((doc: any) => ({
+          id: String(doc.id ?? ""),
+          employee_id: String(doc.employee_id ?? ""),
+          name: String(doc.name ?? "Untitled document"),
+          type: String(doc.type ?? "other_personal_documents"),
+          file_size: Number(doc.file_size ?? 0),
+          file_type: String(doc.file_type ?? ""),
+          file_url: String(doc.file_url ?? ""),
+          created_at: String(doc.created_at ?? ""),
+          is_sensitive: Boolean(doc.is_sensitive),
+        }))
+
+      setSelectedEmployeeDocuments(employeeDocs)
+      setActivePreviewDocument(employeeDocs[0] ?? null)
+    } catch (error) {
+      console.error("[Employees][DOCUMENTS] error:", error)
+      setSelectedEmployeeDocuments([])
+      setActivePreviewDocument(null)
+      toast({
+        title: "Unable to load documents",
+        description: "We couldn't load this employee's documents right now.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoadingEmployeeDocuments(false)
+    }
+  }, [canPreviewEmployeeDocuments, toast, user])
 
   // Build headers for API requests (same pattern as notes page)
   const buildHeaders = (user: User | null) => {
@@ -451,18 +568,37 @@ export default function EmployeeManagementPage() {
   const handleViewEmployee = (employee: EmployeeProfile) => {
     setSelectedEmployee(employee)
     setIsViewModalOpen(true)
+    setActivePreviewDocument(null)
+    if (canPreviewEmployeeDocuments) {
+      const directDocs = Array.isArray(employee.documents) ? employee.documents.filter(Boolean) : []
+      if (directDocs.length > 0) {
+        const mapped = directDocs.map((url, index) => ({
+          id: `${employee.id}-${index}-${String(url)}`,
+          employee_id: (employee as any).user_id || employee.user_id || employee.id,
+          name: inferNameFromUrl(String(url)),
+          type: "other_personal_documents",
+          file_size: 0,
+          file_type: inferFileTypeFromUrl(String(url)),
+          file_url: String(url),
+          created_at: "",
+          is_sensitive: false,
+        }))
+        setSelectedEmployeeDocuments(mapped)
+        setActivePreviewDocument(mapped[0] ?? null)
+      } else {
+        fetchEmployeeDocuments((employee as any).user_id || employee.user_id || employee.id)
+      }
+    } else {
+      setSelectedEmployeeDocuments([])
+    }
   }
 
   const handleVerifyEmployee = async (employee: EmployeeProfile) => {
-    if (employee.id_verified) {
-      toast({
-        title: "Already verified",
-        description: `${employee.first_name} ${employee.last_name}'s ID is already verified.`,
-      })
-      return
-    }
-
-    if (!confirm(`Verify ID for ${employee.first_name} ${employee.last_name}?`)) return
+    const isVerified = Boolean(employee.id_verified)
+    const prompt = isVerified
+      ? `Unverify ID for ${employee.first_name} ${employee.last_name}?`
+      : `Verify ID for ${employee.first_name} ${employee.last_name}?`
+    if (!confirm(prompt)) return
 
     try {
       const headers: Record<string, string> = {
@@ -480,38 +616,35 @@ export default function EmployeeManagementPage() {
         console.warn("[Employees][VERIFY ID] Failed to parse session for Bearer token:", error)
       }
 
-      const res = await fetch(`/api/employees/${employee.id}/verify-id`, { method: "POST", headers })
+      const endpoint = isVerified ? "unverify-id" : "verify-id"
+      const res = await fetch(`/api/employees/${employee.id}/${endpoint}`, { method: "POST", headers })
       const json = await res.json().catch(() => ({}))
 
       if (!res.ok || !json?.success) {
-        throw new Error(json?.error || "Failed to verify employee ID")
+        throw new Error(json?.error || (isVerified ? "Failed to unverify employee ID" : "Failed to verify employee ID"))
       }
 
       toast({
-        title: "Employee ID verified",
-        description: `${employee.first_name} ${employee.last_name} has been verified.`,
+        title: isVerified ? "Employee ID unverified" : "Employee ID verified",
+        description: `${employee.first_name} ${employee.last_name} has been ${isVerified ? "unverified" : "verified"}.`,
       })
       fetchEmployees()
     } catch (error) {
       console.error("[Employees][VERIFY ID] error:", error)
       toast({
-        title: "Verification failed",
-        description: error instanceof Error ? error.message : "An error occurred while verifying the employee.",
+        title: isVerified ? "Unverify failed" : "Verification failed",
+        description: error instanceof Error ? error.message : "An error occurred while updating verification.",
         variant: "destructive",
       })
     }
   }
 
   const handleVerifyBank = async (employee: EmployeeProfile) => {
-    if (employee.bank_verified) {
-      toast({
-        title: "Already verified",
-        description: `${employee.first_name} ${employee.last_name}'s bank details are already verified.`,
-      })
-      return
-    }
-
-    if (!confirm(`Verify bank details for ${employee.first_name} ${employee.last_name}?`)) return
+    const isVerified = Boolean(employee.bank_verified)
+    const prompt = isVerified
+      ? `Unverify bank details for ${employee.first_name} ${employee.last_name}?`
+      : `Verify bank details for ${employee.first_name} ${employee.last_name}?`
+    if (!confirm(prompt)) return
 
     try {
       const headers: Record<string, string> = {
@@ -529,23 +662,24 @@ export default function EmployeeManagementPage() {
         console.warn("[Employees][VERIFY BANK] Failed to parse session for Bearer token:", error)
       }
 
-      const res = await fetch(`/api/employees/${employee.id}/verify-bank`, { method: "POST", headers })
+      const endpoint = isVerified ? "unverify-bank" : "verify-bank"
+      const res = await fetch(`/api/employees/${employee.id}/${endpoint}`, { method: "POST", headers })
       const json = await res.json().catch(() => ({}))
 
       if (!res.ok || !json?.success) {
-        throw new Error(json?.error || "Failed to verify bank details")
+        throw new Error(json?.error || (isVerified ? "Failed to unverify bank details" : "Failed to verify bank details"))
       }
 
       toast({
-        title: "Bank verified",
-        description: `${employee.first_name} ${employee.last_name}'s bank details have been verified.`,
+        title: isVerified ? "Bank unverified" : "Bank verified",
+        description: `${employee.first_name} ${employee.last_name}'s bank details have been ${isVerified ? "unverified" : "verified"}.`,
       })
       fetchEmployees()
     } catch (error) {
       console.error("[Employees][VERIFY BANK] error:", error)
       toast({
-        title: "Verification failed",
-        description: error instanceof Error ? error.message : "An error occurred while verifying bank details.",
+        title: isVerified ? "Unverify failed" : "Verification failed",
+        description: error instanceof Error ? error.message : "An error occurred while updating verification.",
         variant: "destructive",
       })
     }
@@ -793,18 +927,51 @@ export default function EmployeeManagementPage() {
                       </TableCell>
                       <TableCell className="px-3 md:px-6 py-4 hidden md:table-cell">
                         <div className="flex gap-1.5">
-                          <Badge 
-                            variant={employee.id_verified ? "default" : "secondary"} 
-                            className="text-xs rounded-full px-2.5 py-1"
-                          >
-                            ID
-                          </Badge>
-                          <Badge 
-                            variant={employee.bank_verified ? "default" : "secondary"} 
-                            className="text-xs rounded-full px-2.5 py-1"
-                          >
-                            Bank
-                          </Badge>
+                          {canVerifyEmployees ? (
+                            <button
+                              type="button"
+                              onClick={() => handleVerifyEmployee(employee)}
+                              className="disabled:cursor-not-allowed"
+                              aria-label={`Verify ID for ${employee.first_name} ${employee.last_name}`}
+                            >
+                              <Badge
+                                variant={employee.id_verified ? "default" : "secondary"}
+                                className="text-xs rounded-full px-2.5 py-1 cursor-pointer"
+                              >
+                                ID
+                              </Badge>
+                            </button>
+                          ) : (
+                            <Badge
+                              variant={employee.id_verified ? "default" : "secondary"}
+                              className="text-xs rounded-full px-2.5 py-1"
+                            >
+                              ID
+                            </Badge>
+                          )}
+
+                          {canVerifyEmployees ? (
+                            <button
+                              type="button"
+                              onClick={() => handleVerifyBank(employee)}
+                              className="disabled:cursor-not-allowed"
+                              aria-label={`Verify bank for ${employee.first_name} ${employee.last_name}`}
+                            >
+                              <Badge
+                                variant={employee.bank_verified ? "default" : "secondary"}
+                                className="text-xs rounded-full px-2.5 py-1 cursor-pointer"
+                              >
+                                Bank
+                              </Badge>
+                            </button>
+                          ) : (
+                            <Badge
+                              variant={employee.bank_verified ? "default" : "secondary"}
+                              className="text-xs rounded-full px-2.5 py-1"
+                            >
+                              Bank
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="px-3 md:px-6 py-4">
@@ -842,17 +1009,15 @@ export default function EmployeeManagementPage() {
                                 <>
                                   <DropdownMenuItem
                                     onClick={() => handleVerifyEmployee(employee)}
-                                    disabled={employee.id_verified}
                                     className="cursor-pointer px-3 py-2.5 text-sm rounded-md hover:bg-muted focus:bg-muted"
                                   >
-                                    Verify employee
+                                    {employee.id_verified ? "Unverify ID" : "Verify ID"}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     onClick={() => handleVerifyBank(employee)}
-                                    disabled={employee.bank_verified}
                                     className="cursor-pointer px-3 py-2.5 text-sm rounded-md hover:bg-muted focus:bg-muted"
                                   >
-                                    Verify bank
+                                    {employee.bank_verified ? "Unverify Bank" : "Verify Bank"}
                                   </DropdownMenuItem>
                                 </>
                               )}
@@ -885,139 +1050,226 @@ export default function EmployeeManagementPage() {
 
       {/* View Employee Modal */}
       <Dialog open={isViewModalOpen} onOpenChange={setIsViewModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[96vw] max-w-7xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Employee Details</DialogTitle>
           </DialogHeader>
           {selectedEmployee && (
-            <div className="space-y-6">
-              {/* Personal Information */}
-              <div>
-                <h3 className="text-lg font-semibold text-navy mb-4">Personal Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm text-muted-foreground">First Name</Label>
-                    <p className="text-base font-medium">{selectedEmployee.first_name}</p>
-                  </div>
-                  {selectedEmployee.middle_name && (
-                    <div>
-                      <Label className="text-sm text-muted-foreground">Middle Name</Label>
-                      <p className="text-base font-medium">{selectedEmployee.middle_name}</p>
-                    </div>
-                  )}
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Last Name</Label>
-                    <p className="text-base font-medium">{selectedEmployee.last_name}</p>
-                  </div>
-                  {selectedEmployee.preferred_name && (
-                    <div>
-                      <Label className="text-sm text-muted-foreground">Preferred Name</Label>
-                      <p className="text-base font-medium">{selectedEmployee.preferred_name}</p>
-                    </div>
-                  )}
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Date of Birth</Label>
-                    <p className="text-base font-medium">{selectedEmployee.dob ? format(new Date(selectedEmployee.dob), "dd MMM yyyy") : "—"}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Gender</Label>
-                    <p className="text-base font-medium capitalize">{selectedEmployee.gender}</p>
-                  </div>
-                  {selectedEmployee.pronouns && (
-                    <div>
-                      <Label className="text-sm text-muted-foreground">Pronouns</Label>
-                      <p className="text-base font-medium">{selectedEmployee.pronouns}</p>
-                    </div>
-                  )}
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Nationality</Label>
-                    <p className="text-base font-medium">{selectedEmployee.nationality}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Employment Details */}
-              <div>
-                <h3 className="text-lg font-semibold text-navy mb-4">Employment Details</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Employee ID</Label>
-                    <p className="text-base font-medium font-mono">{selectedEmployee.employee_ID}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Job Title</Label>
-                    <p className="text-base font-medium">{selectedEmployee.job_title_id || "—"}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Start Date</Label>
-                    <p className="text-base font-medium">{selectedEmployee.date_hired ? format(new Date(selectedEmployee.date_hired), "dd MMM yyyy") : "—"}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm text-muted-foreground">End Date</Label>
-                    <p className="text-base font-medium">{selectedEmployee.date_terminated ? format(new Date(selectedEmployee.date_terminated), "dd MMM yyyy") : "not available"}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Contact Information */}
-              <div>
-                <h3 className="text-lg font-semibold text-navy mb-4">Contact Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Email</Label>
-                    <p className="text-base font-medium">{selectedEmployee.email}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm text-muted-foreground">Phone</Label>
-                    <p className="text-base font-medium">{selectedEmployee.phone || "—"}</p>
-                  </div>
-                  {selectedEmployee.alternative_phone && (
-                    <div>
-                      <Label className="text-sm text-muted-foreground">Alternative Phone</Label>
-                      <p className="text-base font-medium">{selectedEmployee.alternative_phone}</p>
-                    </div>
-                  )}
-                  <div className="col-span-2">
-                    <Label className="text-sm text-muted-foreground">Address</Label>
-                    <p className="text-base font-medium">{selectedEmployee.address || "—"}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Verification Status */}
-              <div>
-                <h3 className="text-lg font-semibold text-navy mb-4">Verification Status</h3>
-                <div className="flex gap-4">
-                  <Badge variant={selectedEmployee.id_verified ? "default" : "outline"} className="rounded-full px-3 py-1">
-                    ID {selectedEmployee.id_verified ? "Verified" : "Unverified"}
-                  </Badge>
-                  <Badge variant={selectedEmployee.bank_verified ? "default" : "outline"} className="rounded-full px-3 py-1">
-                    Bank {selectedEmployee.bank_verified ? "Verified" : "Unverified"}
-                  </Badge>
-                  <Badge variant={selectedEmployee.work_permit_verified ? "default" : "outline"} className="rounded-full px-3 py-1">
-                    Work Permit {selectedEmployee.work_permit_verified ? "Verified" : "Unverified"}
-                  </Badge>
-                </div>
-              </div>
-
-              {/* Additional Information */}
-              {(selectedEmployee.passport_number || selectedEmployee.tax_number) && (
+            <div className={cn("space-y-6", canPreviewEmployeeDocuments ? "lg:grid lg:grid-cols-2 lg:gap-6 lg:space-y-0" : "")}>
+              <div className={cn("space-y-6", canPreviewEmployeeDocuments ? "lg:max-h-[72vh] lg:overflow-y-auto lg:pr-2" : "")}>
+                {/* Personal Information */}
                 <div>
-                  <h3 className="text-lg font-semibold text-navy mb-4">Additional Information</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {selectedEmployee.passport_number && (
-                      <div>
-                        <Label className="text-sm text-muted-foreground">Passport Number</Label>
-                        <p className="text-base font-medium">{selectedEmployee.passport_number}</p>
+                  <h3 className="text-lg font-semibold text-navy mb-4">Personal Information</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">First Name</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.first_name}</p>
+                    </div>
+                    {selectedEmployee.middle_name && (
+                      <div className="min-w-0">
+                        <Label className="text-sm text-muted-foreground">Middle Name</Label>
+                        <p className="text-base font-medium break-words">{selectedEmployee.middle_name}</p>
                       </div>
                     )}
-                    {selectedEmployee.tax_number && (
-                      <div>
-                        <Label className="text-sm text-muted-foreground">Tax Number</Label>
-                        <p className="text-base font-medium">{selectedEmployee.tax_number}</p>
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Last Name</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.last_name}</p>
+                    </div>
+                    {selectedEmployee.preferred_name && (
+                      <div className="min-w-0">
+                        <Label className="text-sm text-muted-foreground">Preferred Name</Label>
+                        <p className="text-base font-medium break-words">{selectedEmployee.preferred_name}</p>
                       </div>
+                    )}
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Date of Birth</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.dob ? format(new Date(selectedEmployee.dob), "dd MMM yyyy") : "—"}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Gender</Label>
+                      <p className="text-base font-medium capitalize break-words">{selectedEmployee.gender}</p>
+                    </div>
+                    {selectedEmployee.pronouns && (
+                      <div className="min-w-0">
+                        <Label className="text-sm text-muted-foreground">Pronouns</Label>
+                        <p className="text-base font-medium break-words">{selectedEmployee.pronouns}</p>
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Nationality</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.nationality}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Employment Details */}
+                <div>
+                  <h3 className="text-lg font-semibold text-navy mb-4">Employment Details</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Employee ID</Label>
+                      <p className="text-base font-medium font-mono break-words">{selectedEmployee.employee_ID}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Job Title</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.job_title_id || "—"}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Start Date</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.date_hired ? format(new Date(selectedEmployee.date_hired), "dd MMM yyyy") : "—"}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">End Date</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.date_terminated ? format(new Date(selectedEmployee.date_terminated), "dd MMM yyyy") : "not available"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Contact Information */}
+                <div>
+                  <h3 className="text-lg font-semibold text-navy mb-4">Contact Information</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Email</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.email}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <Label className="text-sm text-muted-foreground">Phone</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.phone || "—"}</p>
+                    </div>
+                    {selectedEmployee.alternative_phone && (
+                      <div className="min-w-0">
+                        <Label className="text-sm text-muted-foreground">Alternative Phone</Label>
+                        <p className="text-base font-medium break-words">{selectedEmployee.alternative_phone}</p>
+                      </div>
+                    )}
+                    <div className="sm:col-span-2 min-w-0">
+                      <Label className="text-sm text-muted-foreground">Address</Label>
+                      <p className="text-base font-medium break-words">{selectedEmployee.address || "—"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Verification Status */}
+                <div>
+                  <h3 className="text-lg font-semibold text-navy mb-4">Verification Status</h3>
+                  <div className="flex gap-4">
+                    <Badge variant={selectedEmployee.id_verified ? "default" : "outline"} className="rounded-full px-3 py-1">
+                      ID {selectedEmployee.id_verified ? "Verified" : "Unverified"}
+                    </Badge>
+                    <Badge variant={selectedEmployee.bank_verified ? "default" : "outline"} className="rounded-full px-3 py-1">
+                      Bank {selectedEmployee.bank_verified ? "Verified" : "Unverified"}
+                    </Badge>
+                    {(selectedEmployee.nationality || "").trim().toLowerCase() !== "south africa" && (
+                      <Badge variant={selectedEmployee.work_permit_verified ? "default" : "outline"} className="rounded-full px-3 py-1">
+                        Work Permit {selectedEmployee.work_permit_verified ? "Verified" : "Unverified"}
+                      </Badge>
                     )}
                   </div>
+                </div>
+
+                {/* Additional Information */}
+                {(selectedEmployee.passport_number || selectedEmployee.tax_number) && (
+                  <div>
+                    <h3 className="text-lg font-semibold text-navy mb-4">Additional Information</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {selectedEmployee.passport_number && (
+                        <div className="min-w-0">
+                          <Label className="text-sm text-muted-foreground">Passport Number</Label>
+                          <p className="text-base font-medium break-words">{selectedEmployee.passport_number}</p>
+                        </div>
+                      )}
+                      {selectedEmployee.tax_number && (
+                        <div className="min-w-0">
+                          <Label className="text-sm text-muted-foreground">Tax Number</Label>
+                          <p className="text-base font-medium break-words">{selectedEmployee.tax_number}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {canPreviewEmployeeDocuments && (
+                <div className="space-y-4 lg:max-h-[72vh] lg:overflow-y-auto lg:pl-4 lg:border-l">
+                  <div>
+                    <h3 className="text-lg font-semibold text-navy">Document Preview</h3>
+                    <p className="text-xs text-muted-foreground">Preview files while comparing with employee details.</p>
+                  </div>
+
+                  {isLoadingEmployeeDocuments ? (
+                    <div className="rounded-lg border p-4 text-sm text-muted-foreground">
+                      Loading documents...
+                    </div>
+                  ) : selectedEmployeeDocuments.length === 0 ? (
+                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                      No documents found for this employee.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="max-h-44 overflow-y-auto space-y-2 pr-1">
+                        {selectedEmployeeDocuments.map((document) => (
+                          <button
+                            key={document.id}
+                            type="button"
+                            onClick={() => setActivePreviewDocument(document)}
+                            className={cn(
+                              "w-full text-left rounded-lg border p-3 transition-colors",
+                              activePreviewDocument?.id === document.id ? "border-primary bg-primary/5" : "hover:bg-muted/40"
+                            )}
+                          >
+                            <div className="flex items-center gap-2">
+                              <FileText className="h-4 w-4 text-muted-foreground" />
+                              <p className="text-sm font-medium truncate">{document.name}</p>
+                              {document.is_sensitive && (
+                                <Badge variant="secondary" className="text-[10px] rounded-full">Sensitive</Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {formatDocumentType(document.type)} • {formatFileSize(document.file_size)}
+                              {document.created_at ? ` • ${format(new Date(document.created_at), "dd MMM yyyy")}` : ""}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="rounded-lg border overflow-hidden h-[420px] bg-muted/10">
+                        {!activePreviewDocument ? (
+                          <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                            Select a document to preview.
+                          </div>
+                        ) : !activePreviewDocument.file_url ? (
+                          <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                            This document has no preview link.
+                          </div>
+                        ) : activePreviewDocument.file_type.includes("pdf") ? (
+                          <iframe
+                            title={`Preview ${activePreviewDocument.name}`}
+                            src={activePreviewDocument.file_url}
+                            className="w-full h-full"
+                          />
+                        ) : activePreviewDocument.file_type.startsWith("image/") ? (
+                          <img
+                            src={activePreviewDocument.file_url}
+                            alt={activePreviewDocument.name}
+                            className="w-full h-full object-contain bg-white"
+                          />
+                        ) : (
+                          <div className="h-full flex flex-col items-center justify-center gap-3 p-4 text-center">
+                            <p className="text-sm text-muted-foreground">
+                              Inline preview is not available for this file type.
+                            </p>
+                            <Button asChild size="sm" variant="outline">
+                              <a href={activePreviewDocument.file_url} target="_blank" rel="noopener noreferrer">
+                                Open in new tab
+                                <ExternalLink className="h-3.5 w-3.5 ml-1" />
+                              </a>
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>

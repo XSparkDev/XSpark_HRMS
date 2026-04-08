@@ -109,7 +109,7 @@ export default function LeaveManagementPage() {
   const [rejectionReason, setRejectionReason] = useState("")
   
   // Filters
-  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all")
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected" | "early_return_pending">("all")
   const [departmentFilter, setDepartmentFilter] = useState<string>("all")
   const [searchTerm, setSearchTerm] = useState("")
 
@@ -138,7 +138,12 @@ export default function LeaveManagementPage() {
       }
 
       // Fetch leave requests from API
-      const statusParam = statusFilter !== 'all' ? `&status=${statusFilter}` : ''
+      const statusParam =
+        statusFilter === "early_return_pending"
+          ? `&early_return_status=pending`
+          : statusFilter !== "all"
+            ? `&status=${statusFilter}`
+            : ""
       const response = await fetch(`/api/leave/requests?limit=100${statusParam}`, {
         headers: authHeaders,
       })
@@ -202,6 +207,9 @@ export default function LeaveManagementPage() {
             total_days: request.total_days,
             status: request.status,
             created_at: request.created_at || request.submitted_at,
+            early_return_date: request.early_return_date ?? null,
+            early_return_requested_at: request.early_return_requested_at ?? null,
+            early_return_status: request.early_return_status ?? null,
             supporting_document_url: request.document_url || request.supporting_document_url || '',
             employee_signature: '',
             employer_signature: '',
@@ -242,7 +250,7 @@ export default function LeaveManagementPage() {
   }
 
   const filteredRequests = leaveRequests.filter(request => {
-    if (statusFilter !== "all" && request.status !== statusFilter) return false
+    if (statusFilter !== "all" && statusFilter !== "early_return_pending" && request.status !== statusFilter) return false
     if (departmentFilter !== "all" && request.department !== departmentFilter) return false
     if (searchTerm && !request.full_name.toLowerCase().includes(searchTerm.toLowerCase()) && 
         !request.employee_number.toLowerCase().includes(searchTerm.toLowerCase())) return false
@@ -494,6 +502,7 @@ export default function LeaveManagementPage() {
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
+                <SelectItem value="early_return_pending">Early Return Requests</SelectItem>
               </SelectContent>
             </Select>
             
@@ -518,7 +527,7 @@ export default function LeaveManagementPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
-            Leave Requests ({filteredRequests.length})
+            {statusFilter === "early_return_pending" ? "Early Return Requests" : "Leave Requests"} ({filteredRequests.length})
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -533,10 +542,10 @@ export default function LeaveManagementPage() {
                 <TableRow>
                   <TableHead>Employee</TableHead>
                   <TableHead>Leave Type</TableHead>
-                  <TableHead>Dates</TableHead>
+                  <TableHead>{statusFilter === "early_return_pending" ? "Original end date" : "Dates"}</TableHead>
                   <TableHead>Duration</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Submitted</TableHead>
+                  <TableHead>{statusFilter === "early_return_pending" ? "Requested return date" : "Status"}</TableHead>
+                  <TableHead>{statusFilter === "early_return_pending" ? "Requested On" : "Submitted"}</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -568,27 +577,43 @@ export default function LeaveManagementPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1 text-sm">
-                            <CalendarIcon className="h-4 w-4" />
-                            <div>
-                              <div>{format(new Date(request.leave_day_from), "MMM dd")}</div>
-                              <div className="text-muted-foreground">to {format(new Date(request.leave_day_to), "MMM dd, yyyy")}</div>
+                          {statusFilter === "early_return_pending" ? (
+                            <div className="text-sm">
+                              {format(new Date(request.leave_day_to), "MMM dd, yyyy")}
                             </div>
-                          </div>
+                          ) : (
+                            <div className="flex items-center gap-1 text-sm">
+                              <CalendarIcon className="h-4 w-4" />
+                              <div>
+                                <div>{format(new Date(request.leave_day_from), "MMM dd")}</div>
+                                <div className="text-muted-foreground">to {format(new Date(request.leave_day_to), "MMM dd, yyyy")}</div>
+                              </div>
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
                           {request.total_days} day{request.total_days !== 1 ? 's' : ''}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            {getStatusIcon(request.status)}
-                            <Badge variant={statusInfo.variant}>
-                              {statusInfo.name}
-                            </Badge>
-                          </div>
+                          {statusFilter === "early_return_pending" ? (
+                            <div className="text-sm">
+                              {request.early_return_date ? format(new Date(request.early_return_date), "MMM dd, yyyy") : "—"}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {getStatusIcon(request.status)}
+                              <Badge variant={statusInfo.variant}>
+                                {statusInfo.name}
+                              </Badge>
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
-                          {format(new Date(request.created_at), "MMM dd, yyyy")}
+                          {statusFilter === "early_return_pending"
+                            ? (request.early_return_requested_at
+                                ? format(new Date(request.early_return_requested_at), "MMM dd, yyyy")
+                                : "—")
+                            : format(new Date(request.created_at), "MMM dd, yyyy")}
                         </TableCell>
                         <TableCell className="text-right">
                           <DropdownMenu>
@@ -627,7 +652,7 @@ export default function LeaveManagementPage() {
                             </Dialog>
                             
                               {/* Approve / Reject only for pending + HR Admin */}
-                            {request.status === "pending" && isHRAdmin && (
+                            {request.status === "pending" && isHRAdmin && statusFilter !== "early_return_pending" && (
                               <>
                                   <DropdownMenuItem
                                     className="flex items-center gap-2 cursor-pointer text-green-700 focus:text-green-700"
@@ -643,6 +668,57 @@ export default function LeaveManagementPage() {
                                   <XCircle className="h-4 w-4" />
                                     <span>Reject</span>
                                   </DropdownMenuItem>
+                              </>
+                            )}
+
+                            {statusFilter === "early_return_pending" && isHRAdmin && (
+                              <>
+                                <DropdownMenuItem
+                                  className="flex items-center gap-2 cursor-pointer text-green-700 focus:text-green-700"
+                                  onClick={async () => {
+                                    try {
+                                      const storedSession = localStorage.getItem("xspark_session")
+                                      const headers: Record<string, string> = { "Content-Type": "application/json" }
+                                      if (storedSession) {
+                                        const sessionParsed = JSON.parse(storedSession)
+                                        if (sessionParsed?.access_token) headers.Authorization = `Bearer ${sessionParsed.access_token}`
+                                      }
+                                      const res = await fetch(`/api/leave/requests/${request.id}/approve-early-return`, { method: "PATCH", headers })
+                                      const json = await res.json().catch(() => ({}))
+                                      if (!res.ok || !json?.success) throw new Error(json?.error || "Failed to approve early return")
+                                      toast({ title: "Early return approved", description: `Closed leave early for ${request.full_name}.` })
+                                      fetchLeaveRequests()
+                                    } catch (e) {
+                                      toast({ title: "Action failed", description: e instanceof Error ? e.message : "Failed to approve.", variant: "destructive" })
+                                    }
+                                  }}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  <span>Approve early return</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="flex items-center gap-2 cursor-pointer text-red-600 focus:text-red-600"
+                                  onClick={async () => {
+                                    try {
+                                      const storedSession = localStorage.getItem("xspark_session")
+                                      const headers: Record<string, string> = { "Content-Type": "application/json" }
+                                      if (storedSession) {
+                                        const sessionParsed = JSON.parse(storedSession)
+                                        if (sessionParsed?.access_token) headers.Authorization = `Bearer ${sessionParsed.access_token}`
+                                      }
+                                      const res = await fetch(`/api/leave/requests/${request.id}/reject-early-return`, { method: "PATCH", headers })
+                                      const json = await res.json().catch(() => ({}))
+                                      if (!res.ok || !json?.success) throw new Error(json?.error || "Failed to reject early return")
+                                      toast({ title: "Early return rejected", description: `Rejected early return for ${request.full_name}.` })
+                                      fetchLeaveRequests()
+                                    } catch (e) {
+                                      toast({ title: "Action failed", description: e instanceof Error ? e.message : "Failed to reject.", variant: "destructive" })
+                                    }
+                                  }}
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                  <span>Reject early return</span>
+                                </DropdownMenuItem>
                               </>
                             )}
                             </DropdownMenuContent>
