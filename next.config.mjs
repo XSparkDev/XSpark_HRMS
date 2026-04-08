@@ -22,6 +22,12 @@ const nextConfig = {
   },
   // Webpack configuration for bundle optimization
   webpack: (config, { dev, isServer }) => {
+    // Work around sporadic PackFileCacheStrategy ENOENT/cache corruption in dev
+    // (can surface as missing React Client Manifest entries / webpack runtime crashes)
+    if (dev) {
+      config.cache = false
+    }
+
     // Optimize bundle size
     if (!dev && !isServer) {
       config.optimization = {

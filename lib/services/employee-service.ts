@@ -586,6 +586,24 @@ export class EmployeeService {
   }
 
   /**
+   * Mark ID as unverified
+   */
+  async unverifyId(id: string): Promise<boolean> {
+    try {
+      const { error } = await supabaseAdmin
+        .from('employees')
+        .update({ id_verified: false })
+        .eq('id', id)
+
+      if (error) throw error
+      return true
+    } catch (error) {
+      console.error('Error unverifying ID:', error)
+      throw new Error('Failed to unverify ID')
+    }
+  }
+
+  /**
    * Mark bank details as verified
    */
   async verifyBank(id: string): Promise<boolean> {
@@ -600,6 +618,24 @@ export class EmployeeService {
     } catch (error) {
       console.error('Error verifying bank details:', error)
       throw new Error('Failed to verify bank details')
+    }
+  }
+
+  /**
+   * Mark bank details as unverified
+   */
+  async unverifyBank(id: string): Promise<boolean> {
+    try {
+      const { error } = await supabaseAdmin
+        .from('employees')
+        .update({ bank_verified: false })
+        .eq('id', id)
+
+      if (error) throw error
+      return true
+    } catch (error) {
+      console.error('Error unverifying bank details:', error)
+      throw new Error('Failed to unverify bank details')
     }
   }
 

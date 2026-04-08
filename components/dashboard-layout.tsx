@@ -97,6 +97,28 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     }
   }
 
+  const formatNotificationDate = (dateString: string) => {
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60)
+
+    if (diffInHours < 1) {
+      const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60))
+      return diffInMinutes < 1 ? "Just now" : `${diffInMinutes}m ago`
+    }
+    if (diffInHours < 24) {
+      return `${Math.floor(diffInHours)}h ago`
+    }
+    if (diffInHours < 48) {
+      return "Yesterday"
+    }
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+    })
+  }
+
   const unreadCount = unreadNotifications.length
 
   useEffect(() => {
@@ -268,6 +290,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                         </div>
                         <div className="text-xs text-muted-foreground line-clamp-2">
                           {notification.message}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground/80">
+                          {formatNotificationDate(notification.created_at)}
                         </div>
                       </div>
                     </button>

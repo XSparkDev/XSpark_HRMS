@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -65,6 +65,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [selectedQuickLogin, setSelectedQuickLogin] = useState<string>("")
+
+  useEffect(() => {
+    // Ensure logout/login doesn't land on a scrolled position
+    window.scrollTo(0, 0)
+  }, [])
 
   const handleQuickLogin = async (accountId: string) => {
     const account = DEMO_ACCOUNTS.find((acc) => acc.id === accountId)
