@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 
     // Validate UUID format - if employeeId is not a valid UUID, fetch from DB
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    const isValidUuid = employeeId && uuidRegex.test(employeeId)
+    let isValidUuid = Boolean(employeeId && uuidRegex.test(employeeId))
 
     // If employeeId not in headers or not a valid UUID, fetch it from database using auth_user_id
     if (!employeeId || !isValidUuid) {
@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
         // Continue without employee ID - will only get public notes
       } else {
         employeeId = employee.id
+        isValidUuid = true
       }
     }
 
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
       notes2Service.getHighAlertNotesByEmployee(user.id),
       notes2Service.getHighAlertPublicNotes(),
       // If we have an employee ID, also fetch high alerts sent to this employee
-      employeeId && isValidUuid 
+      employeeId && isValidUuid
         ? notes2Service.getHighAlertNotesForEmployee(employeeId).catch(() => [])
         : Promise.resolve([]),
     ])

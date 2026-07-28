@@ -50,7 +50,10 @@ const buildHeaders = (user: User | null) => {
   const headers: Record<string, string> = {}
   if (user?.id) headers["x-user-id"] = user.id
   if (user?.role) headers["x-user-role"] = user.role
-  if (user?.id) headers["x-employee-id"] = user.id
+  // x-employee-id must be the employees.id UUID (target_employee_id lookups),
+  // not the auth user id - fall back to user.id only if employeeId is missing.
+  if ((user as any)?.employeeId) headers["x-employee-id"] = (user as any).employeeId
+  else if (user?.id) headers["x-employee-id"] = user.id
   return headers
 }
 
