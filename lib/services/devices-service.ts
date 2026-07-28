@@ -80,10 +80,7 @@ export class DevicesService extends BaseService {
     // can result in empty result sets when policies check auth.uid().
     let query = this.admin.from(this.table).select('*', { count: 'exact' })
     
-    // NOTE: deleted_at filter is currently disabled because all devices in the database
-    // appear to have deleted_at set. To re-enable soft-delete filtering, uncomment the line below
-    // after ensuring devices have deleted_at = NULL for active devices.
-     query = query.is('delete_at', null)
+    query = query.is('deleted_at', null)
 
     if (filters.search) {
       const term = `%${filters.search}%`

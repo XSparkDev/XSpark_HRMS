@@ -109,7 +109,7 @@ export function AdminDashboard() {
         }
       }
 
-      const [leaveRes, employeesRes, approvedLeaveRes] = await Promise.all([
+      const [leaveRes, employeesRes, approvedLeaveRes, contractsRes] = await Promise.all([
         fetch("/api/leave/requests?status=pending&limit=5", { headers }),
         // For dashboard purposes, “Active Employees” = all employees in the employees table
         // (the API defaults to all when no is_active filter is provided).
@@ -117,11 +117,13 @@ export function AdminDashboard() {
         // Used to calculate how many people are currently on leave today.
         // API enforces limit <= 100, so keep it within that bound.
         fetch("/api/leave/requests?status=approved&limit=100", { headers }),
+        fetch("/api/contracts?expiring_within_days=30", { headers }),
       ])
 
       const leaveData = await leaveRes.json()
       const employeesData = await employeesRes.json()
       const approvedLeaveData = await approvedLeaveRes.json()
+      const contractsData = await contractsRes.json().catch(() => ({ meta: { count: 0 } }))
 
       // Pending requests for the card at the top
       setLeaveRequests(leaveData.data || [])
@@ -159,7 +161,7 @@ export function AdminDashboard() {
         activeEmployees: employees.length,
         onLeaveToday: onLeaveTodayCount,
         unverified: unverifiedCount,
-        expiringContracts: 0, // TODO: implement contract expiration logic
+        expiringContracts: contractsData?.meta?.count ?? 0,
         missingDocuments: 0, // TODO: implement document completeness check
         pendingWarnings: 0, // TODO: implement disciplinary records
       })

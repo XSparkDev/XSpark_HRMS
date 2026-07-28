@@ -20,10 +20,16 @@ export async function GET(request: NextRequest) {
       }, { status: 500 })
     }
 
-    return NextResponse.json({
-      success: true,
-      data: roles || []
-    })
+    return NextResponse.json(
+      {
+        success: true,
+        data: roles || []
+      },
+      // Roles change extremely rarely; serve from cache for 60s and let the
+      // CDN/browser revalidate in the background for up to 5 minutes so
+      // repeat navigations don't re-hit the DB on every page load.
+      { headers: { 'Cache-Control': 'public, max-age=60, stale-while-revalidate=300' } }
+    )
   } catch (error) {
     console.error('Error in roles API:', error)
     return NextResponse.json({

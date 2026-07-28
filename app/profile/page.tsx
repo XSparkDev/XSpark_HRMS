@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit, AlertCircle, Loader2, CheckCircle2, XCircle } from "lucide-react"
+import { CalendarIcon, Upload, User, Mail, Phone, MapPin, CreditCard, Users, Edit, AlertCircle, Loader2, CheckCircle2, XCircle, Camera } from "lucide-react"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { AnimatePresence, motion } from "framer-motion"
@@ -788,6 +788,83 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
     setFileUploads(prev => ({ ...prev, [field]: file }))
   }
 
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false)
+
+  const handlePhotoUpload = async (file: File | null) => {
+    if (!file || !profile?.id) return
+
+    const maxSize = 5 * 1024 * 1024 // 5MB
+    const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+
+    if (!allowedTypes.includes(file.type)) {
+      toast({
+        title: "Invalid file type",
+        description: "Photo must be a JPEG, PNG, GIF, or WEBP image",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (file.size > maxSize) {
+      toast({
+        title: "File too large",
+        description: "Photo must be less than 5MB",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsUploadingPhoto(true)
+    try {
+      const headers: Record<string, string> = {}
+      try {
+        const storedSession = localStorage.getItem('xspark_session')
+        if (storedSession) {
+          const sessionParsed = JSON.parse(storedSession)
+          if (sessionParsed?.access_token) {
+            headers['Authorization'] = `Bearer ${sessionParsed.access_token}`
+          }
+        }
+      } catch {}
+
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('data', JSON.stringify({ bucket: 'profilePictures', employeeId: profile.id }))
+
+      const uploadRes = await fetch('/api/upload', { method: 'POST', headers, body: formData })
+      const uploadJson = await uploadRes.json()
+
+      if (!uploadRes.ok || !uploadJson?.success) {
+        throw new Error(uploadJson?.error || 'Upload failed')
+      }
+
+      const photoUrl = uploadJson.data.url
+
+      const updateRes = await fetch('/api/employees', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ id: profile.id, profile_picture_url: photoUrl }),
+      })
+      const updateJson = await updateRes.json()
+
+      if (!updateRes.ok || !updateJson?.success) {
+        throw new Error(updateJson?.error || 'Failed to save photo')
+      }
+
+      setProfile((prev: any) => ({ ...prev, profile_picture_url: photoUrl }))
+      toast({ title: "Photo updated", description: "Your profile photo has been updated." })
+    } catch (error) {
+      console.error('Photo upload failed:', error)
+      toast({
+        title: "Upload failed",
+        description: error instanceof Error ? error.message : "Could not upload photo",
+        variant: "destructive",
+      })
+    } finally {
+      setIsUploadingPhoto(false)
+    }
+  }
+
   const handleSaveProfile = async () => {
     console.log('handleSaveProfile called')
   let savedEmployeeId = profile?.id ?? ""
@@ -1126,13 +1203,38 @@ const handleNokChange = (index: number, field: NextOfKinField, value: any) => {
             <Card>
               <CardContent className="p-6">
                 <div className="text-center space-y-4">
-                  <Avatar className="h-24 w-24 mx-auto">
-                    <AvatarImage src={profile?.images?.[0] ?? undefined} />
-                    <AvatarFallback className="text-lg">
-                      {profile?.first_name?.charAt(0) ?? ''}
-                      {profile?.last_name?.charAt(0) ?? ''}
-                    </AvatarFallback>
-                  </Avatar>
+                  <div className="relative mx-auto h-24 w-24">
+                    <Avatar className="h-24 w-24">
+                      <AvatarImage src={profile?.profile_picture_url ?? undefined} />
+                      <AvatarFallback className="text-lg">
+                        {profile?.first_name?.charAt(0) ?? ''}
+                        {profile?.last_name?.charAt(0) ?? ''}
+                      </AvatarFallback>
+                    </Avatar>
+                    <label
+                      htmlFor="profile-photo-upload"
+                      className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md cursor-pointer hover:opacity-90 transition-opacity"
+                      title="Change photo"
+                    >
+                      {isUploadingPhoto ? (
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                      ) : (
+                        <Camera className="h-4 w-4" />
+                      )}
+                    </label>
+                    <input
+                      id="profile-photo-upload"
+                      type="file"
+                      accept="image/jpeg,image/png,image/gif,image/webp"
+                      className="hidden"
+                      disabled={isUploadingPhoto}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null
+                        handlePhotoUpload(file)
+                        e.target.value = ''
+                      }}
+                    />
+                  </div>
                   <div>
                     <h2 className="text-xl font-semibold text-navy">
                       {(profile?.preferred_name || profile?.first_name || "")} {(profile?.last_name || "")}

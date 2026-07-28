@@ -1284,8 +1284,8 @@ export default function EmployeeManagementPage() {
             <DialogTitle>Edit Employee</DialogTitle>
           </DialogHeader>
           {selectedEmployee && (
-            <EmployeeForm 
-              onSubmit={() => setIsEditModalOpen(false)}
+            <EmployeeForm
+              onSubmit={() => { setIsEditModalOpen(false); fetchEmployees() }}
               employee={selectedEmployee}
               isEdit={true}
             />

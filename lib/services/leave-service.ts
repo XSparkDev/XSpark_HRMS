@@ -1069,7 +1069,25 @@ export class LeaveManagementService {
       const { data, error } = await query
 
       if (error) throw error
-      return (data || []) as any[] // Return with enriched data
+
+      // Flatten joined employee/leave-type data for consumers (e.g. admin dashboard)
+      // that expect full_name / leave_type / leave_day_from / leave_day_to directly
+      // on each request, in addition to the raw joined objects.
+      return ((data || []) as any[]).map((req) => {
+        const employee = req.employees
+        const leaveType = req.leave_types
+        const fullName = employee
+          ? [employee.first_name, employee.middle_name, employee.last_name].filter(Boolean).join(' ')
+          : undefined
+
+        return {
+          ...req,
+          full_name: fullName,
+          leave_type: leaveType?.key,
+          leave_day_from: req.start_date,
+          leave_day_to: req.end_date,
+        }
+      })
     } catch (error) {
       console.error('Error fetching leave requests:', error)
       throw new Error('Failed to fetch leave requests')

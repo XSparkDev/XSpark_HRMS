@@ -10,7 +10,10 @@ export async function GET() {
 
     if (error) throw error
 
-    return NextResponse.json({ success: true, data })
+    return NextResponse.json(
+      { success: true, data },
+      { headers: { 'Cache-Control': 'public, max-age=60, stale-while-revalidate=300' } }
+    )
   } catch (error) {
     console.error("Error fetching job titles:", error)
     return NextResponse.json(
