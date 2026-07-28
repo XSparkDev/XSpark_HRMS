@@ -320,8 +320,9 @@ class SupervisorDashboardService extends BaseService {
     }
     return this.getCachedOrFetch('active-borrows', async () => {
       // Fetch active borrows: is_borrowed = true (device is currently borrowed)
-      // Use supabaseAdmin to bypass RLS policies (same as API route)
-      const { data, error } = await supabaseAdmin
+      // NOTE: supabaseAdmin cannot run in the browser bundle (this service is called
+      // client-side from app/ams-supervisor/page.tsx); use the anon client + RLS instead.
+      const { data, error } = await supabase
           .from('borrows')
           .select(`
           borrow_id,
@@ -444,8 +445,15 @@ class SupervisorDashboardService extends BaseService {
     updated_at: string | null
   }>> {
     return this.getCachedOrFetch('devices-pending-borrow', async () => {
-      // Fetch all devices and filter for pending borrow status
-      const { data: devices } = await devicesService.listDevices({ limit: 10000 })
+      // Fetch via API route (devicesService uses supabaseAdmin, which cannot run
+      // in the browser bundle - this service is called client-side).
+      const devicesResponse = await fetch('/api/devices?limit=1000&offset=0', {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      })
+      const devicesJson = await devicesResponse.json().catch(() => ({ success: false, data: [] }))
+      const devices = devicesJson.success && Array.isArray(devicesJson.data) ? devicesJson.data : []
 
       // Filter to ensure we only get devices with "pending borrow" in status
       return devices
