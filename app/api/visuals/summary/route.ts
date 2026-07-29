@@ -125,7 +125,8 @@ export async function GET() {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([day, count]) => ({ day, count }))
 
-    return NextResponse.json({
+    return NextResponse.json(
+      {
       success: true,
       data: {
         generatedAt: new Date().toISOString(),
@@ -170,7 +171,12 @@ export async function GET() {
         },
         auditActivity,
       },
-    })
+      },
+      // This aggregates ~10 tables; not something we want re-computed on every
+      // dashboard render. 30s cache with a 2min stale-while-revalidate window
+      // keeps it feeling live without hammering the DB on every nav.
+      { headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=120" } }
+    )
   } catch (error) {
     console.error("Error building visuals summary:", error)
     return NextResponse.json({ success: false, error: "Failed to load visuals summary" }, { status: 500 })
