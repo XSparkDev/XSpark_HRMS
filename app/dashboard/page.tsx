@@ -638,7 +638,7 @@ export default function DashboardPage() {
             </div>
 
             {/* My HR Cases */}
-            <MyHrCases />
+            <MyHrCases onContactHr={() => setShowContactHrModal(true)} />
 
             {/* Scheduled Notes */}
             <Notes2Scheduled />

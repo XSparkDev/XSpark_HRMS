@@ -43,6 +43,38 @@ export function ContactHrModal({ open, onClose }: ContactHrModalProps) {
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const user = getCurrentUser()
+  const [employeeUuid, setEmployeeUuid] = useState<string | null>(null)
+
+  // hr_tickets.employee_id references employees.id, not the auth user id -
+  // resolve the real employee UUID via /api/auth/me (same pattern as my-hr-cases.tsx).
+  useEffect(() => {
+    if (!open || !user?.id) return
+
+    const fetchEmployeeUuid = async () => {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" }
+        try {
+          const storedSession = localStorage.getItem("xspark_session")
+          if (storedSession) {
+            const sessionParsed = JSON.parse(storedSession)
+            if (sessionParsed?.access_token) {
+              headers["Authorization"] = `Bearer ${sessionParsed.access_token}`
+            }
+          }
+        } catch {}
+
+        const res = await fetch("/api/auth/me", { headers })
+        const json = await res.json()
+        if (res.ok && json.success && json.data?.employee?.id) {
+          setEmployeeUuid(json.data.employee.id)
+        }
+      } catch (error) {
+        console.warn("[ContactHrModal] Failed to fetch employee UUID:", error)
+      }
+    }
+
+    fetchEmployeeUuid()
+  }, [open, user?.id])
 
   // Validate form
   const validateForm = () => {
@@ -144,7 +176,7 @@ export function ContactHrModal({ open, onClose }: ContactHrModalProps) {
       })
 
       const ticketData = {
-        employee_id: user?.id || 'anonymous',
+        employee_id: employeeUuid || user?.id || 'anonymous',
         name: user?.name || 'Unknown User',
         department: 'Engineering', // Get from user profile
         category,

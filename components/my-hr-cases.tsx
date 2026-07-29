@@ -27,7 +27,7 @@ interface Ticket {
   resolved_at?: string | null
 }
 
-export function MyHrCases() {
+export function MyHrCases({ onContactHr }: { onContactHr?: () => void } = {}) {
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -189,9 +189,16 @@ export function MyHrCases() {
   if (tickets.length === 0) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>My HR Cases</CardTitle>
-          <CardDescription>Your submitted HR requests and tickets</CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>My HR Cases</CardTitle>
+            <CardDescription>Your submitted HR requests and tickets</CardDescription>
+          </div>
+          {onContactHr && (
+            <Button size="sm" onClick={onContactHr}>
+              Contact HR
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           <div className="text-center py-8 text-muted-foreground">
@@ -207,9 +214,16 @@ export function MyHrCases() {
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>My HR Cases</CardTitle>
-          <CardDescription>Your submitted HR requests and tickets</CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>My HR Cases</CardTitle>
+            <CardDescription>Your submitted HR requests and tickets</CardDescription>
+          </div>
+          {onContactHr && (
+            <Button size="sm" onClick={onContactHr}>
+              Contact HR
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           <ScrollArea className="h-[400px]">
@@ -230,17 +244,10 @@ export function MyHrCases() {
                           <Badge variant="destructive" className="text-xs">Confidential</Badge>
                         )}
                       </div>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span>Case ID: {ticket.id}</span>
-                        <span>•</span>
-                        <span>{ticket.category}</span>
-                        {ticket.subcategory && (
-                          <>
-                            <span>•</span>
-                            <span>{ticket.subcategory}</span>
-                          </>
-                        )}
-                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Case ID: {ticket.id} • {ticket.category}
+                        {ticket.subcategory ? ` • ${ticket.subcategory}` : ""}
+                      </p>
                       <div className="flex items-center gap-4 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <Calendar className="h-3 w-3" />
