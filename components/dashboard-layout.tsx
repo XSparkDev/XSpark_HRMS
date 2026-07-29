@@ -38,6 +38,7 @@ import {
   MessageSquare,
   User as UserIcon,
   StickyNote,
+  BarChart3,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isEmployeeFullyVerified } from "@/lib/employee-verification"
@@ -204,6 +205,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: "Employees", href: "/employees", icon: Users, permission: "view_employees" },
     { name: "Leave Requests", href: "/leave", icon: Calendar, permission: "*" },
     { name: "Documents", href: "/documents", icon: FolderOpen, permission: "*" },
+    { name: "Visuals", href: "/visuals", icon: BarChart3, permission: "*", roles: ["admin", "super_admin"] },
     { name: "Audit Logs", href: "/audit", icon: ClipboardList, permission: "*", adminOnly: true },
     { name: "Switch System", href: "/system-selector", icon: Settings, permission: "*" },
   ]
@@ -213,6 +215,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const filteredNavigation = navigation.filter((item) => {
     if (item.adminOnly && user.role !== "super_admin") return false
+    if (item.roles && !item.roles.includes(user.role)) return false
     if (isUnverifiedRegularEmployee && restrictedForUnverifiedEmployees.has(item.name)) return false
     if (item.permission === "*") return true
     return hasPermission(user, item.permission)
